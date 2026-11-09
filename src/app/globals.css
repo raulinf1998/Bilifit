@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+:root {
+  --bg-app: #090d14;
+  --bg-card: #111827;
+  --bg-card-elevated: #172033;
+  --bg-muted: #1e293b;
+  --border-subtle: rgba(148, 163, 184, 0.16);
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent-strava: #fc4c02;
+}
+
+html.light {
+  --bg-app: #f4f6f9;
+  --bg-card: #ffffff;
+  --bg-card-elevated: #f8fafc;
+  --bg-muted: #e2e8f0;
+  --border-subtle: rgba(15, 23, 42, 0.1);
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.card-surface {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 1rem;
+}
+
+.card-elevated {
+  background: var(--bg-card-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.875rem;
+}
+
+/* Leaflet overrides for dark/light integration */
+.leaflet-container {
+  background: #0f172a;
+  font-family: inherit;
+  z-index: 1;
+}
