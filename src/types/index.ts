@@ -10,6 +10,131 @@ export interface ActivityPoint {
   cad?: number; // rpm or spm
   speed?: number; // m/s
   dist?: number; // cumulative meters
+  temp?: number; // °C
+  grade?: number; // % slope
+  gct?: number; // ground contact time ms
+  vo?: number; // vertical oscillation mm
+  stride?: number; // stride length m
+  lrBalance?: number; // % left leg power
+}
+
+export interface ActivityLap {
+  lapNumber: number;
+  name?: string;
+  startDistM: number;
+  endDistM: number;
+  distanceMeters: number;
+  durationSec: number;
+  movingTimeSec: number;
+  avgSpeedMs?: number | null;
+  maxSpeedMs?: number | null;
+  gapSpeedMs?: number | null;
+  elevationGain: number;
+  elevationLoss: number;
+  avgGradePct?: number | null;
+  avgHr?: number | null;
+  maxHr?: number | null;
+  avgWatts?: number | null;
+  normalizedPower?: number | null;
+  avgCadence?: number | null;
+  calories?: number | null;
+  trigger?: string | null;
+}
+
+export interface BestEffortItem {
+  label: string;
+  distanceMeters: number;
+  durationSec: number;
+  avgSpeedMs: number;
+  avgHr?: number | null;
+  avgWatts?: number | null;
+  startDistM: number;
+  endDistM: number;
+}
+
+export interface ZoneBucket {
+  zone: string;
+  name: string;
+  range: string;
+  seconds: number;
+  percent: number;
+  color: string;
+}
+
+export interface TerrainSplit {
+  type: 'subida' | 'llano' | 'bajada';
+  label: string;
+  distanceMeters: number;
+  durationSec: number;
+  avgSpeedMs: number | null;
+}
+
+export interface ActivityExtras {
+  deviceName?: string | null;
+  avgTemp?: number | null;
+  minTemp?: number | null;
+  maxTemp?: number | null;
+  aerobicTe?: number | null;
+  anaerobicTe?: number | null;
+  workKj?: number | null;
+  variabilityIndex?: number | null;
+  efficiencyFactor?: number | null;
+  aerobicDecouplingPct?: number | null;
+  vamMh?: number | null;
+  gapSpeedMs?: number | null;
+  minEle?: number | null;
+  maxEle?: number | null;
+  avgGctMs?: number | null;
+  avgVerticalOscMm?: number | null;
+  avgStrideLenM?: number | null;
+  leftBalancePct?: number | null;
+  rightBalancePct?: number | null;
+}
+
+export interface Segment {
+  id: string;
+  name: string;
+  sport: SportType;
+  category: 'climb' | 'sprint' | 'flat' | 'custom';
+  distanceMeters: number;
+  elevationGain: number;
+  avgGradePct: number;
+  maxGradePct: number;
+  startLat: number;
+  startLon: number;
+  endLat: number;
+  endLon: number;
+  polyline: string;
+  points: Array<{ lat: number; lon: number; ele?: number; dist?: number }>;
+  sourceActivityId?: string | null;
+  worldName?: string | null;
+  createdAt: string;
+  effortCount?: number;
+  bestTimeSec?: number | null;
+  bestEffortDate?: string | null;
+}
+
+export interface SegmentEffort {
+  id: string;
+  segmentId: string;
+  segmentName: string;
+  segmentDistanceMeters?: number;
+  segmentElevationGain?: number;
+  segmentAvgGradePct?: number;
+  segmentPolyline?: string | null;
+  activityId: string;
+  activityTitle: string;
+  startedAt: string;
+  sport: SportType;
+  durationSec: number;
+  avgSpeedMs: number;
+  avgHr?: number | null;
+  maxHr?: number | null;
+  avgWatts?: number | null;
+  avgCadence?: number | null;
+  vamMh?: number | null;
+  prRank?: number;
+  prDeltaSec?: number;
 }
 
 export interface StrengthSetLog {
@@ -56,6 +181,8 @@ export interface Activity {
   startLat?: number | null;
   startLon?: number | null;
   totalVolumeKg?: number | null;
+  laps?: ActivityLap[];
+  extras?: ActivityExtras | null;
   createdAt: string;
 }
 
@@ -63,6 +190,12 @@ export interface ActivityDetail extends Activity {
   points: ActivityPoint[];
   strengthLogs: StrengthSetLog[];
   powerCurve?: Array<{ durationSec: number; label: string; watts: number }>;
+  kmSplits?: ActivityLap[];
+  bestEfforts?: BestEffortItem[];
+  hrZones?: ZoneBucket[];
+  paceZones?: ZoneBucket[];
+  terrainBreakdown?: TerrainSplit[];
+  segmentEfforts?: SegmentEffort[];
 }
 
 export interface MountainRoute {
@@ -131,13 +264,13 @@ export interface Exercise {
   name: string;
   muscleGroup: MuscleGroup;
   secondaryMuscles: MuscleGroup[];
-  requiredEquipment: string[]; // All listed equipment IDs are required (empty = bodyweight)
+  requiredEquipment: string[];
   optionalEquipment?: string[];
   difficulty: 'principiante' | 'intermedio' | 'avanzado';
   pattern: 'empuje' | 'traccion' | 'rodilla' | 'bisagra' | 'unilateral' | 'core' | 'cardio' | 'movilidad';
   sportBenefit: Array<'running' | 'mountain' | 'mywhoosh' | 'general'>;
   defaultSets: number;
-  defaultReps: string; // e.g. "10-12", "40s", "8 por pierna"
+  defaultReps: string;
   restSeconds: number;
   instructions: string;
   isCustom?: boolean;

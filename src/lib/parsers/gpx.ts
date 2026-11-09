@@ -1,7 +1,9 @@
 import { XMLParser } from 'fast-xml-parser';
-import { computeElevationGainLoss, downsamplePoints, encodePolyline, haversineMeters } from '@/lib/polyline';
+import { computeSessionExtras, enrichPointsTelemetry } from '@/lib/analytics';
 import { calculateNormalizedPower } from '@/lib/metrics';
-import type { ActivityPoint, SportType } from '@/types';
+import { resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
+import { computeElevationGainLoss, downsamplePoints, encodePolyline, haversineMeters } from '@/lib/polyline';
+import type { ActivityExtras, ActivityLap, ActivityPoint, SportType } from '@/types';
 
 export interface ParsedActivityData {
   externalId?: string;
@@ -30,6 +32,8 @@ export interface ParsedActivityData {
   startLat?: number;
   startLon?: number;
   points: ActivityPoint[];
+  laps?: ActivityLap[];
+  extras?: ActivityExtras;
 }
 
 function asArray<T>(val: T | T[] | undefined | null): T[] {
@@ -44,14 +48,27 @@ function toNum(val: unknown): number | undefined {
 }
 
 export function detectMyWhooshWorld(text: string): string | undefined {
-  const worlds = ['Arabia', 'Hudayriyat', 'Belgium', 'Colombia', 'AlUla', 'Australia', 'California', 'Japan', 'Switzerland'];
+  const worlds = ['Arabia', 'Hudayriyat', 'Belgium', 'Colombia', 'AlUla', 'Australia', 'California', 'Japan', 'Switzerland', 'Bhutan', 'MyWhoosh World'];
   const lower = text.toLowerCase();
   return worlds.find((w) => lower.includes(w.toLowerCase()));
 }
 
-export function inferSportFromText(rawType: string, title: string, creator: string, elevationGain: number, distanceMeters: number, hasPower: boolean): { sport: SportType; subSport?: string; worldName?: string } {
+export function inferSportFromText(
+  rawType: string,
+  title: string,
+  creator: string,
+  elevationGain: number,
+  distanceMeters: number,
+  hasPower: boolean,
+  coords: Array<[number, number]> = []
+): { sport: SportType; subSport?: string; worldName?: string } {
   const combined = `${rawType} ${title} ${creator}`.toLowerCase();
-  const worldName = detectMyWhooshWorld(combined);
+  const resolvedWorld = resolveMyWhooshWorldForActivity({
+    worldName: detectMyWhooshWorld(combined),
+    title: combined,
+    coords,
+  });
+  const worldName = resolvedWorld?.world.name ?? detectMyWhooshWorld(combined);
 
   if (
     combined.includes('mywhoosh') ||
@@ -61,7 +78,7 @@ export function inferSportFromText(rawType: string, title: string, creator: stri
     combined.includes('indoor_cycling') ||
     combined.includes('rodillo') ||
     combined.includes('zwift') ||
-    (worldName && hasPower)
+    (resolvedWorld && (hasPower || combined.includes('ride') || combined.includes('cycl')))
   ) {
     return { sport: 'mywhoosh', subSport: 'MyWhoosh Indoor', worldName };
   }
@@ -188,23 +205,28 @@ export function parseGpxString(xmlText: string, fileName = 'actividad.gpx'): Par
       }
     }
 
-    let speedMs: number | undefined;
-    if (prevTimeMs !== undefined && Number.isFinite(tMs)) {
+    const ext = (pt.extensions ?? {}) as Record<string, unknown>;
+    const tpe = (ext.TrackPointExtension ?? ext.trackpointextension ?? {}) as Record<string, unknown>;
+
+    let speedMs = toNum(tpe.speed ?? ext.speed ?? pt.speed);
+    if (speedMs === undefined && prevTimeMs !== undefined && Number.isFinite(tMs)) {
       const dt = (tMs - prevTimeMs) / 1000;
       if (dt > 0 && dt <= 60) {
         speedMs = stepDist / dt;
+      }
+    }
+    if (speedMs !== undefined && prevTimeMs !== undefined && Number.isFinite(tMs)) {
+      const dt = (tMs - prevTimeMs) / 1000;
+      if (dt > 0 && dt <= 60) {
         if (speedMs > maxSpeedMs && speedMs < 35) maxSpeedMs = speedMs;
         if (speedMs > 0.35) movingTimeSec += dt;
       }
     }
 
-    // Extensions: Garmin gpxtpx, MyWhoosh power/cad/hr, Strava extensions
-    const ext = (pt.extensions ?? {}) as Record<string, unknown>;
-    const tpe = (ext.TrackPointExtension ?? ext.trackpointextension ?? {}) as Record<string, unknown>;
-
     const hr = toNum(tpe.hr ?? ext.hr ?? ext.heartrate ?? pt.hr);
     const cad = toNum(tpe.cad ?? tpe.cadence ?? ext.cad ?? ext.cadence ?? pt.cad);
     const watts = toNum(ext.power ?? ext.watts ?? tpe.power ?? tpe.watts ?? pt.power ?? pt.watts);
+    const temp = toNum(tpe.atemp ?? ext.atemp ?? ext.temp ?? pt.temp);
 
     if (hr !== undefined && hr > 25 && hr < 240) {
       hrSum += hr;
@@ -235,6 +257,7 @@ export function parseGpxString(xmlText: string, fileName = 'actividad.gpx'): Par
       cad: cad !== undefined ? Math.round(cad) : undefined,
       speed: speedMs !== undefined ? Math.round(speedMs * 100) / 100 : undefined,
       dist: Math.round(cumDist),
+      temp: temp !== undefined ? Math.round(temp * 10) / 10 : undefined,
     });
 
     if (lat !== undefined && lon !== undefined) {
@@ -251,21 +274,47 @@ export function parseGpxString(xmlText: string, fileName = 'actividad.gpx'): Par
   const distanceMeters = Math.round(cumDist);
   const { gain, loss } = computeElevationGainLoss(points);
 
-  const hasPower = wattsCount > 5;
-  const inferred = inferSportFromText(rawType, rawTitle, creator, gain, distanceMeters, hasPower);
-
   const coordsForPoly: Array<[number, number]> = points
     .filter((p): p is ActivityPoint & { lat: number; lon: number } => typeof p.lat === 'number' && typeof p.lon === 'number')
     .map((p) => [p.lat, p.lon]);
 
+  const hasPower = wattsCount > 5;
+  const inferred = inferSportFromText(rawType, rawTitle, creator, gain, distanceMeters, hasPower, coordsForPoly);
+
+  const enrichedPoints = enrichPointsTelemetry(points, inferred.sport);
+
   const downsampledForPoly =
-    coordsForPoly.length > 200
-      ? coordsForPoly.filter((_, idx) => idx % Math.ceil(coordsForPoly.length / 200) === 0 || idx === coordsForPoly.length - 1)
+    coordsForPoly.length > 220
+      ? coordsForPoly.filter((_, idx) => idx % Math.ceil(coordsForPoly.length / 220) === 0 || idx === coordsForPoly.length - 1)
       : coordsForPoly;
 
-  const np = hasPower ? calculateNormalizedPower(points) ?? undefined : undefined;
+  const np = hasPower ? calculateNormalizedPower(enrichedPoints) ?? undefined : undefined;
   const startedAt = startMs !== null ? new Date(startMs).toISOString() : new Date().toISOString();
   const avgSpeedMs = effectiveMoving > 0 && distanceMeters > 0 ? Math.round((distanceMeters / effectiveMoving) * 100) / 100 : undefined;
+  const rawAvgCad = cadCount > 0 ? Math.round(cadSum / cadCount) : undefined;
+  const avgCadence =
+    rawAvgCad !== undefined && (inferred.sport === 'running' || inferred.sport === 'mountain') && rawAvgCad < 115
+      ? rawAvgCad * 2
+      : rawAvgCad;
+
+  const avgWatts = wattsCount > 0 ? Math.round(wattsSum / wattsCount) : undefined;
+  const avgHr = hrCount > 0 ? Math.round(hrSum / hrCount) : undefined;
+
+  const extras = computeSessionExtras(
+    {
+      sport: inferred.sport,
+      durationSec,
+      movingTimeSec: effectiveMoving,
+      distanceMeters,
+      elevationGain: gain,
+      avgSpeedMs: avgSpeedMs ?? null,
+      avgHr: avgHr ?? null,
+      avgWatts: avgWatts ?? null,
+      normalizedPower: np ?? null,
+      extras: creator ? { deviceName: creator } : null,
+    },
+    enrichedPoints
+  );
 
   return {
     source: 'gpx',
@@ -281,17 +330,18 @@ export function parseGpxString(xmlText: string, fileName = 'actividad.gpx'): Par
     elevationLoss: loss,
     avgSpeedMs,
     maxSpeedMs: maxSpeedMs > 0 ? Math.round(maxSpeedMs * 100) / 100 : undefined,
-    avgHr: hrCount > 0 ? Math.round(hrSum / hrCount) : undefined,
+    avgHr,
     maxHr: maxHr > 0 ? Math.round(maxHr) : undefined,
-    avgWatts: wattsCount > 0 ? Math.round(wattsSum / wattsCount) : undefined,
+    avgWatts,
     normalizedPower: np,
     maxWatts: maxWatts > 0 ? Math.round(maxWatts) : undefined,
-    avgCadence: cadCount > 0 ? Math.round(cadSum / cadCount) : undefined,
+    avgCadence,
     worldName: inferred.worldName,
     polyline: downsampledForPoly.length > 1 ? encodePolyline(downsampledForPoly) : undefined,
     startLat: coordsForPoly[0]?.[0],
     startLon: coordsForPoly[0]?.[1],
-    points: downsamplePoints(points, 600),
+    points: downsamplePoints(enrichedPoints, 1800),
+    extras,
   };
 }
 

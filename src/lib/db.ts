@@ -1,11 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import {
+  computeBestEfforts,
+  computeHeartRateZones,
+  computeKmSplits,
+  computePaceZones,
+  computeSessionExtras,
+  computeTerrainBreakdown,
+  enrichPointsTelemetry,
+} from '@/lib/analytics';
 import { DEFAULT_EXERCISES, DEFAULT_HOME_EQUIPMENT } from '@/lib/home-workouts';
 import { buildSeedActivityRows, SEED_GEAR, SEED_PROFILE, SEED_ROUTES, SEED_ROUTINES } from '@/lib/seed';
+import { buildSegmentFromRange, matchPointsToSegment } from '@/lib/segments';
 import type {
   Activity,
   ActivityDetail,
+  ActivityExtras,
+  ActivityLap,
   ActivityPoint,
   AthleteProfile,
   Exercise,
@@ -13,6 +25,8 @@ import type {
   HomeEquipment,
   MountainRoute,
   Routine,
+  Segment,
+  SegmentEffort,
   SportType,
   StrengthSetLog,
 } from '@/types';
@@ -183,7 +197,55 @@ function initSchema(db: Database.Database) {
       last_completed_at TEXT,
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS segments (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      sport TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'custom',
+      distance_meters REAL NOT NULL,
+      elevation_gain REAL NOT NULL DEFAULT 0,
+      avg_grade_pct REAL NOT NULL DEFAULT 0,
+      max_grade_pct REAL NOT NULL DEFAULT 0,
+      start_lat REAL NOT NULL,
+      start_lon REAL NOT NULL,
+      end_lat REAL NOT NULL,
+      end_lon REAL NOT NULL,
+      polyline TEXT NOT NULL,
+      points_json TEXT NOT NULL,
+      source_activity_id TEXT,
+      world_name TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS segment_efforts (
+      id TEXT PRIMARY KEY,
+      segment_id TEXT NOT NULL REFERENCES segments(id) ON DELETE CASCADE,
+      activity_id TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+      duration_sec INTEGER NOT NULL,
+      avg_speed_ms REAL NOT NULL,
+      avg_hr INTEGER,
+      max_hr INTEGER,
+      avg_watts INTEGER,
+      avg_cadence INTEGER,
+      vam_mh INTEGER,
+      started_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_seg_efforts_segment ON segment_efforts(segment_id, duration_sec ASC);
+    CREATE INDEX IF NOT EXISTS idx_seg_efforts_activity ON segment_efforts(activity_id);
   `);
+
+  // Migración segura para bases de datos existentes
+  ensureColumn(db, 'activities', 'laps_json', 'TEXT');
+  ensureColumn(db, 'activities', 'extras_json', 'TEXT');
+}
+
+function ensureColumn(db: Database.Database, table: string, column: string, colType: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${colType}`);
+  }
 }
 
 function seedIfEmpty(db: Database.Database) {
@@ -244,8 +306,8 @@ function seedIfEmpty(db: Database.Database) {
         duration_sec, moving_time_sec, distance_meters, elevation_gain, elevation_loss,
         avg_speed_ms, max_speed_ms, avg_hr, max_hr, avg_watts, normalized_power, max_watts,
         avg_cadence, calories, tss, rpe, gear_id, world_name, polyline, start_lat, start_lon,
-        points_json, strength_logs_json, total_volume_kg, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        points_json, strength_logs_json, total_volume_kg, laps_json, extras_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const tx = db.transaction(() => {
       for (const r of rows) {
@@ -282,6 +344,8 @@ function seedIfEmpty(db: Database.Database) {
           JSON.stringify(r.points),
           JSON.stringify(r.strengthLogs),
           r.totalVolumeKg,
+          JSON.stringify(r.laps ?? []),
+          JSON.stringify(r.extras ?? null),
           r.createdAt
         );
       }
@@ -342,6 +406,66 @@ function seedIfEmpty(db: Database.Database) {
       );
     }
   }
+
+  const segCount = db.prepare('SELECT COUNT(*) as c FROM segments').get() as { c: number };
+  if (segCount.c === 0) {
+    seedInitialSegments(db);
+  }
+}
+
+function seedInitialSegments(db: Database.Database) {
+  const candidates: Array<{ actId: string; name: string; startFrac: number; endFrac: number; cat: Segment['category'] }> = [
+    { actId: 'act_seed_mtn_1', name: 'Subida Pico Paisano · Monte Naranco', startFrac: 0.08, endFrac: 0.45, cat: 'climb' },
+    { actId: 'act_seed_run_1', name: 'Recta Pista Finlandesa (Oviedo)', startFrac: 0.15, endFrac: 0.45, cat: 'sprint' },
+    { actId: 'act_seed_mw_1', name: 'Hudayriyat Velodrome Loop (MyWhoosh)', startFrac: 0.1, endFrac: 0.52, cat: 'flat' },
+  ];
+
+  const allActRows = db
+    .prepare('SELECT id, title, started_at, sport, world_name, points_json, distance_meters FROM activities WHERE points_json IS NOT NULL')
+    .all() as Array<Record<string, unknown>>;
+
+  const parsedActs = allActRows
+    .map((r) => {
+      try {
+        const pts = JSON.parse(String(r.points_json)) as ActivityPoint[];
+        return {
+          id: String(r.id),
+          title: String(r.title),
+          startedAt: String(r.started_at),
+          sport: String(r.sport) as SportType,
+          worldName: r.world_name ? String(r.world_name) : null,
+          distanceMeters: Number(r.distance_meters),
+          points: pts,
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter((x): x is NonNullable<typeof x> => Boolean(x && x.points.length >= 10));
+
+  for (const c of candidates) {
+    const src = parsedActs.find((a) => a.id === c.actId);
+    if (!src) continue;
+    const totalD = src.points[src.points.length - 1]?.dist ?? src.distanceMeters;
+    if (totalD < 600) continue;
+
+    const seg = buildSegmentFromRange({
+      activity: src,
+      points: src.points,
+      startDistM: Math.round(totalD * c.startFrac),
+      endDistM: Math.round(totalD * c.endFrac),
+      name: c.name,
+      category: c.cat,
+    });
+    if (!seg) continue;
+
+    insertSegmentRow(db, seg);
+    for (const act of parsedActs) {
+      if (act.sport !== seg.sport) continue;
+      const eff = matchPointsToSegment(act, act.points, seg);
+      if (eff) insertSegmentEffortRow(db, eff);
+    }
+  }
 }
 
 // ===== HELPERS DE ACCESO A DATOS =====
@@ -384,6 +508,19 @@ export function updateAthleteProfile(patch: Partial<AthleteProfile>): AthletePro
 }
 
 function mapActivityRow(row: Record<string, unknown>): Activity {
+  let laps: ActivityLap[] | undefined;
+  let extras: ActivityExtras | null = null;
+  try {
+    if (row.laps_json) laps = JSON.parse(String(row.laps_json));
+  } catch {
+    laps = undefined;
+  }
+  try {
+    if (row.extras_json) extras = JSON.parse(String(row.extras_json));
+  } catch {
+    extras = null;
+  }
+
   return {
     id: String(row.id),
     externalId: row.external_id ? String(row.external_id) : null,
@@ -416,6 +553,8 @@ function mapActivityRow(row: Record<string, unknown>): Activity {
     startLat: row.start_lat != null ? Number(row.start_lat) : null,
     startLon: row.start_lon != null ? Number(row.start_lon) : null,
     totalVolumeKg: row.total_volume_kg != null ? Number(row.total_volume_kg) : null,
+    laps,
+    extras,
     createdAt: String(row.created_at),
   };
 }
@@ -478,10 +617,28 @@ export function getActivityById(id: string): ActivityDetail | null {
     strengthLogs = [];
   }
 
+  const mapped = mapActivityRow(row);
+  const enrichedPoints = points.length > 0 ? enrichPointsTelemetry(points, mapped.sport) : [];
+  const profile = getAthleteProfile();
+  const extras = computeSessionExtras(mapped, enrichedPoints);
+  const kmSplits = enrichedPoints.length > 1 ? computeKmSplits(enrichedPoints, mapped.sport) : [];
+  const bestEfforts = enrichedPoints.length > 3 ? computeBestEfforts(enrichedPoints, mapped.sport) : [];
+  const hrZones = enrichedPoints.length > 1 ? computeHeartRateZones(enrichedPoints, profile) : [];
+  const paceZones = enrichedPoints.length > 1 ? computePaceZones(enrichedPoints, mapped.sport) : [];
+  const terrainBreakdown = enrichedPoints.length > 2 ? computeTerrainBreakdown(enrichedPoints) : [];
+  const segmentEfforts = getActivitySegmentEfforts(id);
+
   return {
-    ...mapActivityRow(row),
-    points,
+    ...mapped,
+    extras,
+    points: enrichedPoints,
     strengthLogs,
+    kmSplits,
+    bestEfforts,
+    hrZones,
+    paceZones,
+    terrainBreakdown,
+    segmentEfforts,
   };
 }
 
@@ -495,6 +652,8 @@ export function findDefaultGearForSport(sport: SportType): string | null {
 export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCurve'>): ActivityDetail {
   const db = getDb();
   const gearId = input.gearId ?? findDefaultGearForSport(input.sport);
+  const enrichedPoints = input.points && input.points.length > 0 ? enrichPointsTelemetry(input.points, input.sport) : [];
+  const extras = input.extras ?? (enrichedPoints.length > 0 ? computeSessionExtras(input, enrichedPoints) : null);
 
   db.prepare(`
     INSERT INTO activities (
@@ -502,8 +661,8 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
       duration_sec, moving_time_sec, distance_meters, elevation_gain, elevation_loss,
       avg_speed_ms, max_speed_ms, avg_hr, max_hr, avg_watts, normalized_power, max_watts,
       avg_cadence, calories, tss, rpe, gear_id, world_name, polyline, start_lat, start_lon,
-      points_json, strength_logs_json, total_volume_kg, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      points_json, strength_logs_json, total_volume_kg, laps_json, extras_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.id,
     input.externalId ?? null,
@@ -534,11 +693,25 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
     input.polyline ?? null,
     input.startLat ?? null,
     input.startLon ?? null,
-    JSON.stringify(input.points ?? []),
+    JSON.stringify(enrichedPoints),
     JSON.stringify(input.strengthLogs ?? []),
     input.totalVolumeKg ?? null,
+    JSON.stringify(input.laps ?? []),
+    JSON.stringify(extras),
     input.createdAt
   );
+
+  // Emparejar automáticamente la nueva actividad contra todos los segmentos existentes
+  if (enrichedPoints.some((p) => typeof p.lat === 'number' && typeof p.lon === 'number')) {
+    const segments = listSegments();
+    for (const seg of segments) {
+      if (seg.sport !== input.sport) continue;
+      const effort = matchPointsToSegment(input, enrichedPoints, seg);
+      if (effort) {
+        insertSegmentEffortRow(db, effort);
+      }
+    }
+  }
 
   return getActivityById(input.id)!;
 }
@@ -908,5 +1081,250 @@ export function updateRoutine(id: string, patch: Partial<Routine>): Routine | nu
 
 export function deleteRoutine(id: string): boolean {
   const res = getDb().prepare('DELETE FROM routines WHERE id = ?').run(id);
+  return res.changes > 0;
+}
+
+// ===== SEGMENTS & EFFORTS =====
+
+function insertSegmentRow(db: Database.Database, seg: Segment) {
+  db.prepare(`
+    INSERT INTO segments (
+      id, name, sport, category, distance_meters, elevation_gain, avg_grade_pct, max_grade_pct,
+      start_lat, start_lon, end_lat, end_lon, polyline, points_json, source_activity_id, world_name, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    seg.id,
+    seg.name,
+    seg.sport,
+    seg.category,
+    seg.distanceMeters,
+    seg.elevationGain,
+    seg.avgGradePct,
+    seg.maxGradePct,
+    seg.startLat,
+    seg.startLon,
+    seg.endLat,
+    seg.endLon,
+    seg.polyline,
+    JSON.stringify(seg.points ?? []),
+    seg.sourceActivityId ?? null,
+    seg.worldName ?? null,
+    seg.createdAt
+  );
+}
+
+function insertSegmentEffortRow(db: Database.Database, eff: SegmentEffort) {
+  db.prepare(`
+    INSERT OR REPLACE INTO segment_efforts (
+      id, segment_id, activity_id, duration_sec, avg_speed_ms, avg_hr, max_hr, avg_watts, avg_cadence, vam_mh, started_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    eff.id,
+    eff.segmentId,
+    eff.activityId,
+    eff.durationSec,
+    eff.avgSpeedMs,
+    eff.avgHr ?? null,
+    eff.maxHr ?? null,
+    eff.avgWatts ?? null,
+    eff.avgCadence ?? null,
+    eff.vamMh ?? null,
+    eff.startedAt
+  );
+}
+
+function mapSegmentRow(r: Record<string, unknown>): Segment {
+  return {
+    id: String(r.id),
+    name: String(r.name),
+    sport: String(r.sport) as SportType,
+    category: (r.category ? String(r.category) : 'custom') as Segment['category'],
+    distanceMeters: Number(r.distance_meters),
+    elevationGain: Number(r.elevation_gain),
+    avgGradePct: Number(r.avg_grade_pct),
+    maxGradePct: Number(r.max_grade_pct),
+    startLat: Number(r.start_lat),
+    startLon: Number(r.start_lon),
+    endLat: Number(r.end_lat),
+    endLon: Number(r.end_lon),
+    polyline: String(r.polyline),
+    points: r.points_json ? JSON.parse(String(r.points_json)) : [],
+    sourceActivityId: r.source_activity_id ? String(r.source_activity_id) : null,
+    worldName: r.world_name ? String(r.world_name) : null,
+    createdAt: String(r.created_at),
+    effortCount: r.effort_count != null ? Number(r.effort_count) : undefined,
+    bestTimeSec: r.best_time_sec != null ? Number(r.best_time_sec) : null,
+    bestEffortDate: r.best_effort_date ? String(r.best_effort_date) : null,
+  };
+}
+
+export function listSegments(sport?: string): Segment[] {
+  const db = getDb();
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (sport && sport !== 'all') {
+    clauses.push('s.sport = ?');
+    params.push(sport);
+  }
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+  const rows = db
+    .prepare(`
+      SELECT
+        s.*,
+        COUNT(e.id) AS effort_count,
+        MIN(e.duration_sec) AS best_time_sec,
+        (SELECT e2.started_at FROM segment_efforts e2 WHERE e2.segment_id = s.id ORDER BY e2.duration_sec ASC LIMIT 1) AS best_effort_date
+      FROM segments s
+      LEFT JOIN segment_efforts e ON e.segment_id = s.id
+      ${where}
+      GROUP BY s.id
+      ORDER BY effort_count DESC, s.created_at DESC
+    `)
+    .all(...params) as Record<string, unknown>[];
+
+  return rows.map(mapSegmentRow);
+}
+
+export function getSegmentWithEfforts(id: string): { segment: Segment; efforts: SegmentEffort[] } | null {
+  const db = getDb();
+  const row = db
+    .prepare(`
+      SELECT
+        s.*,
+        COUNT(e.id) AS effort_count,
+        MIN(e.duration_sec) AS best_time_sec
+      FROM segments s
+      LEFT JOIN segment_efforts e ON e.segment_id = s.id
+      WHERE s.id = ?
+      GROUP BY s.id
+    `)
+    .get(id) as Record<string, unknown> | undefined;
+
+  if (!row) return null;
+
+  const effRows = db
+    .prepare(`
+      SELECT e.*, s.name AS segment_name, s.distance_meters, s.elevation_gain, s.avg_grade_pct, a.title AS activity_title, a.sport
+      FROM segment_efforts e
+      JOIN segments s ON s.id = e.segment_id
+      JOIN activities a ON a.id = e.activity_id
+      WHERE e.segment_id = ?
+      ORDER BY e.duration_sec ASC, e.started_at DESC
+    `)
+    .all(id) as Record<string, unknown>[];
+
+  const bestSec = effRows.length > 0 ? Number(effRows[0].duration_sec) : 0;
+  const efforts: SegmentEffort[] = effRows.map((e, idx) => ({
+    id: String(e.id),
+    segmentId: String(e.segment_id),
+    segmentName: String(e.segment_name),
+    segmentDistanceMeters: Number(e.distance_meters),
+    segmentElevationGain: Number(e.elevation_gain),
+    segmentAvgGradePct: Number(e.avg_grade_pct),
+    activityId: String(e.activity_id),
+    activityTitle: String(e.activity_title),
+    startedAt: String(e.started_at),
+    sport: String(e.sport) as SportType,
+    durationSec: Number(e.duration_sec),
+    avgSpeedMs: Number(e.avg_speed_ms),
+    avgHr: e.avg_hr != null ? Number(e.avg_hr) : null,
+    maxHr: e.max_hr != null ? Number(e.max_hr) : null,
+    avgWatts: e.avg_watts != null ? Number(e.avg_watts) : null,
+    avgCadence: e.avg_cadence != null ? Number(e.avg_cadence) : null,
+    vamMh: e.vam_mh != null ? Number(e.vam_mh) : null,
+    prRank: idx + 1,
+    prDeltaSec: Number(e.duration_sec) - bestSec,
+  }));
+
+  return { segment: mapSegmentRow(row), efforts };
+}
+
+export function getActivitySegmentEfforts(activityId: string): SegmentEffort[] {
+  const db = getDb();
+  const rows = db
+    .prepare(`
+      SELECT
+        e.*,
+        s.name AS segment_name,
+        s.distance_meters,
+        s.elevation_gain,
+        s.avg_grade_pct,
+        s.polyline AS segment_polyline,
+        a.title AS activity_title,
+        a.sport,
+        (SELECT COUNT(*) + 1 FROM segment_efforts e2 WHERE e2.segment_id = e.segment_id AND e2.duration_sec < e.duration_sec) AS pr_rank,
+        (SELECT MIN(e3.duration_sec) FROM segment_efforts e3 WHERE e3.segment_id = e.segment_id) AS best_sec
+      FROM segment_efforts e
+      JOIN segments s ON s.id = e.segment_id
+      JOIN activities a ON a.id = e.activity_id
+      WHERE e.activity_id = ?
+      ORDER BY pr_rank ASC, s.distance_meters DESC
+    `)
+    .all(activityId) as Record<string, unknown>[];
+
+  return rows.map((e) => ({
+    id: String(e.id),
+    segmentId: String(e.segment_id),
+    segmentName: String(e.segment_name),
+    segmentDistanceMeters: Number(e.distance_meters),
+    segmentElevationGain: Number(e.elevation_gain),
+    segmentAvgGradePct: Number(e.avg_grade_pct),
+    segmentPolyline: e.segment_polyline ? String(e.segment_polyline) : null,
+    activityId: String(e.activity_id),
+    activityTitle: String(e.activity_title),
+    startedAt: String(e.started_at),
+    sport: String(e.sport) as SportType,
+    durationSec: Number(e.duration_sec),
+    avgSpeedMs: Number(e.avg_speed_ms),
+    avgHr: e.avg_hr != null ? Number(e.avg_hr) : null,
+    maxHr: e.max_hr != null ? Number(e.max_hr) : null,
+    avgWatts: e.avg_watts != null ? Number(e.avg_watts) : null,
+    avgCadence: e.avg_cadence != null ? Number(e.avg_cadence) : null,
+    vamMh: e.vam_mh != null ? Number(e.vam_mh) : null,
+    prRank: Number(e.pr_rank),
+    prDeltaSec: Number(e.duration_sec) - Number(e.best_sec ?? e.duration_sec),
+  }));
+}
+
+export function createSegmentAndMatch(segment: Segment): { segment: Segment; matchedEfforts: number } {
+  const db = getDb();
+  insertSegmentRow(db, segment);
+
+  const actRows = db
+    .prepare('SELECT id, title, started_at, sport, world_name, points_json FROM activities WHERE sport = ? AND points_json IS NOT NULL')
+    .all(segment.sport) as Array<Record<string, unknown>>;
+
+  let matchedEfforts = 0;
+  for (const r of actRows) {
+    try {
+      const pts = JSON.parse(String(r.points_json)) as ActivityPoint[];
+      if (pts.length < 4) continue;
+      const enriched = enrichPointsTelemetry(pts, segment.sport);
+      const eff = matchPointsToSegment(
+        {
+          id: String(r.id),
+          title: String(r.title),
+          startedAt: String(r.started_at),
+          sport: segment.sport,
+          worldName: r.world_name ? String(r.world_name) : null,
+        },
+        enriched,
+        segment
+      );
+      if (eff) {
+        insertSegmentEffortRow(db, eff);
+        matchedEfforts++;
+      }
+    } catch {
+      // skip invalid points json
+    }
+  }
+
+  const created = getSegmentWithEfforts(segment.id)?.segment ?? segment;
+  return { segment: created, matchedEfforts };
+}
+
+export function deleteSegment(id: string): boolean {
+  const res = getDb().prepare('DELETE FROM segments WHERE id = ?').run(id);
   return res.changes > 0;
 }

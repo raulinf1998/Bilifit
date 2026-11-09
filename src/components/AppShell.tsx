@@ -7,6 +7,7 @@ import {
   Activity,
   Bike,
   Dumbbell,
+  Flag,
   Flame,
   LayoutDashboard,
   Mountain,
@@ -22,6 +23,7 @@ import {
 const NAV_ITEMS = [
   { href: '/', label: 'Panel', icon: LayoutDashboard },
   { href: '/actividades', label: 'Actividades', icon: Activity },
+  { href: '/segmentos', label: 'Segmentos y PRs', icon: Flag },
   { href: '/ciclismo', label: 'MyWhoosh y Bici', icon: Bike },
   { href: '/montana', label: 'Rutas Montaña', icon: Mountain },
   { href: '/casa', label: 'Casa y Rutinas', icon: Dumbbell, highlight: true },

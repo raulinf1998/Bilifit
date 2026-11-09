@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { formatDurationClock } from '@/lib/metrics';
-import type { ActivityPoint, FitnessDayPoint } from '@/types';
+import { formatDurationClock, formatPaceMinKm, formatSpeedKmh } from '@/lib/metrics';
+import type { ActivityPoint, FitnessDayPoint, SportType, ZoneBucket } from '@/types';
 import type { PowerZoneSummary } from '@/lib/metrics';
 
 export function FitnessPMCChart({ data }: { data: FitnessDayPoint[] }) {
@@ -237,24 +237,37 @@ export function WeeklyVolumeChart({ buckets }: { buckets: WeeklyBucket[] }) {
 
 export function TelemetryChart({
   points,
+  sport = 'running',
   onHoverPoint,
 }: {
   points: ActivityPoint[];
+  sport?: SportType;
   onHoverPoint?: (pt: ActivityPoint | null) => void;
 }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [xAxisMode, setXAxisMode] = useState<'time' | 'dist'>('dist');
+  const [showEle, setShowEle] = useState(true);
+  const [showPace, setShowPace] = useState(true);
+  const [showHr, setShowHr] = useState(true);
+  const [showWatts, setShowWatts] = useState(true);
+  const [showCad, setShowCad] = useState(false);
+
   if (!points || points.length < 3) return null;
 
+  const isPaceSport = sport === 'running' || sport === 'mountain';
   const hasEle = points.some((p) => typeof p.ele === 'number');
+  const hasSpeed = points.some((p) => typeof p.speed === 'number' && p.speed > 0.3);
   const hasWatts = points.some((p) => typeof p.watts === 'number');
   const hasHr = points.some((p) => typeof p.hr === 'number');
+  const hasCad = points.some((p) => typeof p.cad === 'number' && p.cad > 0);
+  const hasDist = (points[points.length - 1]?.dist ?? 0) > 100;
 
   const w = 780;
-  const h = 220;
-  const padL = 42;
+  const h = 250;
+  const padL = 44;
   const padR = 16;
   const padT = 16;
-  const padB = 26;
+  const padB = 28;
   const innerW = w - padL - padR;
   const innerH = h - padT - padB;
 
@@ -262,81 +275,168 @@ export function TelemetryChart({
   const maxEle = hasEle ? Math.max(...points.map((p) => p.ele ?? 0)) : 100;
   const eleRange = Math.max(10, maxEle - minEle);
 
+  const speeds = points.map((p) => p.speed ?? 0).filter((s) => s > 0.3 && s < 30);
+  const minSpd = speeds.length > 0 ? Math.min(...speeds) : 1;
+  const maxSpd = speeds.length > 0 ? Math.max(minSpd + 0.5, ...speeds) : 10;
+
   const maxWatts = hasWatts ? Math.max(150, ...points.map((p) => p.watts ?? 0)) : 300;
   const minHr = hasHr ? Math.min(90, ...points.filter((p) => p.hr).map((p) => p.hr!)) : 90;
   const maxHr = hasHr ? Math.max(170, ...points.filter((p) => p.hr).map((p) => p.hr!)) : 195;
+  const minCad = hasCad ? Math.min(...points.filter((p) => p.cad).map((p) => p.cad!)) : 40;
+  const maxCad = hasCad ? Math.max(minCad + 20, ...points.filter((p) => p.cad).map((p) => p.cad!)) : 200;
 
-  const toX = (idx: number) => padL + (idx / (points.length - 1)) * innerW;
+  const maxDist = Math.max(1, points[points.length - 1]?.dist ?? 1);
+  const maxTime = Math.max(1, points[points.length - 1]?.t ?? 1);
+  const toX = (idx: number) => {
+    if (xAxisMode === 'dist' && hasDist) {
+      return padL + ((points[idx]?.dist ?? 0) / maxDist) * innerW;
+    }
+    return padL + ((points[idx]?.t ?? 0) / maxTime) * innerW;
+  };
+
   const eleY = (e: number) => padT + ((maxEle - e) / eleRange) * innerH;
+  const spdY = (s: number) => padT + ((maxSpd - s) / Math.max(0.5, maxSpd - minSpd)) * innerH;
   const wattsY = (wt: number) => padT + ((maxWatts - wt) / maxWatts) * innerH;
   const hrY = (hr: number) => padT + ((maxHr - hr) / Math.max(20, maxHr - minHr)) * innerH;
+  const cadY = (c: number) => padT + ((maxCad - c) / Math.max(20, maxCad - minCad)) * innerH;
 
-  const eleLine = hasEle
-    ? points
-        .map((p, i) => `${i === 0 ? 'M' : 'L'} ${toX(i).toFixed(1)} ${eleY(p.ele ?? minEle).toFixed(1)}`)
-        .join(' ')
-    : '';
-  const eleArea = hasEle
+  const buildPath = (filterFn: (p: ActivityPoint) => boolean, yFn: (p: ActivityPoint) => number) => {
+    let d = '';
+    let started = false;
+    for (let i = 0; i < points.length; i++) {
+      if (!filterFn(points[i])) continue;
+      d += `${started ? 'L' : 'M'} ${toX(i).toFixed(1)} ${yFn(points[i]).toFixed(1)} `;
+      started = true;
+    }
+    return d.trim();
+  };
+
+  const eleLine = hasEle ? buildPath((p) => typeof p.ele === 'number', (p) => eleY(p.ele!)) : '';
+  const eleArea = hasEle && eleLine
     ? `${eleLine} L ${toX(points.length - 1).toFixed(1)} ${padT + innerH} L ${padL} ${padT + innerH} Z`
     : '';
-
-  const wattsLine = hasWatts
-    ? points
-        .filter((p) => typeof p.watts === 'number')
-        .map((p, i) => {
-          const origIdx = points.indexOf(p);
-          return `${i === 0 ? 'M' : 'L'} ${toX(origIdx).toFixed(1)} ${wattsY(p.watts!).toFixed(1)}`;
-        })
-        .join(' ')
-    : '';
-
-  const hrLine = hasHr
-    ? points
-        .filter((p) => typeof p.hr === 'number')
-        .map((p, i) => {
-          const origIdx = points.indexOf(p);
-          return `${i === 0 ? 'M' : 'L'} ${toX(origIdx).toFixed(1)} ${hrY(p.hr!).toFixed(1)}`;
-        })
-        .join(' ')
-    : '';
+  const speedLine = hasSpeed ? buildPath((p) => typeof p.speed === 'number' && p.speed > 0.3, (p) => spdY(p.speed!)) : '';
+  const wattsLine = hasWatts ? buildPath((p) => typeof p.watts === 'number', (p) => wattsY(p.watts!)) : '';
+  const hrLine = hasHr ? buildPath((p) => typeof p.hr === 'number', (p) => hrY(p.hr!)) : '';
+  const cadLine = hasCad ? buildPath((p) => typeof p.cad === 'number' && p.cad > 0, (p) => cadY(p.cad!)) : '';
 
   const hovered = hoverIdx !== null ? points[hoverIdx] : null;
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="flex flex-wrap items-center gap-4">
+        <div className="flex flex-wrap items-center gap-1.5">
           {hasEle && (
-            <span className="flex items-center gap-1.5 text-emerald-400">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-              Altitud {hovered?.ele !== undefined ? `${hovered.ele} m` : `${Math.round(minEle)}-${Math.round(maxEle)} m`}
-            </span>
+            <button
+              type="button"
+              onClick={() => setShowEle((v) => !v)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-opacity ${
+                showEle ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400' : 'opacity-45 border-slate-700'
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              Altitud {hovered?.ele !== undefined ? `${hovered.ele} m` : `${Math.round(minEle)}-${Math.round(maxEle)}m`}
+            </button>
           )}
-          {hasWatts && (
-            <span className="flex items-center gap-1.5 text-cyan-400">
-              <span className="h-2.5 w-2.5 rounded-full bg-cyan-400" />
-              Potencia {hovered?.watts !== undefined ? `${hovered.watts} W` : ''}
-            </span>
+          {hasSpeed && (
+            <button
+              type="button"
+              onClick={() => setShowPace((v) => !v)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-opacity ${
+                showPace ? 'border-[#fc4c02]/40 bg-[#fc4c02]/10 text-[#fc4c02]' : 'opacity-45 border-slate-700'
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-[#fc4c02]" />
+              {isPaceSport ? 'Ritmo' : 'Vel.'}{' '}
+              {hovered?.speed !== undefined
+                ? isPaceSport
+                  ? formatPaceMinKm(hovered.speed)
+                  : formatSpeedKmh(hovered.speed)
+                : ''}
+            </button>
           )}
           {hasHr && (
-            <span className="flex items-center gap-1.5 text-rose-400">
-              <span className="h-2.5 w-2.5 rounded-full bg-rose-400" />
+            <button
+              type="button"
+              onClick={() => setShowHr((v) => !v)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-opacity ${
+                showHr ? 'border-rose-500/40 bg-rose-500/10 text-rose-400' : 'opacity-45 border-slate-700'
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-rose-400" />
               Pulso {hovered?.hr !== undefined ? `${hovered.hr} ppm` : ''}
-            </span>
+            </button>
+          )}
+          {hasWatts && (
+            <button
+              type="button"
+              onClick={() => setShowWatts((v) => !v)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-opacity ${
+                showWatts ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-400' : 'opacity-45 border-slate-700'
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-cyan-400" />
+              Potencia {hovered?.watts !== undefined ? `${hovered.watts} W` : ''}
+            </button>
+          )}
+          {hasCad && (
+            <button
+              type="button"
+              onClick={() => setShowCad((v) => !v)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-opacity ${
+                showCad ? 'border-purple-500/40 bg-purple-500/10 text-purple-400' : 'opacity-45 border-slate-700'
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-purple-400" />
+              Cadencia {hovered?.cad !== undefined ? `${hovered.cad}` : ''}
+            </button>
           )}
         </div>
-        {hovered && (
-          <span className="tabular-nums font-medium" style={{ color: 'var(--text-secondary)' }}>
-            Tiempo {formatDurationClock(hovered.t)}
-            {hovered.dist ? ` · ${(hovered.dist / 1000).toFixed(2)} km` : ''}
-            {hovered.cad ? ` · ${hovered.cad} rpm/spm` : ''}
-          </span>
-        )}
+
+        <div className="flex items-center gap-2">
+          {hasDist && (
+            <div className="inline-flex rounded-lg border overflow-hidden text-[11px]" style={{ borderColor: 'var(--border-subtle)' }}>
+              <button
+                type="button"
+                onClick={() => setXAxisMode('dist')}
+                className={`px-2 py-0.5 ${xAxisMode === 'dist' ? 'bg-[#fc4c02] text-white' : ''}`}
+              >
+                Km
+              </button>
+              <button
+                type="button"
+                onClick={() => setXAxisMode('time')}
+                className={`px-2 py-0.5 ${xAxisMode === 'time' ? 'bg-[#fc4c02] text-white' : ''}`}
+              >
+                Tiempo
+              </button>
+            </div>
+          )}
+        </div>
       </div>
+
+      {hovered && (
+        <div
+          className="rounded-lg px-3 py-1.5 text-xs tabular-nums flex flex-wrap gap-x-4 gap-y-1 border"
+          style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
+        >
+          <span><strong>Tiempo:</strong> {formatDurationClock(hovered.t)}</span>
+          {typeof hovered.dist === 'number' && <span><strong>Dist:</strong> {(hovered.dist / 1000).toFixed(2)} km</span>}
+          {typeof hovered.speed === 'number' && hovered.speed > 0.3 && (
+            <span className="text-[#fc4c02]">
+              <strong>{isPaceSport ? 'Ritmo:' : 'Vel:'}</strong>{' '}
+              {isPaceSport ? formatPaceMinKm(hovered.speed) : formatSpeedKmh(hovered.speed)}
+            </span>
+          )}
+          {typeof hovered.grade === 'number' && <span><strong>Pendiente:</strong> {hovered.grade > 0 ? `+${hovered.grade}` : hovered.grade}%</span>}
+          {typeof hovered.cad === 'number' && hovered.cad > 0 && <span><strong>Cad:</strong> {hovered.cad} {isPaceSport ? 'spm' : 'rpm'}</span>}
+          {typeof hovered.temp === 'number' && <span><strong>Temp:</strong> {hovered.temp} °C</span>}
+        </div>
+      )}
 
       <svg
         viewBox={`0 0 ${w} ${h}`}
-        className="w-full h-56 select-none cursor-crosshair"
+        className="w-full h-60 select-none cursor-crosshair"
         onMouseLeave={() => {
           setHoverIdx(null);
           onHoverPoint?.(null);
@@ -354,7 +454,7 @@ export function TelemetryChart({
         <line x1={padL} y1={padT + innerH / 2} x2={w - padR} y2={padT + innerH / 2} stroke="rgba(148,163,184,0.12)" />
         <line x1={padL} y1={padT + innerH} x2={w - padR} y2={padT + innerH} stroke="rgba(148,163,184,0.22)" />
 
-        {hasEle && (
+        {hasEle && showEle && (
           <>
             <path d={eleArea} fill="rgba(16, 185, 129, 0.14)" />
             <path d={eleLine} fill="none" stroke="#10b981" strokeWidth={1.8} />
@@ -367,8 +467,10 @@ export function TelemetryChart({
           </>
         )}
 
-        {hasWatts && <path d={wattsLine} fill="none" stroke="#06b6d4" strokeWidth={1.9} />}
-        {hasHr && <path d={hrLine} fill="none" stroke="#f43f5e" strokeWidth={1.7} strokeOpacity={0.85} />}
+        {hasSpeed && showPace && <path d={speedLine} fill="none" stroke="#fc4c02" strokeWidth={1.8} strokeOpacity={0.92} />}
+        {hasWatts && showWatts && <path d={wattsLine} fill="none" stroke="#06b6d4" strokeWidth={1.9} />}
+        {hasHr && showHr && <path d={hrLine} fill="none" stroke="#f43f5e" strokeWidth={1.6} strokeOpacity={0.85} />}
+        {hasCad && showCad && <path d={cadLine} fill="none" stroke="#a855f7" strokeWidth={1.5} strokeOpacity={0.8} />}
 
         {hoverIdx !== null && (
           <line
@@ -383,13 +485,46 @@ export function TelemetryChart({
 
         {[0, 0.25, 0.5, 0.75, 1].map((f) => {
           const idx = Math.round(f * (points.length - 1));
+          const label =
+            xAxisMode === 'dist' && hasDist
+              ? `${((points[idx]?.dist ?? 0) / 1000).toFixed(1)} km`
+              : formatDurationClock(points[idx]?.t ?? 0);
           return (
             <text key={f} x={toX(idx)} y={h - 6} fontSize="10" textAnchor="middle" fill="#64748b">
-              {formatDurationClock(points[idx]?.t ?? 0)}
+              {label}
             </text>
           );
         })}
       </svg>
+    </div>
+  );
+}
+
+export function ZoneBarsChart({ zones }: { zones: ZoneBucket[] }) {
+  if (!zones || zones.length === 0) return null;
+  return (
+    <div className="space-y-2.5">
+      {zones.map((z) => (
+        <div key={z.zone} className="space-y-1">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2">
+              <span className="font-bold w-6" style={{ color: z.color }}>
+                {z.zone}
+              </span>
+              <span>{z.name}</span>
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                ({z.range})
+              </span>
+            </div>
+            <span className="tabular-nums font-medium">
+              {Math.floor(z.seconds / 60)}m {z.seconds % 60}s ({z.percent}%)
+            </span>
+          </div>
+          <div className="h-2 w-full rounded-full overflow-hidden" style={{ background: 'var(--bg-muted)' }}>
+            <div className="h-full rounded-full transition-all" style={{ width: `${z.percent}%`, background: z.color }} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

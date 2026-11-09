@@ -29,11 +29,27 @@ import {
 import {
   createActivity,
   createCustomEquipment,
+  createSegmentAndMatch,
+  getActivityById,
   getAthleteProfile,
+  getSegmentWithEfforts,
   listActivities,
   listHomeEquipment,
+  listSegments,
   toggleHomeEquipment,
 } from '../src/lib/db';
+import {
+  calculateMinettiGapFactor,
+  computeBestEfforts,
+  computeHeartRateZones,
+  computeKmSplits,
+  computePaceZones,
+  computeSessionExtras,
+  computeTerrainBreakdown,
+  enrichPointsTelemetry,
+} from '../src/lib/analytics';
+import { MYWHOOSH_WORLDS, resolveMyWhooshWorldForActivity } from '../src/lib/mywhoosh-maps';
+import { buildSegmentFromRange, detectClimbCandidates, matchPointsToSegment } from '../src/lib/segments';
 import { mapStravaSport } from '../src/lib/strava';
 
 test.after(() => {
@@ -319,4 +335,174 @@ test('SQLite DB initializes seed data, toggles equipment, and persists activitie
   // Strava mapper check
   assert.equal(mapStravaSport('VirtualRide', 'VirtualRide', 'MyWhoosh Arabia').sport, 'mywhoosh');
   assert.equal(mapStravaSport('Run', 'TrailRun', 'Trail Picos').sport, 'mountain');
+});
+
+test('MyWhoosh virtual worlds resolve by coordinates and title and have SVG assets on disk', () => {
+  for (const w of MYWHOOSH_WORLDS) {
+    const rel = w.imageUrl.replace(/^\//, '');
+    const full = path.join(process.cwd(), 'public', rel);
+    assert.ok(fs.existsSync(full), `Missing MyWhoosh SVG map file: ${full}`);
+  }
+
+  // Detección por coordenadas dentro del bounding box de Colombia (lat ~4.61, lon ~-72.81)
+  const colMatch = resolveMyWhooshWorldForActivity({
+    coords: [
+      [4.605, -72.825],
+      [4.622, -72.801],
+    ],
+    title: 'Entreno matinal sin nombre de mundo',
+  });
+  assert.equal(colMatch?.world.id, 'colombia');
+
+  // Detección por nombre de ruta/título
+  const arabiaMatch = resolveMyWhooshWorldForActivity({
+    title: 'Subida dura a Jebel Jais',
+  });
+  assert.equal(arabiaMatch?.world.id, 'arabia');
+});
+
+test('Analytics engine computes splits, GAP, best efforts, HR/pace zones, terrain and extras', () => {
+  assert.ok(calculateMinettiGapFactor(10) > 1.5);
+  assert.ok(calculateMinettiGapFactor(-10) < 0.85);
+
+  // Construimos 6.2 km de carrera ondulada con pulso, cadencia y temperatura
+  const pts = Array.from({ length: 125 }, (_, i) => {
+    const dist = i * 50;
+    const t = i * 14; // ~4:40 min/km base
+    const ele = 150 + Math.sin(i / 10) * 35 + i * 0.4;
+    return {
+      t,
+      lat: 43.36 + i * 0.00038,
+      lon: -5.85 - i * 0.00022,
+      ele: Math.round(ele * 10) / 10,
+      hr: 142 + (i % 25),
+      cad: 86 + (i % 4), // 86-89 ciclo simple -> debe normalizarse a ~172-178 spm
+      temp: 16 + (i % 3),
+      dist,
+    };
+  });
+
+  const enriched = enrichPointsTelemetry(pts, 'running');
+  assert.ok(enriched[10].cad && enriched[10].cad >= 168);
+  assert.ok(typeof enriched[10].grade === 'number');
+
+  const splits = computeKmSplits(enriched, 'running');
+  assert.ok(splits.length >= 6);
+  assert.ok(splits[0].gapSpeedMs && splits[0].avgSpeedMs);
+
+  const efforts = computeBestEfforts(enriched, 'running');
+  assert.ok(efforts.some((e) => e.label === '400 m'));
+  assert.ok(efforts.some((e) => e.label === '1 km'));
+  assert.ok(efforts.some((e) => e.label === '5 km'));
+
+  const hrZones = computeHeartRateZones(enriched, getAthleteProfile());
+  assert.equal(hrZones.length, 5);
+  assert.ok(hrZones.reduce((s, z) => s + z.seconds, 0) > 1000);
+
+  const paceZones = computePaceZones(enriched, 'running');
+  assert.equal(paceZones.length, 5);
+
+  const terrain = computeTerrainBreakdown(enriched);
+  assert.equal(terrain.length, 3);
+
+  const extras = computeSessionExtras(
+    {
+      sport: 'running',
+      durationSec: 1736,
+      movingTimeSec: 1736,
+      distanceMeters: 6200,
+      elevationGain: 120,
+      avgSpeedMs: 3.57,
+      avgHr: 154,
+      avgWatts: null,
+      normalizedPower: null,
+      extras: null,
+    },
+    enriched
+  );
+  assert.ok(extras.avgTemp !== null && extras.avgTemp !== undefined);
+  assert.ok(extras.gapSpeedMs !== null && extras.gapSpeedMs !== undefined);
+});
+
+test('Segments engine seeds initial segments, detects climb candidates and matches new activities', () => {
+  const segs = listSegments('all');
+  assert.ok(segs.length >= 3, 'Should seed initial segments across Naranco, Pista Finlandesa and Hudayriyat');
+
+  const narancoSeg = segs.find((s) => s.name.includes('Naranco'));
+  assert.ok(narancoSeg, 'Seeded Naranco segment should exist');
+  const detail = getSegmentWithEfforts(narancoSeg.id);
+  assert.ok(detail && detail.efforts.length >= 2, 'Naranco segment should match multiple historical runs');
+
+  // Verificar detalle enriquecido de actividad existente
+  const actDetail = getActivityById('act_seed_mtn_1');
+  assert.ok(actDetail);
+  assert.ok(actDetail.kmSplits && actDetail.kmSplits.length >= 10);
+  assert.ok(actDetail.segmentEfforts && actDetail.segmentEfforts.length >= 1);
+  assert.ok(actDetail.hrZones && actDetail.hrZones.length === 5);
+
+  // Crear un nuevo segmento personalizado en un recorrido con subida y emparejarlo
+  const routePts = Array.from({ length: 60 }, (_, i) => ({
+    t: i * 15,
+    lat: 43.5 + i * 0.00045,
+    lon: -5.9 + i * 0.0002,
+    ele: i < 10 ? 100 : i < 45 ? 100 + (i - 10) * 6 : 310,
+    hr: 158,
+    watts: 260,
+    dist: i * 55,
+  }));
+  const climbs = detectClimbCandidates(routePts);
+  assert.ok(climbs.length >= 1, 'Should detect synthetic climb >45m gain and >3% grade');
+
+  const baseActivity = createActivity({
+    id: 'act_seg_test_climb',
+    externalId: null,
+    source: 'gpx',
+    sport: 'mountain',
+    subSport: 'Trail Running',
+    title: 'Subida de Prueba Segmento',
+    description: null,
+    startedAt: new Date().toISOString(),
+    durationSec: 885,
+    movingTimeSec: 885,
+    distanceMeters: 3245,
+    elevationGain: 210,
+    elevationLoss: 0,
+    avgSpeedMs: 3.66,
+    maxSpeedMs: 4.5,
+    avgHr: 158,
+    maxHr: 174,
+    avgWatts: null,
+    normalizedPower: null,
+    maxWatts: null,
+    avgCadence: 166,
+    calories: 320,
+    tss: 44,
+    rpe: 7,
+    gearId: null,
+    worldName: null,
+    polyline: null,
+    startLat: 43.5,
+    startLon: -5.9,
+    points: routePts,
+    strengthLogs: [],
+    totalVolumeKg: null,
+    laps: [],
+    extras: null,
+    createdAt: new Date().toISOString(),
+  });
+
+  const built = buildSegmentFromRange({
+    activity: baseActivity,
+    points: routePts,
+    startDistM: climbs[0].startDistM,
+    endDistM: climbs[0].endDistM,
+    name: 'Test Ascenso Sintético',
+    category: 'climb',
+  });
+  assert.ok(built);
+  const createdSeg = createSegmentAndMatch(built);
+  assert.ok(createdSeg.matchedEfforts >= 1);
+
+  const directMatch = matchPointsToSegment(baseActivity, routePts, built);
+  assert.ok(directMatch && directMatch.durationSec > 100);
 });

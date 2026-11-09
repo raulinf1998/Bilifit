@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900">
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="48%" r="68%">
+      <stop offset="0%" stop-color="#c6cfbe" />
+      <stop offset="100%" stop-color="#bac4b4" />
+    </radialGradient>
+    <pattern id="grid" width="80" height="80" patternUnits="userSpaceOnUse">
+      <path d="M 80 0 L 0 0 0 80" fill="none" stroke="rgba(15,23,42,0.06)" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="900" fill="url(#bgGrad)" />
+  <rect width="1200" height="900" fill="url(#grid)" />
+  <path d="M -40 620 C 240 560 440 420 680 450 C 890 475 1020 350 1240 310" fill="none" stroke="#7da4b8" stroke-width="26" stroke-opacity="0.45" stroke-linecap="round" />
+  <ellipse cx="780" cy="610" rx="482.99999999999994" ry="302.4" fill="none" stroke="#6d7d67" stroke-opacity="0.18" stroke-width="1.5" stroke-dasharray="6 4" />
+  <ellipse cx="780" cy="610" rx="368.0" ry="230.39999999999998" fill="none" stroke="#6d7d67" stroke-opacity="0.18" stroke-width="1.5" stroke-dasharray="6 4" />
+  <ellipse cx="780" cy="610" rx="252.99999999999997" ry="158.4" fill="none" stroke="#6d7d67" stroke-opacity="0.18" stroke-width="1.5" stroke-dasharray="6 4" />
+  <ellipse cx="780" cy="610" rx="149.5" ry="93.6" fill="none" stroke="#6d7d67" stroke-opacity="0.18" stroke-width="1.5" stroke-dasharray="6 4" />
+  <path d="M 244.9 133.0 L 1061.2 211.3 L 1028.6 469.6 L 963.3 712.2 L 587.8 759.1 L 546.9 524.3 L 179.6 336.5 L 244.9 133.0" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M 244.9 133.0 L 1061.2 211.3 L 1028.6 469.6 L 963.3 712.2 L 587.8 759.1 L 546.9 524.3 L 179.6 336.5 L 244.9 133.0" fill="none" stroke="#475569" stroke-opacity="0.45" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="10 6" />
+  <path d="M 1061.2 211.3 L 734.7 414.8 L 546.9 524.3" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M 1061.2 211.3 L 734.7 414.8 L 546.9 524.3" fill="none" stroke="#475569" stroke-opacity="0.45" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="10 6" />
+  <circle cx="963.3" cy="712.2" r="7" fill="#10b981" stroke="#0f172a" stroke-width="2" />
+  <rect x="974.3" y="699.2" width="101.6" height="24" rx="6" fill="rgba(15,23,42,0.78)" />
+  <text x="983.3" y="715.2" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="700" fill="#f8fafc">Muur · 110m</text>
+  <circle cx="1060.0" cy="211.3" r="7" fill="#10b981" stroke="#0f172a" stroke-width="2" />
+  <rect x="1071.0" y="198.3" width="94.0" height="24" rx="6" fill="rgba(15,23,42,0.78)" />
+  <text x="1080.0" y="214.3" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="700" fill="#f8fafc">Oudenaarde</text>
+  <circle cx="546.9" cy="524.3" r="7" fill="#10b981" stroke="#0f172a" stroke-width="2" />
+  <rect x="557.9" y="511.3" width="139.6" height="24" rx="6" fill="rgba(15,23,42,0.78)" />
+  <text x="566.9" y="527.3" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="700" fill="#f8fafc">Taaienberg · 84m</text>
+  <circle cx="244.9" cy="133.0" r="7" fill="#10b981" stroke="#0f172a" stroke-width="2" />
+  <rect x="255.9" y="120.0" width="63.6" height="24" rx="6" fill="rgba(15,23,42,0.78)" />
+  <text x="264.9" y="136.0" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="700" fill="#f8fafc">Brujas</text>
+  <g transform="translate(56, 56)" opacity="0.72">
+    <circle cx="0" cy="0" r="22" fill="rgba(15,23,42,0.55)" stroke="rgba(255,255,255,0.4)" stroke-width="1.5"/>
+    <polygon points="0,-15 5,3 0,-1 -5,3" fill="#10b981"/>
+    <polygon points="0,15 5,3 0,6 -5,3" fill="#cbd5e1"/>
+    <text x="0" y="-25" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10" font-weight="800" fill="#0f172a">N</text>
+  </g>
+  <rect x="28" y="814" width="330" height="58" rx="12" fill="rgba(15,23,42,0.78)" stroke="rgba(255,255,255,0.16)" />
+  <circle cx="54" cy="843" r="8" fill="#10b981" />
+  <text x="74" y="840" font-family="system-ui,-apple-system,sans-serif" font-size="18" font-weight="800" letter-spacing="1.2" fill="#ffffff">BELGIUM</text>
+  <text x="74" y="860" font-family="system-ui,-apple-system,sans-serif" font-size="12" font-weight="500" fill="#cbd5e1">Flandes · Adoquines & Muros · MyWhoosh Virtual Map</text>
+</svg>

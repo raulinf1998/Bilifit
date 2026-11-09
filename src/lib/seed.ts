@@ -1,3 +1,5 @@
+import { computeSessionExtras, enrichPointsTelemetry } from '@/lib/analytics';
+import { getMyWhooshWorldByIdOrName } from '@/lib/mywhoosh-maps';
 import { encodePolyline } from '@/lib/polyline';
 import { calculateNormalizedPower, estimateActivityTSS } from '@/lib/metrics';
 import { DEFAULT_HOME_EQUIPMENT } from '@/lib/home-workouts';
@@ -89,29 +91,46 @@ function buildGpsLoop(
 }
 
 /**
- * Genera telemetría realista de una sesión en MyWhoosh (intervalos / puertos / tempo).
+ * Genera telemetría realista de una sesión en MyWhoosh (intervalos / puertos / tempo)
+ * con coordenadas GPS reales dentro del mundo correspondiente para dibujar el mapa virtual.
  */
 function buildMyWhooshTelemetry(
   durationSec: number,
   targetAvgWatts: number,
   mode: 'sweetspot' | 'vo2' | 'endurance' | 'climb',
-  baseHr: number
-): ActivityPoint[] {
+  baseHr: number,
+  worldName = 'Hudayriyat'
+): { points: ActivityPoint[]; polyline: string } {
   const sampleCount = 120;
   const points: ActivityPoint[] = [];
+  const coords: Array<[number, number]> = [];
   let cumDist = 0;
   let ele = 12;
+
+  const world = getMyWhooshWorldByIdOrName(worldName);
+  const [[sLat, wLon], [nLat, eLon]] = world?.bounds ?? [
+    [23.332, 54.955],
+    [23.382, 54.998],
+  ];
+  const centerLat = (sLat + nLat) / 2;
+  const centerLon = (wLon + eLon) / 2;
+  const radLat = (nLat - sLat) * 0.28;
+  const radLon = (eLon - wLon) * 0.28;
 
   for (let i = 0; i < sampleCount; i++) {
     const p = i / (sampleCount - 1);
     const t = Math.round(p * durationSec);
+    const angle = p * Math.PI * 2;
+    const wobble = Math.sin(angle * 3) * 0.16;
+    const lat = Math.round((centerLat + Math.sin(angle) * radLat * (1 + wobble)) * 1e6) / 1e6;
+    const lon = Math.round((centerLon + Math.cos(angle) * radLon * (1 - wobble * 0.6)) * 1e6) / 1e6;
+    coords.push([lat, lon]);
+
     let watts = targetAvgWatts;
 
     if (p < 0.12) {
-      // Calentamiento progresivo
       watts = Math.round(targetAvgWatts * (0.55 + (p / 0.12) * 0.35));
     } else if (p > 0.9) {
-      // Vuelta a la calma
       watts = Math.round(targetAvgWatts * 0.58);
     } else if (mode === 'vo2') {
       const block = Math.floor(((p - 0.12) / 0.78) * 10);
@@ -124,6 +143,7 @@ function buildMyWhooshTelemetry(
       ele = Math.round((12 + Math.sin(p * Math.PI) * 680) * 10) / 10;
     } else {
       watts = Math.round(targetAvgWatts + Math.sin(p * 18) * 18);
+      ele = Math.round((18 + Math.sin(p * Math.PI * 2) * 28) * 10) / 10;
     }
 
     const speed = Math.round((6.5 + (watts / 250) * 4.2 - (mode === 'climb' ? 2.4 : 0)) * 100) / 100;
@@ -137,16 +157,22 @@ function buildMyWhooshTelemetry(
 
     points.push({
       t,
+      lat,
+      lon,
       ele,
       watts,
       hr,
       cad,
       speed,
       dist: Math.round(cumDist),
+      temp: 22,
     });
   }
 
-  return points;
+  return {
+    points: enrichPointsTelemetry(points, 'mywhoosh'),
+    polyline: encodePolyline(coords),
+  };
 }
 
 export const SEED_PROFILE: AthleteProfile = {
@@ -426,7 +452,7 @@ export function buildSeedActivities(): SeedActivitySpec[] {
   const list: SeedActivitySpec[] = [];
 
   // 1. MyWhoosh Sweet Spot reciente (hace 1 día)
-  const mw1Pts = buildMyWhooshTelemetry(3300, 218, 'sweetspot', 152);
+  const mw1 = buildMyWhooshTelemetry(3300, 218, 'sweetspot', 152, 'Hudayriyat');
   list.push({
     id: 'act_seed_mw_1',
     source: 'strava',
@@ -437,7 +463,7 @@ export function buildSeedActivities(): SeedActivitySpec[] {
     daysAgo: 1,
     hour: 18,
     durationSec: 3300,
-    distanceMeters: mw1Pts[mw1Pts.length - 1].dist ?? 34200,
+    distanceMeters: mw1.points[mw1.points.length - 1].dist ?? 34200,
     elevationGain: 145,
     elevationLoss: 145,
     avgHr: 151,
@@ -448,7 +474,8 @@ export function buildSeedActivities(): SeedActivitySpec[] {
     rpe: 7,
     gearId: 'gear_trainer_bike',
     worldName: 'Hudayriyat',
-    points: mw1Pts,
+    points: mw1.points,
+    polyline: mw1.polyline,
   });
 
   // 2. Trail Montaña Naranco (hace 2 días)
@@ -471,7 +498,7 @@ export function buildSeedActivities(): SeedActivitySpec[] {
     avgCadence: 164,
     rpe: 8,
     gearId: 'gear_trail_shoes',
-    points: tr1.points,
+    points: enrichPointsTelemetry(tr1.points, 'mountain'),
     polyline: tr1.polyline,
   });
 
@@ -549,12 +576,12 @@ export function buildSeedActivities(): SeedActivitySpec[] {
     avgCadence: 174,
     rpe: 5,
     gearId: 'gear_road_shoes',
-    points: run1.points,
+    points: enrichPointsTelemetry(run1.points, 'running'),
     polyline: run1.polyline,
   });
 
   // 5. MyWhoosh Climb Colombia (hace 6 días)
-  const mw2Pts = buildMyWhooshTelemetry(4200, 229, 'climb', 158);
+  const mw2 = buildMyWhooshTelemetry(4200, 229, 'climb', 158, 'Colombia');
   list.push({
     id: 'act_seed_mw_2',
     source: 'fit',
@@ -565,7 +592,7 @@ export function buildSeedActivities(): SeedActivitySpec[] {
     daysAgo: 6,
     hour: 18,
     durationSec: 4200,
-    distanceMeters: mw2Pts[mw2Pts.length - 1].dist ?? 28400,
+    distanceMeters: mw2.points[mw2.points.length - 1].dist ?? 28400,
     elevationGain: 680,
     elevationLoss: 40,
     avgHr: 159,
@@ -576,7 +603,8 @@ export function buildSeedActivities(): SeedActivitySpec[] {
     rpe: 8,
     gearId: 'gear_trainer_bike',
     worldName: 'Colombia',
-    points: mw2Pts,
+    points: mw2.points,
+    polyline: mw2.polyline,
   });
 
   // Historial de 8 semanas adicionales para que el gráfico de Fitness/Fatiga (CTL/ATL/TSB) y semanal sea rico
@@ -586,7 +614,7 @@ export function buildSeedActivities(): SeedActivitySpec[] {
     if (kind === 0) {
       // Running
       const dur = 2600 + (idx % 3) * 450;
-      const runLoop = buildGpsLoop(43.364, -5.851, 0.013, 0.017, 225, 65, dur, 70, 150, 3.4);
+      const runLoop = buildGpsLoop(43.362, -5.849, 0.014, 0.018, 225, 65, dur, 70, 150, 3.4);
       list.push({
         id: `act_hist_run_${idx}`,
         source: 'strava',
@@ -605,7 +633,7 @@ export function buildSeedActivities(): SeedActivitySpec[] {
         avgCadence: 173,
         rpe: 6,
         gearId: 'gear_road_shoes',
-        points: runLoop.points,
+        points: enrichPointsTelemetry(runLoop.points, 'running'),
         polyline: runLoop.polyline,
       });
     } else if (kind === 1) {
@@ -613,9 +641,9 @@ export function buildSeedActivities(): SeedActivitySpec[] {
       const dur = 3000 + (idx % 3) * 600;
       const mode = idx % 3 === 0 ? 'vo2' : idx % 3 === 1 ? 'endurance' : 'sweetspot';
       const avgW = mode === 'vo2' ? 215 : mode === 'sweetspot' ? 222 : 190;
-      const pts = buildMyWhooshTelemetry(dur, avgW, mode, 148);
       const worlds = ['Arabia', 'Belgium', 'Hudayriyat', 'AlUla'];
       const world = worlds[idx % worlds.length];
+      const mwHist = buildMyWhooshTelemetry(dur, avgW, mode, 148, world);
       list.push({
         id: `act_hist_mw_${idx}`,
         source: 'gpx',
@@ -626,7 +654,7 @@ export function buildSeedActivities(): SeedActivitySpec[] {
         daysAgo: dAgo,
         hour: 18,
         durationSec: dur,
-        distanceMeters: pts[pts.length - 1].dist ?? 30000,
+        distanceMeters: mwHist.points[mwHist.points.length - 1].dist ?? 30000,
         elevationGain: 160 + (idx % 3) * 110,
         elevationLoss: 150,
         avgHr: mode === 'endurance' ? 136 : 154,
@@ -637,18 +665,19 @@ export function buildSeedActivities(): SeedActivitySpec[] {
         rpe: mode === 'endurance' ? 5 : 8,
         gearId: 'gear_trainer_bike',
         worldName: world,
-        points: pts,
+        points: mwHist.points,
+        polyline: mwHist.polyline,
       });
     } else if (kind === 2) {
       // Montaña
       const dur = 5400 + (idx % 3) * 1800;
-      const mtnLoop = buildGpsLoop(43.45, -5.24, 0.02, 0.026, 480, 520 + (idx % 2) * 200, dur, 80, 144, 2.0);
+      const mtnLoop = buildGpsLoop(43.385, -5.868, 0.017, 0.022, 210, 420 + (idx % 2) * 120, dur, 80, 144, 2.2);
       list.push({
         id: `act_hist_mtn_${idx}`,
         source: 'gpx',
         sport: 'mountain',
         subSport: idx % 2 === 0 ? 'Trail Running' : 'Senderismo / Montaña',
-        title: idx % 2 === 0 ? 'Salida Trail Sierra del Sueve' : 'Ruta de Montaña Cordillera Cantábrica',
+        title: idx % 2 === 0 ? 'Salida Trail Monte Naranco' : 'Ruta de Montaña Asturias',
         description: 'Ruta de desnivel acumulado para preparar salidas largas.',
         daysAgo: dAgo,
         hour: 9,
@@ -660,7 +689,7 @@ export function buildSeedActivities(): SeedActivitySpec[] {
         maxHr: 173,
         rpe: 7,
         gearId: 'gear_trail_shoes',
-        points: mtnLoop.points,
+        points: enrichPointsTelemetry(mtnLoop.points, 'mountain'),
         polyline: mtnLoop.polyline,
       });
     } else {
@@ -719,6 +748,24 @@ export function buildSeedActivityRows(profile: AthleteProfile) {
         ? Math.round((spec.distanceMeters / spec.durationSec) * 100) / 100
         : null;
     const startPt = spec.points.find((p) => typeof p.lat === 'number' && typeof p.lon === 'number');
+    const extras = computeSessionExtras(
+      {
+        sport: spec.sport,
+        durationSec: spec.durationSec,
+        movingTimeSec: spec.durationSec,
+        distanceMeters: spec.distanceMeters,
+        elevationGain: spec.elevationGain,
+        avgSpeedMs,
+        avgHr: spec.avgHr ?? null,
+        avgWatts: spec.avgWatts ?? null,
+        normalizedPower: np,
+        extras: {
+          deviceName: spec.sport === 'mywhoosh' ? 'MyWhoosh 5.4 + Wahoo KICKR' : spec.sport === 'strength' ? 'Bilifit App' : 'Reloj GPS',
+        },
+      },
+      spec.points
+    );
+
     return {
       id: spec.id,
       externalId: null,
@@ -752,6 +799,8 @@ export function buildSeedActivityRows(profile: AthleteProfile) {
       points: spec.points,
       strengthLogs: spec.strengthLogs ?? [],
       totalVolumeKg: spec.totalVolumeKg ?? null,
+      laps: [],
+      extras,
       createdAt: daysAgoIso(spec.daysAgo, spec.hour, 15),
     };
   });

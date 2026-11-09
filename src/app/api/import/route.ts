@@ -82,6 +82,8 @@ export async function POST(req: NextRequest) {
           points: act.points,
           strengthLogs: [],
           totalVolumeKg: null,
+          laps: act.laps ?? [],
+          extras: act.extras ?? null,
           createdAt: new Date().toISOString(),
         });
 

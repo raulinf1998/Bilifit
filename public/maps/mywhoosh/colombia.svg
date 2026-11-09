@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900">
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="48%" r="68%">
+      <stop offset="0%" stop-color="#9cb4a1" />
+      <stop offset="100%" stop-color="#a7bcac" />
+    </radialGradient>
+    <pattern id="grid" width="80" height="80" patternUnits="userSpaceOnUse">
+      <path d="M 80 0 L 0 0 0 80" fill="none" stroke="rgba(15,23,42,0.06)" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="900" fill="url(#bgGrad)" />
+  <rect width="1200" height="900" fill="url(#grid)" />
+  <ellipse cx="440" cy="420" rx="285" ry="193.8" fill="#849f8a" fill-opacity="0.35" stroke="#4e6a56" stroke-opacity="0.22" stroke-width="1.5" />
+  <ellipse cx="440" cy="420" rx="230" ry="156.4" fill="none" fill-opacity="0.35" stroke="#4e6a56" stroke-opacity="0.22" stroke-width="1.5" />
+  <ellipse cx="440" cy="420" rx="175" ry="119.00000000000001" fill="none" fill-opacity="0.35" stroke="#4e6a56" stroke-opacity="0.22" stroke-width="1.5" />
+  <ellipse cx="440" cy="420" rx="120" ry="81.60000000000001" fill="none" fill-opacity="0.35" stroke="#4e6a56" stroke-opacity="0.22" stroke-width="1.5" />
+  <ellipse cx="760" cy="340" rx="245" ry="166.60000000000002" fill="#849f8a" fill-opacity="0.35" stroke="#4e6a56" stroke-opacity="0.22" stroke-width="1.5" />
+  <ellipse cx="760" cy="340" rx="190" ry="129.20000000000002" fill="none" fill-opacity="0.35" stroke="#4e6a56" stroke-opacity="0.22" stroke-width="1.5" />
+  <ellipse cx="760" cy="340" rx="135" ry="91.80000000000001" fill="none" fill-opacity="0.35" stroke="#4e6a56" stroke-opacity="0.22" stroke-width="1.5" />
+  <ellipse cx="760" cy="340" rx="80" ry="54.400000000000006" fill="none" fill-opacity="0.35" stroke="#4e6a56" stroke-opacity="0.22" stroke-width="1.5" />
+  <ellipse cx="620" cy="560" rx="225" ry="153.0" fill="#849f8a" fill-opacity="0.35" stroke="#4e6a56" stroke-opacity="0.22" stroke-width="1.5" />
+  <ellipse cx="620" cy="560" rx="170" ry="115.60000000000001" fill="none" fill-opacity="0.35" stroke="#4e6a56" stroke-opacity="0.22" stroke-width="1.5" />
+  <ellipse cx="620" cy="560" rx="115" ry="78.2" fill="none" fill-opacity="0.35" stroke="#4e6a56" stroke-opacity="0.22" stroke-width="1.5" />
+  <ellipse cx="620" cy="560" rx="60" ry="40.800000000000004" fill="none" fill-opacity="0.35" stroke="#4e6a56" stroke-opacity="0.22" stroke-width="1.5" />
+  <path d="M 60 820 C 310 660 470 590 680 650 C 870 705 1020 520 1210 470" fill="none" stroke="#6ea0b2" stroke-width="18" stroke-opacity="0.45" stroke-linecap="round" />
+  <path d="M 594.7 725.2 L 244.2 576.7 L 318.6 436.9 L 594.7 227.2 L 881.4 174.8 L 1019.5 489.3 L 594.7 725.2" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M 594.7 725.2 L 244.2 576.7 L 318.6 436.9 L 594.7 227.2 L 881.4 174.8 L 1019.5 489.3 L 594.7 725.2" fill="none" stroke="#475569" stroke-opacity="0.45" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="10 6" />
+  <circle cx="881.4" cy="174.8" r="7" fill="#eab308" stroke="#0f172a" stroke-width="2" />
+  <rect x="892.4" y="161.8" width="185.2" height="24" rx="6" fill="rgba(15,23,42,0.78)" />
+  <text x="901.4" y="177.8" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="700" fill="#f8fafc">Alto de Letras · 1482m</text>
+  <circle cx="318.6" cy="436.9" r="7" fill="#eab308" stroke="#0f172a" stroke-width="2" />
+  <rect x="329.6" y="423.9" width="139.6" height="24" rx="6" fill="rgba(15,23,42,0.78)" />
+  <text x="338.6" y="439.9" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="700" fill="#f8fafc">La Línea · 1150m</text>
+  <circle cx="594.7" cy="725.2" r="7" fill="#eab308" stroke="#0f172a" stroke-width="2" />
+  <rect x="605.7" y="712.2" width="124.4" height="24" rx="6" fill="rgba(15,23,42,0.78)" />
+  <text x="614.7" y="728.2" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="700" fill="#f8fafc">Valle Cafetero</text>
+  <g transform="translate(56, 56)" opacity="0.72">
+    <circle cx="0" cy="0" r="22" fill="rgba(15,23,42,0.55)" stroke="rgba(255,255,255,0.4)" stroke-width="1.5"/>
+    <polygon points="0,-15 5,3 0,-1 -5,3" fill="#eab308"/>
+    <polygon points="0,15 5,3 0,6 -5,3" fill="#cbd5e1"/>
+    <text x="0" y="-25" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10" font-weight="800" fill="#0f172a">N</text>
+  </g>
+  <rect x="28" y="814" width="330" height="58" rx="12" fill="rgba(15,23,42,0.78)" stroke="rgba(255,255,255,0.16)" />
+  <circle cx="54" cy="843" r="8" fill="#eab308" />
+  <text x="74" y="840" font-family="system-ui,-apple-system,sans-serif" font-size="18" font-weight="800" letter-spacing="1.2" fill="#ffffff">COLOMBIA</text>
+  <text x="74" y="860" font-family="system-ui,-apple-system,sans-serif" font-size="12" font-weight="500" fill="#cbd5e1">Cordillera de los Andes · MyWhoosh Virtual Map</text>
+</svg>
