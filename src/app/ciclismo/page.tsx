@@ -1,11 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
-import { Award, Bike, Flame, Gauge, Zap } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Award, Bike, Flame, Gauge, Globe, Zap } from 'lucide-react';
 import ActivityImporter from '@/components/ActivityImporter';
+import ActivityMap from '@/components/ActivityMap';
 import { SportBadge } from '@/components/SportBadge';
 import { formatDistanceKm, formatDuration, getCogganPowerZones } from '@/lib/metrics';
+import { MYWHOOSH_WORLDS, getMyWhooshWorldByIdOrName } from '@/lib/mywhoosh-maps';
 import type { Activity, AthleteProfile } from '@/types';
 
 export default function CyclingMyWhooshPage() {
@@ -13,6 +15,7 @@ export default function CyclingMyWhooshPage() {
   const [profile, setProfile] = useState<AthleteProfile | null>(null);
   const [ftpDraft, setFtpDraft] = useState(245);
   const [savedNotice, setSavedNotice] = useState(false);
+  const [selectedWorldId, setSelectedWorldId] = useState<string>('hudayriyat');
 
   const load = useCallback(async () => {
     const [mwRes, cycRes, profRes] = await Promise.all([
@@ -59,6 +62,27 @@ export default function CyclingMyWhooshPage() {
   const wKg = (ftp / weightKg).toFixed(2);
   const zones = getCogganPowerZones(ftp);
 
+  const worldStats = useMemo(() => {
+    const map = new Map<string, { count: number; km: number; latestActivity: Activity | null }>();
+    for (const w of MYWHOOSH_WORLDS) {
+      map.set(w.id, { count: 0, km: 0, latestActivity: null });
+    }
+    for (const act of myWhooshActs) {
+      const w = getMyWhooshWorldByIdOrName(act.worldName) ?? getMyWhooshWorldByIdOrName(act.title);
+      if (!w) continue;
+      const entry = map.get(w.id);
+      if (entry) {
+        entry.count += 1;
+        entry.km += act.distanceMeters / 1000;
+        if (!entry.latestActivity) entry.latestActivity = act;
+      }
+    }
+    return map;
+  }, [myWhooshActs]);
+
+  const selectedWorld = getMyWhooshWorldByIdOrName(selectedWorldId) ?? MYWHOOSH_WORLDS[0];
+  const selectedWorldLatest = worldStats.get(selectedWorld.id)?.latestActivity ?? null;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -68,7 +92,7 @@ export default function CyclingMyWhooshPage() {
             Centro MyWhoosh y Ciclismo
           </h1>
           <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
-            Análisis de vatios, FTP, W/kg, zonas Coggan e importación directa de archivos .GPX/.FIT de MyWhoosh o Strava.
+            Mapas interactivos por mundo de MyWhoosh, análisis de vatios, FTP, W/kg, zonas Coggan e importación .GPX/.FIT.
           </p>
         </div>
       </div>
@@ -129,6 +153,72 @@ export default function CyclingMyWhooshPage() {
           <div className="text-2xl font-bold text-amber-400 tabular-nums">{bestNp} W</div>
           <div className="text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>
             {(bestNp / weightKg).toFixed(2)} W/kg normalizados
+          </div>
+        </div>
+      </div>
+
+      {/* Atlas Interactivo de Mundos de MyWhoosh */}
+      <div className="card-surface p-5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 className="text-base font-bold flex items-center gap-2">
+              <Globe className="h-4 w-4 text-cyan-400" />
+              Atlas de Mundos Virtuales de MyWhoosh
+            </h2>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              Selecciona cualquier mundo para explorar su cartografía virtual en Leaflet junto con tu última ruta grabada.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          <div className="lg:col-span-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-2.5 max-h-[380px] overflow-y-auto pr-1">
+            {MYWHOOSH_WORLDS.map((w) => {
+              const st = worldStats.get(w.id);
+              const active = w.id === selectedWorld.id;
+              return (
+                <button
+                  key={w.id}
+                  type="button"
+                  onClick={() => setSelectedWorldId(w.id)}
+                  className={`text-left rounded-xl border p-2.5 transition-all ${
+                    active ? 'border-cyan-400 bg-cyan-500/10' : 'hover:border-slate-600'
+                  }`}
+                  style={!active ? { background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' } : undefined}
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="font-semibold text-xs truncate">{w.name}</span>
+                    {st && st.count > 0 && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-semibold">
+                        {st.count}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                    {w.regionLabel} · {st && st.km > 0 ? `${Math.round(st.km)} km` : 'Sin rutas'}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="lg:col-span-7 space-y-2.5">
+            <ActivityMap
+              sport="mywhoosh"
+              worldName={selectedWorld.name}
+              polyline={selectedWorldLatest?.polyline ?? null}
+              heightClass="h-80"
+            />
+            <div className="flex flex-wrap items-center justify-between text-xs px-1" style={{ color: 'var(--text-secondary)' }}>
+              <span>
+                <strong>{selectedWorld.name}</strong> ({selectedWorld.regionLabel}) — {selectedWorld.subtitle}
+              </span>
+              {selectedWorldLatest && (
+                <Link href={`/actividades/${selectedWorldLatest.id}`} className="text-cyan-400 hover:underline font-medium">
+                  Ver última sesión: {selectedWorldLatest.title} →
+                </Link>
+              )}
+            </div>
           </div>
         </div>
       </div>

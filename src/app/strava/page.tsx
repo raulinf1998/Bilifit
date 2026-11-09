@@ -262,6 +262,21 @@ export default function StravaAndImportPage() {
             </p>
           </div>
           <ActivityImporter />
+          <div
+            className="rounded-xl border p-3.5 text-xs space-y-1.5"
+            style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
+          >
+            <div className="font-semibold text-emerald-400">
+              Tip sin suscripción Strava: Health Sync + Google Drive / Proxmox
+            </div>
+            <p>
+              Si no tienes Strava Premium, puedes usar <strong>Health Sync</strong> en Android (origen Strava → destino{' '}
+              <strong>Google Drive</strong> en formato .FIT/.GPX) o exportar el archivo masivo desde{' '}
+              <em>strava.com/settings/account → Descargar archivo</em>. También puedes automatizar en tu LXC de Proxmox{' '}
+              <code>192.168.1.47</code> un script con <code>rclone</code> que envíe nuevos archivos a{' '}
+              <code>POST /api/import</code> (Bilifit omite duplicados automáticamente).
+            </p>
+          </div>
         </div>
       </div>
     </div>

@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900">
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="48%" r="68%">
+      <stop offset="0%" stop-color="#c4cebe" />
+      <stop offset="100%" stop-color="#7ea8bc" />
+    </radialGradient>
+    <pattern id="grid" width="80" height="80" patternUnits="userSpaceOnUse">
+      <path d="M 80 0 L 0 0 0 80" fill="none" stroke="rgba(15,23,42,0.06)" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="900" fill="url(#bgGrad)" />
+  <rect width="1200" height="900" fill="url(#grid)" />
+  <path d="M 140 520 C 120 260 320 110 620 130 C 920 150 1070 300 1030 560 C 980 760 710 810 440 770 C 220 735 155 660 140 520 Z" fill="#c4cebe" stroke="#5d7463" stroke-opacity="0.25" stroke-width="2" />
+  <path d="M 250 490 C 240 310 390 200 610 215 C 830 230 930 350 900 530 C 860 675 660 710 460 675 C 310 645 260 580 250 490 Z" fill="#adbda7" fill-opacity="0.65" />
+  <path d="M 0 800 Q 320 730 650 820 T 1200 790 L 1200 900 L 0 900 Z" fill="#6d98ae" fill-opacity="0.35" />
+  <path d="M 582.4 473.7 L 317.6 221.1 L 935.3 157.9 L 1023.5 631.6 L 458.8 726.3 L 582.4 473.7" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M 582.4 473.7 L 317.6 221.1 L 935.3 157.9 L 1023.5 631.6 L 458.8 726.3 L 582.4 473.7" fill="none" stroke="#475569" stroke-opacity="0.45" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="10 6" />
+  <circle cx="582.4" cy="473.7" r="7" fill="#38bdf8" stroke="#0f172a" stroke-width="2" />
+  <rect x="593.4" y="460.7" width="154.8" height="24" rx="6" fill="rgba(15,23,42,0.78)" />
+  <text x="602.4" y="476.7" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="700" fill="#f8fafc">Championship Arena</text>
+  <circle cx="935.3" cy="157.9" r="7" fill="#38bdf8" stroke="#0f172a" stroke-width="2" />
+  <rect x="946.3" y="144.9" width="185.2" height="24" rx="6" fill="rgba(15,23,42,0.78)" />
+  <text x="955.3" y="160.9" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="700" fill="#f8fafc">Endurance Climb · 692m</text>
+  <g transform="translate(56, 56)" opacity="0.72">
+    <circle cx="0" cy="0" r="22" fill="rgba(15,23,42,0.55)" stroke="rgba(255,255,255,0.4)" stroke-width="1.5"/>
+    <polygon points="0,-15 5,3 0,-1 -5,3" fill="#38bdf8"/>
+    <polygon points="0,15 5,3 0,6 -5,3" fill="#cbd5e1"/>
+    <text x="0" y="-25" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10" font-weight="800" fill="#0f172a">N</text>
+  </g>
+  <rect x="28" y="814" width="330" height="58" rx="12" fill="rgba(15,23,42,0.78)" stroke="rgba(255,255,255,0.16)" />
+  <circle cx="54" cy="843" r="8" fill="#38bdf8" />
+  <text x="74" y="840" font-family="system-ui,-apple-system,sans-serif" font-size="18" font-weight="800" letter-spacing="1.2" fill="#ffffff">MYWHOOSH WORLD</text>
+  <text x="74" y="860" font-family="system-ui,-apple-system,sans-serif" font-size="12" font-weight="500" fill="#cbd5e1">Isla Central · Campeonatos · MyWhoosh Virtual Map</text>
+</svg>

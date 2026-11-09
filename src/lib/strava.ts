@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { computeSessionExtras, enrichPointsTelemetry } from '@/lib/analytics';
 import {
   createActivity,
   findDuplicateActivity,
@@ -6,9 +7,10 @@ import {
   getDb,
 } from '@/lib/db';
 import { calculateNormalizedPower, estimateActivityTSS } from '@/lib/metrics';
+import { resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
 import { detectMyWhooshWorld } from '@/lib/parsers/gpx';
 import { decodePolyline, downsamplePoints } from '@/lib/polyline';
-import type { ActivityPoint, SportType, StravaConnectionStatus } from '@/types';
+import type { ActivityLap, ActivityPoint, SportType, StravaConnectionStatus } from '@/types';
 
 interface StravaDbRow {
   client_id: string | null;
@@ -195,11 +197,22 @@ export async function getValidStravaAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-export function mapStravaSport(stravaType: string, sportType: string, name: string, deviceName?: string): { sport: SportType; subSport: string; worldName?: string } {
+export function mapStravaSport(
+  stravaType: string,
+  sportType: string,
+  name: string,
+  deviceName?: string,
+  coords: Array<[number, number]> = []
+): { sport: SportType; subSport: string; worldName?: string } {
   const t = (sportType || stravaType || '').toLowerCase();
   const titleLower = name.toLowerCase();
   const devLower = (deviceName || '').toLowerCase();
-  const worldName = detectMyWhooshWorld(`${name} ${deviceName || ''}`);
+  const resolvedWorld = resolveMyWhooshWorldForActivity({
+    worldName: detectMyWhooshWorld(`${name} ${deviceName || ''}`),
+    title: name,
+    coords,
+  });
+  const worldName = resolvedWorld?.world.name ?? detectMyWhooshWorld(`${name} ${deviceName || ''}`);
 
   if (t === 'virtualride' || devLower.includes('mywhoosh') || titleLower.includes('mywhoosh') || titleLower.includes('zwift')) {
     return { sport: 'mywhoosh', subSport: 'MyWhoosh Indoor', worldName };
@@ -252,7 +265,7 @@ interface StravaSummaryActivity {
 async function fetchStravaStreams(accessToken: string, stravaId: number): Promise<ActivityPoint[]> {
   try {
     const res = await fetch(
-      `https://www.strava.com/api/v3/activities/${stravaId}/streams?keys=time,latlng,altitude,heartrate,watts,cadence,velocity_smooth,distance&key_by_type=true`,
+      `https://www.strava.com/api/v3/activities/${stravaId}/streams?keys=time,latlng,altitude,heartrate,watts,cadence,velocity_smooth,distance,temp,grade_smooth&key_by_type=true`,
       {
         headers: { Authorization: `Bearer ${accessToken}` },
       }
@@ -269,6 +282,8 @@ async function fetchStravaStreams(accessToken: string, stravaId: number): Promis
     const cad = (json.cadence?.data as number[] | undefined) ?? [];
     const speed = (json.velocity_smooth?.data as number[] | undefined) ?? [];
     const dist = (json.distance?.data as number[] | undefined) ?? [];
+    const temp = (json.temp?.data as number[] | undefined) ?? [];
+    const grade = (json.grade_smooth?.data as number[] | undefined) ?? [];
 
     const points: ActivityPoint[] = [];
     for (let i = 0; i < times.length; i++) {
@@ -282,9 +297,66 @@ async function fetchStravaStreams(accessToken: string, stravaId: number): Promis
         cad: typeof cad[i] === 'number' ? Math.round(cad[i]) : undefined,
         speed: typeof speed[i] === 'number' ? Math.round(speed[i] * 100) / 100 : undefined,
         dist: typeof dist[i] === 'number' ? Math.round(dist[i]) : undefined,
+        temp: typeof temp[i] === 'number' ? Math.round(temp[i] * 10) / 10 : undefined,
+        grade: typeof grade[i] === 'number' ? Math.round(grade[i] * 10) / 10 : undefined,
       });
     }
-    return downsamplePoints(points, 600);
+    return downsamplePoints(points, 1800);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchStravaLaps(accessToken: string, stravaId: number, sport: SportType): Promise<ActivityLap[]> {
+  try {
+    const res = await fetch(`https://www.strava.com/api/v3/activities/${stravaId}/laps`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return [];
+    const list = (await res.json()) as Array<{
+      lap_index?: number;
+      name?: string;
+      elapsed_time?: number;
+      moving_time?: number;
+      distance?: number;
+      average_speed?: number;
+      max_speed?: number;
+      total_elevation_gain?: number;
+      average_heartrate?: number;
+      max_heartrate?: number;
+      average_watts?: number;
+      average_cadence?: number;
+    }>;
+    let cumDist = 0;
+    return list.map((lap, idx) => {
+      const dist = Math.round(lap.distance ?? 0);
+      const startDistM = Math.round(cumDist);
+      cumDist += dist;
+      const rawCad = lap.average_cadence;
+      const cad =
+        rawCad && (sport === 'running' || sport === 'mountain') && rawCad < 115
+          ? Math.round(rawCad * 2)
+          : rawCad
+            ? Math.round(rawCad)
+            : null;
+      return {
+        lapNumber: lap.lap_index ?? idx + 1,
+        name: lap.name || `Vuelta ${idx + 1}`,
+        startDistM,
+        endDistM: Math.round(cumDist),
+        distanceMeters: dist,
+        durationSec: Math.round(lap.elapsed_time ?? 0),
+        movingTimeSec: Math.round(lap.moving_time ?? lap.elapsed_time ?? 0),
+        avgSpeedMs: lap.average_speed ? Math.round(lap.average_speed * 100) / 100 : null,
+        maxSpeedMs: lap.max_speed ? Math.round(lap.max_speed * 100) / 100 : null,
+        elevationGain: Math.round(lap.total_elevation_gain ?? 0),
+        elevationLoss: 0,
+        avgHr: lap.average_heartrate ? Math.round(lap.average_heartrate) : null,
+        maxHr: lap.max_heartrate ? Math.round(lap.max_heartrate) : null,
+        avgWatts: lap.average_watts ? Math.round(lap.average_watts) : null,
+        avgCadence: cad,
+      };
+    });
   } catch {
     return [];
   }
@@ -309,7 +381,8 @@ export async function syncStravaActivities(limit = 30, fetchStreams = true): Pro
 
   for (const item of list) {
     const externalId = `strava_${item.id}`;
-    const mapped = mapStravaSport(item.type, item.sport_type ?? item.type, item.name, item.device_name);
+    const polylineCoords = item.map?.summary_polyline ? decodePolyline(item.map.summary_polyline) : [];
+    const mapped = mapStravaSport(item.type, item.sport_type ?? item.type, item.name, item.device_name, polylineCoords);
 
     if (findDuplicateActivity(item.start_date, mapped.sport, item.distance ?? 0, externalId)) {
       skipped++;
@@ -317,24 +390,28 @@ export async function syncStravaActivities(limit = 30, fetchStreams = true): Pro
     }
 
     let points: ActivityPoint[] = [];
+    let laps: ActivityLap[] = [];
     if (fetchStreams && imported < 15) {
-      points = await fetchStravaStreams(accessToken, item.id);
+      [points, laps] = await Promise.all([
+        fetchStravaStreams(accessToken, item.id),
+        fetchStravaLaps(accessToken, item.id, mapped.sport),
+      ]);
     }
 
     const polyline = item.map?.summary_polyline || null;
-    if (points.length === 0 && polyline) {
-      const coords = decodePolyline(polyline);
-      points = coords.map(([lat, lon], idx) => ({
-        t: Math.round((idx / Math.max(1, coords.length - 1)) * (item.moving_time || item.elapsed_time || 1)),
+    if (points.length === 0 && polylineCoords.length > 0) {
+      points = polylineCoords.map(([lat, lon], idx) => ({
+        t: Math.round((idx / Math.max(1, polylineCoords.length - 1)) * (item.moving_time || item.elapsed_time || 1)),
         lat,
         lon,
       }));
     }
 
-    // Strava reporta cadencia de carrera como pasos de un pie (rpm) -> doblar a spm para running/mountain
+    points = enrichPointsTelemetry(points, mapped.sport);
+
     const rawCad = item.average_cadence;
     const adjustedCadence =
-      rawCad && (mapped.sport === 'running' || mapped.sport === 'mountain') && rawCad < 120
+      rawCad && (mapped.sport === 'running' || mapped.sport === 'mountain') && rawCad < 115
         ? Math.round(rawCad * 2)
         : rawCad
           ? Math.round(rawCad)
@@ -357,6 +434,25 @@ export async function syncStravaActivities(limit = 30, fetchStreams = true): Pro
         elevationGain: item.total_elevation_gain ?? 0,
       },
       profile
+    );
+
+    const extras = computeSessionExtras(
+      {
+        sport: mapped.sport,
+        durationSec: Math.round(item.elapsed_time ?? 0),
+        movingTimeSec: Math.round(item.moving_time ?? item.elapsed_time ?? 0),
+        distanceMeters: Math.round(item.distance ?? 0),
+        elevationGain: Math.round(item.total_elevation_gain ?? 0),
+        avgSpeedMs: item.average_speed ?? null,
+        avgHr: item.average_heartrate ? Math.round(item.average_heartrate) : null,
+        avgWatts: item.average_watts ? Math.round(item.average_watts) : null,
+        normalizedPower: np,
+        extras: {
+          deviceName: item.device_name ?? null,
+          workKj: item.kilojoules ? Math.round(item.kilojoules) : null,
+        },
+      },
+      points
     );
 
     createActivity({
@@ -392,6 +488,8 @@ export async function syncStravaActivities(limit = 30, fetchStreams = true): Pro
       points,
       strengthLogs: [],
       totalVolumeKg: null,
+      laps,
+      extras,
       createdAt: new Date().toISOString(),
     });
 

@@ -131,7 +131,7 @@ export function computeElevationGainLoss(
 /**
  * Reduce una serie de puntos GPS/telemetría conservando la fidelidad de ruta y métricas.
  */
-export function downsamplePoints(points: ActivityPoint[], maxPoints = 600): ActivityPoint[] {
+export function downsamplePoints(points: ActivityPoint[], maxPoints = 1800): ActivityPoint[] {
   if (points.length <= maxPoints) return points;
   const step = (points.length - 1) / (maxPoints - 1);
   const result: ActivityPoint[] = [];
