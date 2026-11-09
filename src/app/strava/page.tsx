@@ -161,9 +161,9 @@ export default function StravaAndImportPage() {
                 y crea una aplicación (requiere suscripción Strava activa en el programa Standard desde junio 2026).
               </li>
               <li>
-                Pon como <strong>Authorization Callback Domain</strong> el dominio de esta app (por ejemplo{' '}
+                Pon como <strong>Authorization Callback Domain</strong> el dominio o IP de esta app (por ejemplo{' '}
                 <code className="px-1 py-0.5 rounded bg-slate-800 text-cyan-300">
-                  {status?.redirectUriHint ? new URL(status.redirectUriHint).host : 'tu-dominio'}
+                  {status?.redirectUriHint ? new URL(status.redirectUriHint).hostname : '192.168.1.47'}
                 </code>
                 ).
               </li>

@@ -41,6 +41,15 @@ Abre `http://localhost:3000`. En el primer arranque, Bilifit crea la base de dat
 
 ---
 
+### Despliegue en Proxmox VE (Contenedor LXC o Docker)
+
+El repositorio incluye configuración lista para producción (`Dockerfile`, `docker-compose.yml` y scripts para Proxmox LXC + Nginx + systemd) preparada para servir en tu red local (por ejemplo `http://192.168.1.47`):
+
+- **Docker Compose**: `docker compose up -d --build` (base de datos persistente en `./data/bilifit.db`).
+- **Proxmox LXC nativo**: consulta la guía completa en [`deploy/proxmox/README.md`](deploy/proxmox/README.md) o ejecuta `bash deploy/proxmox/install-lxc.sh` dentro de tu contenedor Debian/Ubuntu.
+
+---
+
 ## Scripts Disponibles
 
 - `npm run dev`: Servidor de desarrollo en `0.0.0.0:3000`
