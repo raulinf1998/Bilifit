@@ -1,0 +1,33 @@
+services:
+  bilifit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bilifit
+    restart: unless-stopped
+    ports:
+      - "${BILIFIT_PORT:-3000}:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      NODE_ENV: production
+      HOSTNAME: "0.0.0.0"
+      PORT: "3000"
+      BILIFIT_DB_PATH: /app/data/bilifit.db
+      TZ: ${TZ:-Europe/Madrid}
+      STRAVA_CLIENT_ID: ${STRAVA_CLIENT_ID:-}
+      STRAVA_CLIENT_SECRET: ${STRAVA_CLIENT_SECRET:-}
+      STRAVA_REDIRECT_URI: ${STRAVA_REDIRECT_URI:-}
+      STRAVA_WEBHOOK_VERIFY_TOKEN: ${STRAVA_WEBHOOK_VERIFY_TOKEN:-bilifit_webhook_token}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

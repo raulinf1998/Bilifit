@@ -1,0 +1,1198 @@
+import type {
+  Exercise,
+  HomeEquipment,
+  RoutineExerciseItem,
+  RoutineGoal,
+} from '@/types';
+
+export const DEFAULT_HOME_EQUIPMENT: HomeEquipment[] = [
+  {
+    id: 'mat',
+    name: 'Esterilla / Colchoneta',
+    category: 'accesorio',
+    description: 'Para trabajo de core, movilidad, flexiones y suelo.',
+    owned: true,
+    details: 'Antideslizante',
+  },
+  {
+    id: 'dumbbells',
+    name: 'Mancuernas',
+    category: 'peso_libre',
+    description: 'Mancuernas ajustables o juego de varios pesos.',
+    owned: true,
+    details: '2 x 2-24 kg',
+  },
+  {
+    id: 'bands',
+    name: 'Bandas elásticas',
+    category: 'resistencia',
+    description: 'Bandas largas y mini-bands para activación de glúteo, remo y movilidad.',
+    owned: true,
+    details: 'Ligera, media y fuerte',
+  },
+  {
+    id: 'pullup_bar',
+    name: 'Barra de dominadas',
+    category: 'calistenia',
+    description: 'Barra de puerta o pared para tracción vertical y core colgado.',
+    owned: false,
+    details: null,
+  },
+  {
+    id: 'kettlebell',
+    name: 'Kettlebell / Pesa rusa',
+    category: 'peso_libre',
+    description: 'Ideal para swings, potencia de cadera, cargadas y estabilidad.',
+    owned: false,
+    details: '16 kg',
+  },
+  {
+    id: 'bench',
+    name: 'Banco regulable / Cajón estable',
+    category: 'accesorio',
+    description: 'Para press, búlgaras, step-ups y remos con apoyo.',
+    owned: false,
+    details: null,
+  },
+  {
+    id: 'barbell',
+    name: 'Barra con discos',
+    category: 'peso_libre',
+    description: 'Barra olímpica o estándar con discos para básicos pesados.',
+    owned: false,
+    details: null,
+  },
+  {
+    id: 'trx',
+    name: 'TRX / Anillas de suspensión',
+    category: 'calistenia',
+    description: 'Entrenamiento en suspensión para tracción, core y estabilidad.',
+    owned: false,
+    details: null,
+  },
+  {
+    id: 'step_box',
+    name: 'Cajón pliométrico / Step',
+    category: 'accesorio',
+    description: 'Muy útil para fuerza específica de trail running y montaña.',
+    owned: false,
+    details: '40-50 cm',
+  },
+  {
+    id: 'jump_rope',
+    name: 'Comba / Cuerda',
+    category: 'cardio',
+    description: 'Reactividad de tobillo (corredores) y acondicionamiento HIIT.',
+    owned: true,
+    details: null,
+  },
+  {
+    id: 'ab_wheel',
+    name: 'Rueda abdominal',
+    category: 'accesorio',
+    description: 'Trabajo intenso de core anti-extensión para ciclismo y running.',
+    owned: false,
+    details: null,
+  },
+  {
+    id: 'roller_foam',
+    name: 'Foam Roller / Rodillo miofascial',
+    category: 'accesorio',
+    description: 'Movilidad torácica, descarga muscular y recuperación.',
+    owned: true,
+    details: null,
+  },
+  {
+    id: 'indoor_trainer',
+    name: 'Rodillo / Bici Indoor (MyWhoosh)',
+    category: 'cardio',
+    description: 'Bicicleta estática o rodillo inteligente conectado a MyWhoosh.',
+    owned: true,
+    details: 'Smart Trainer',
+  },
+];
+
+export const DEFAULT_EXERCISES: Exercise[] = [
+  // === PESO CORPORAL / ESTERILLA ===
+  {
+    id: 'ex_pushup',
+    name: 'Flexiones de pecho',
+    muscleGroup: 'pecho',
+    secondaryMuscles: ['hombros', 'brazos', 'core'],
+    requiredEquipment: [],
+    difficulty: 'principiante',
+    pattern: 'empuje',
+    sportBenefit: ['general', 'mywhoosh'],
+    defaultSets: 3,
+    defaultReps: '10-15',
+    restSeconds: 60,
+    instructions: 'Cuerpo alineado desde cabeza a talones, codos a 45° respecto al torso y empuje controlado.',
+  },
+  {
+    id: 'ex_decline_pushup',
+    name: 'Flexiones declinadas (pies elevados)',
+    muscleGroup: 'pecho',
+    secondaryMuscles: ['hombros', 'core'],
+    requiredEquipment: ['bench'],
+    difficulty: 'intermedio',
+    pattern: 'empuje',
+    sportBenefit: ['general'],
+    defaultSets: 3,
+    defaultReps: '10-12',
+    restSeconds: 75,
+    instructions: 'Apoya los pies en el banco o cajón para aumentar la carga en haz clavicular y hombros.',
+  },
+  {
+    id: 'ex_pike_pushup',
+    name: 'Flexiones en pica (hombros)',
+    muscleGroup: 'hombros',
+    secondaryMuscles: ['brazos', 'pecho'],
+    requiredEquipment: [],
+    difficulty: 'intermedio',
+    pattern: 'empuje',
+    sportBenefit: ['general'],
+    defaultSets: 3,
+    defaultReps: '8-12',
+    restSeconds: 75,
+    instructions: 'Cadera alta formando una V invertida, lleva la coronilla hacia delante entre las manos.',
+  },
+  {
+    id: 'ex_air_squat',
+    name: 'Sentadilla controlada con pausa',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['core'],
+    requiredEquipment: [],
+    difficulty: 'principiante',
+    pattern: 'rodilla',
+    sportBenefit: ['running', 'mountain', 'general'],
+    defaultSets: 3,
+    defaultReps: '15-20',
+    restSeconds: 60,
+    instructions: 'Baja en 3 segundos hasta romper el paralelo, pausa 1 segundo abajo y sube explosivo.',
+  },
+  {
+    id: 'ex_bulgarian_bw',
+    name: 'Sentadilla búlgara (peso corporal)',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['core'],
+    requiredEquipment: [],
+    difficulty: 'intermedio',
+    pattern: 'unilateral',
+    sportBenefit: ['running', 'mountain', 'mywhoosh'],
+    defaultSets: 3,
+    defaultReps: '10 por pierna',
+    restSeconds: 60,
+    instructions: 'Empeine trasero apoyado en silla/sofá o escalón. Mantén la rodilla alineada con el segundo dedo.',
+  },
+  {
+    id: 'ex_single_leg_glute_bridge',
+    name: 'Puente de glúteo a una pierna',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['core'],
+    requiredEquipment: ['mat'],
+    difficulty: 'principiante',
+    pattern: 'bisagra',
+    sportBenefit: ['running', 'mountain', 'mywhoosh'],
+    defaultSets: 3,
+    defaultReps: '12 por pierna',
+    restSeconds: 45,
+    instructions: 'Fundamental para corredores y ciclistas: extiende cadera apretando glúteo sin arquear zona lumbar.',
+  },
+  {
+    id: 'ex_nordic_eccentric_calf',
+    name: 'Elevaciones excéntricas de gemelo y sóleo',
+    muscleGroup: 'piernas',
+    secondaryMuscles: [],
+    requiredEquipment: [],
+    difficulty: 'principiante',
+    pattern: 'unilateral',
+    sportBenefit: ['running', 'mountain'],
+    defaultSets: 3,
+    defaultReps: '15 por pierna',
+    restSeconds: 45,
+    instructions: 'Sube rápido con un pie y baja en 3-4 segundos desde un escalón. Clave para prevenir tendinopatías.',
+  },
+  {
+    id: 'ex_reverse_lunge_bw',
+    name: 'Zancada atrás con rodilla alta',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['core'],
+    requiredEquipment: [],
+    difficulty: 'principiante',
+    pattern: 'unilateral',
+    sportBenefit: ['running', 'mountain'],
+    defaultSets: 3,
+    defaultReps: '10 por pierna',
+    restSeconds: 60,
+    instructions: 'Da un paso largo atrás, baja controlado y sube impulsando la rodilla al pecho simulando fase de carrera.',
+  },
+  {
+    id: 'ex_plank',
+    name: 'Plancha frontal isométrica activa',
+    muscleGroup: 'core',
+    secondaryMuscles: ['hombros'],
+    requiredEquipment: ['mat'],
+    difficulty: 'principiante',
+    pattern: 'core',
+    sportBenefit: ['running', 'mountain', 'mywhoosh', 'general'],
+    defaultSets: 3,
+    defaultReps: '45 seg',
+    restSeconds: 45,
+    instructions: 'Retroversión pélvica, glúteos y abdomen firmes como si empujases el suelo con los codos.',
+  },
+  {
+    id: 'ex_side_plank_clam',
+    name: 'Plancha lateral + abducción de cadera',
+    muscleGroup: 'core',
+    secondaryMuscles: ['piernas'],
+    requiredEquipment: ['mat'],
+    difficulty: 'intermedio',
+    pattern: 'core',
+    sportBenefit: ['running', 'mountain'],
+    defaultSets: 3,
+    defaultReps: '10 por lado',
+    restSeconds: 45,
+    instructions: 'Estabiliza pelvis lateralmente evitando caída de cadera (glúteo medio clave en carrera y trail).',
+  },
+  {
+    id: 'ex_deadbug',
+    name: 'Dead Bug (bicho muerto) controlado',
+    muscleGroup: 'core',
+    secondaryMuscles: [],
+    requiredEquipment: ['mat'],
+    difficulty: 'principiante',
+    pattern: 'core',
+    sportBenefit: ['running', 'mywhoosh', 'general'],
+    defaultSets: 3,
+    defaultReps: '12 alternas',
+    restSeconds: 45,
+    instructions: 'Zona lumbar pegada a la esterilla todo el tiempo mientras extiendes brazo y pierna contrarios.',
+  },
+  {
+    id: 'ex_bird_dog',
+    name: 'Bird-Dog con pausa isométrica',
+    muscleGroup: 'core',
+    secondaryMuscles: ['espalda'],
+    requiredEquipment: ['mat'],
+    difficulty: 'principiante',
+    pattern: 'movilidad',
+    sportBenefit: ['mywhoosh', 'running', 'mountain'],
+    defaultSets: 3,
+    defaultReps: '8 por lado',
+    restSeconds: 40,
+    instructions: 'Alarga brazo y pierna contrarios manteniendo 2s arriba sin rotar la pelvis. Descarga zona lumbar tras bici.',
+  },
+  {
+    id: 'ex_superman_pull',
+    name: 'Extensión dorsal en W (prono)',
+    muscleGroup: 'espalda',
+    secondaryMuscles: ['hombros'],
+    requiredEquipment: ['mat'],
+    difficulty: 'principiante',
+    pattern: 'traccion',
+    sportBenefit: ['mywhoosh', 'general'],
+    defaultSets: 3,
+    defaultReps: '12-15',
+    restSeconds: 45,
+    instructions: 'Boca abajo, junta escápulas formando una W con los brazos. Contrarresta la postura encorvada del rodillo.',
+  },
+  {
+    id: 'ex_burpees',
+    name: 'Burpees sin impacto / clásicos',
+    muscleGroup: 'full_body',
+    secondaryMuscles: ['pecho', 'piernas', 'core'],
+    requiredEquipment: [],
+    difficulty: 'intermedio',
+    pattern: 'cardio',
+    sportBenefit: ['general'],
+    defaultSets: 4,
+    defaultReps: '35 seg',
+    restSeconds: 40,
+    instructions: 'Mantén un ritmo fluido respirando de forma controlada en cada repetición.',
+  },
+  {
+    id: 'ex_mountain_climbers',
+    name: 'Mountain Climbers rápidos',
+    muscleGroup: 'core',
+    secondaryMuscles: ['hombros', 'piernas'],
+    requiredEquipment: ['mat'],
+    difficulty: 'principiante',
+    pattern: 'cardio',
+    sportBenefit: ['running', 'general'],
+    defaultSets: 3,
+    defaultReps: '40 seg',
+    restSeconds: 40,
+    instructions: 'Hombros sobre las muñecas, lleva rodillas al pecho sin rebotar la cadera.',
+  },
+  {
+    id: 'ex_hip_90_90',
+    name: 'Movilidad de cadera 90/90 + extensión',
+    muscleGroup: 'movilidad',
+    secondaryMuscles: ['piernas'],
+    requiredEquipment: ['mat'],
+    difficulty: 'principiante',
+    pattern: 'movilidad',
+    sportBenefit: ['running', 'mountain', 'mywhoosh', 'general'],
+    defaultSets: 2,
+    defaultReps: '8 por lado',
+    restSeconds: 30,
+    instructions: 'Rota suavemente de lado a lado abriendo rotación interna y externa de cadera.',
+  },
+
+  // === MANCUERNAS ===
+  {
+    id: 'ex_db_goblet_squat',
+    name: 'Sentadilla Goblet con mancuerna',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['core'],
+    requiredEquipment: ['dumbbells'],
+    difficulty: 'principiante',
+    pattern: 'rodilla',
+    sportBenefit: ['running', 'mountain', 'mywhoosh', 'general'],
+    defaultSets: 4,
+    defaultReps: '10-12',
+    restSeconds: 75,
+    instructions: 'Sostén la mancuerna pegada al pecho, codos hacia dentro y baja manteniendo el torso erguido.',
+  },
+  {
+    id: 'ex_db_rdl',
+    name: 'Peso muerto rumano con mancuernas',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['espalda', 'core'],
+    requiredEquipment: ['dumbbells'],
+    difficulty: 'principiante',
+    pattern: 'bisagra',
+    sportBenefit: ['running', 'mountain', 'mywhoosh', 'general'],
+    defaultSets: 4,
+    defaultReps: '10-12',
+    restSeconds: 75,
+    instructions: 'Bisagra de cadera llevando glúteos atrás, rodillas semibloqueadas y espalda neutra hasta notar tensión en isquios.',
+  },
+  {
+    id: 'ex_db_single_leg_rdl',
+    name: 'Peso muerto a una pierna con mancuerna',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['core'],
+    requiredEquipment: ['dumbbells'],
+    difficulty: 'intermedio',
+    pattern: 'bisagra',
+    sportBenefit: ['running', 'mountain'],
+    defaultSets: 3,
+    defaultReps: '8-10 por pierna',
+    restSeconds: 60,
+    instructions: 'Oro puro para trail y carrera: equilibra sobre una pierna mientras bajas la mancuerna paralela a la tibia.',
+  },
+  {
+    id: 'ex_db_bulgarian_split',
+    name: 'Sentadilla búlgara con mancuernas',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['core'],
+    requiredEquipment: ['dumbbells'],
+    difficulty: 'intermedio',
+    pattern: 'unilateral',
+    sportBenefit: ['running', 'mountain', 'mywhoosh', 'general'],
+    defaultSets: 3,
+    defaultReps: '8-10 por pierna',
+    restSeconds: 75,
+    instructions: 'Mancuernas a los lados, inclina ligeramente el torso adelante para enfatizar glúteo o recto para cuádriceps.',
+  },
+  {
+    id: 'ex_db_floor_press',
+    name: 'Press de pecho en suelo con mancuernas',
+    muscleGroup: 'pecho',
+    secondaryMuscles: ['brazos', 'hombros'],
+    requiredEquipment: ['dumbbells', 'mat'],
+    difficulty: 'principiante',
+    pattern: 'empuje',
+    sportBenefit: ['general'],
+    defaultSets: 3,
+    defaultReps: '10-12',
+    restSeconds: 75,
+    instructions: 'Toca suavemente con los tríceps en el suelo, pausa breve y empuja arriba sin chocar mancuernas.',
+  },
+  {
+    id: 'ex_db_bench_press',
+    name: 'Press en banco con mancuernas',
+    muscleGroup: 'pecho',
+    secondaryMuscles: ['hombros', 'brazos'],
+    requiredEquipment: ['dumbbells', 'bench'],
+    difficulty: 'principiante',
+    pattern: 'empuje',
+    sportBenefit: ['general'],
+    defaultSets: 4,
+    defaultReps: '8-12',
+    restSeconds: 90,
+    instructions: 'Mayor rango de movimiento sobre banco plano o inclinado a 30°, escápulas retraídas.',
+  },
+  {
+    id: 'ex_db_one_arm_row',
+    name: 'Remo a una mano con mancuerna',
+    muscleGroup: 'espalda',
+    secondaryMuscles: ['brazos', 'core'],
+    requiredEquipment: ['dumbbells'],
+    difficulty: 'principiante',
+    pattern: 'traccion',
+    sportBenefit: ['mywhoosh', 'general'],
+    defaultSets: 3,
+    defaultReps: '10-12 por brazo',
+    restSeconds: 60,
+    instructions: 'Apoya mano libre en banco, silla o rodilla. Tira llevando la mancuerna hacia la cadera.',
+  },
+  {
+    id: 'ex_db_bent_over_row',
+    name: 'Remo inclinado bilateral con mancuernas',
+    muscleGroup: 'espalda',
+    secondaryMuscles: ['core', 'brazos'],
+    requiredEquipment: ['dumbbells'],
+    difficulty: 'intermedio',
+    pattern: 'traccion',
+    sportBenefit: ['mywhoosh', 'mountain', 'general'],
+    defaultSets: 4,
+    defaultReps: '10-12',
+    restSeconds: 75,
+    instructions: 'Torso a 45°, abdomen firme y tracción hacia el ombligo controlando la bajada.',
+  },
+  {
+    id: 'ex_db_overhead_press',
+    name: 'Press militar de pie con mancuernas',
+    muscleGroup: 'hombros',
+    secondaryMuscles: ['brazos', 'core'],
+    requiredEquipment: ['dumbbells'],
+    difficulty: 'principiante',
+    pattern: 'empuje',
+    sportBenefit: ['general', 'mountain'],
+    defaultSets: 3,
+    defaultReps: '8-12',
+    restSeconds: 75,
+    instructions: 'Aprieta glúteos y abdomen para no hiperextender la zona lumbar al empujar encima de la cabeza.',
+  },
+  {
+    id: 'ex_db_lateral_raise',
+    name: 'Elevaciones laterales con mancuernas',
+    muscleGroup: 'hombros',
+    secondaryMuscles: [],
+    requiredEquipment: ['dumbbells'],
+    difficulty: 'principiante',
+    pattern: 'empuje',
+    sportBenefit: ['general'],
+    defaultSets: 3,
+    defaultReps: '12-15',
+    restSeconds: 50,
+    instructions: 'Eleva en el plano escapular (ligeramente hacia delante) sin encoger trapecios.',
+  },
+  {
+    id: 'ex_db_thruster',
+    name: 'Thrusters con mancuernas (sentadilla + press)',
+    muscleGroup: 'full_body',
+    secondaryMuscles: ['piernas', 'hombros', 'core'],
+    requiredEquipment: ['dumbbells'],
+    difficulty: 'intermedio',
+    pattern: 'cardio',
+    sportBenefit: ['general', 'mountain'],
+    defaultSets: 4,
+    defaultReps: '10-12',
+    restSeconds: 75,
+    instructions: 'Sentadilla profunda aprovechando el impulso de piernas para empujar las mancuernas sobre la cabeza.',
+  },
+  {
+    id: 'ex_db_hammer_curl',
+    name: 'Curl martillo + press Arnold',
+    muscleGroup: 'brazos',
+    secondaryMuscles: ['hombros'],
+    requiredEquipment: ['dumbbells'],
+    difficulty: 'principiante',
+    pattern: 'traccion',
+    sportBenefit: ['general'],
+    defaultSets: 3,
+    defaultReps: '10-12',
+    restSeconds: 60,
+    instructions: 'Trabajo combinado de bíceps, braquial y deltoides sin balanceo de tronco.',
+  },
+  {
+    id: 'ex_db_suitcase_carry',
+    name: 'Paseo del granjero unilateral (Suitcase Carry)',
+    muscleGroup: 'core',
+    secondaryMuscles: ['hombros', 'espalda'],
+    requiredEquipment: ['dumbbells'],
+    difficulty: 'principiante',
+    pattern: 'core',
+    sportBenefit: ['running', 'mountain', 'general'],
+    defaultSets: 3,
+    defaultReps: '30m por lado',
+    restSeconds: 45,
+    instructions: 'Camina erguido con una mancuerna pesada en un solo lado evitando inclinarte. Fortalece el core lateral al caminar/correr.',
+  },
+
+  // === BANDAS ELÁSTICAS ===
+  {
+    id: 'ex_band_monster_walk',
+    name: 'Caminata lateral con mini-band (Monster Walk)',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['core'],
+    requiredEquipment: ['bands'],
+    difficulty: 'principiante',
+    pattern: 'unilateral',
+    sportBenefit: ['running', 'mountain'],
+    defaultSets: 3,
+    defaultReps: '15 pasos c/lado',
+    restSeconds: 40,
+    instructions: 'Banda encima de rodillas o tobillos, ligera flexión de cadera. Activa glúteo medio antes de salir a correr.',
+  },
+  {
+    id: 'ex_band_face_pull',
+    name: 'Face Pull con banda elástica',
+    muscleGroup: 'espalda',
+    secondaryMuscles: ['hombros'],
+    requiredEquipment: ['bands'],
+    difficulty: 'principiante',
+    pattern: 'traccion',
+    sportBenefit: ['mywhoosh', 'general'],
+    defaultSets: 3,
+    defaultReps: '15-20',
+    restSeconds: 45,
+    instructions: 'Ancla la banda a altura del pecho/cara y tira separando las manos hacia las orejas. Corrige postura ciclista.',
+  },
+  {
+    id: 'ex_band_pallof_press',
+    name: 'Pallof Press anti-rotación con banda',
+    muscleGroup: 'core',
+    secondaryMuscles: ['hombros'],
+    requiredEquipment: ['bands'],
+    difficulty: 'principiante',
+    pattern: 'core',
+    sportBenefit: ['running', 'mountain', 'mywhoosh', 'general'],
+    defaultSets: 3,
+    defaultReps: '10 por lado',
+    restSeconds: 45,
+    instructions: 'Banda anclada de lado: extiende los brazos al frente resistiendo la torsión del torso.',
+  },
+  {
+    id: 'ex_band_seated_row',
+    name: 'Remo sentado con banda elástica',
+    muscleGroup: 'espalda',
+    secondaryMuscles: ['brazos'],
+    requiredEquipment: ['bands', 'mat'],
+    difficulty: 'principiante',
+    pattern: 'traccion',
+    sportBenefit: ['mywhoosh', 'general'],
+    defaultSets: 3,
+    defaultReps: '15',
+    restSeconds: 50,
+    instructions: 'Pasa la banda por los pies sentado con espalda recta y rema juntando escápulas.',
+  },
+  {
+    id: 'ex_band_pull_apart',
+    name: 'Band Pull-Aparts (apertura escapular)',
+    muscleGroup: 'espalda',
+    secondaryMuscles: ['hombros'],
+    requiredEquipment: ['bands'],
+    difficulty: 'principiante',
+    pattern: 'movilidad',
+    sportBenefit: ['mywhoosh', 'running', 'general'],
+    defaultSets: 3,
+    defaultReps: '15-20',
+    restSeconds: 30,
+    instructions: 'Brazos estirados al frente, abre la banda hasta tocar el pecho activando deltoides posterior y romboides.',
+  },
+  {
+    id: 'ex_band_pushup',
+    name: 'Flexiones resistidas con banda',
+    muscleGroup: 'pecho',
+    secondaryMuscles: ['brazos', 'hombros'],
+    requiredEquipment: ['bands'],
+    difficulty: 'intermedio',
+    pattern: 'empuje',
+    sportBenefit: ['general'],
+    defaultSets: 3,
+    defaultReps: '10-12',
+    restSeconds: 60,
+    instructions: 'Pasa la banda por detrás de la espalda y sujétala bajo las palmas para añadir resistencia al bloqueo.',
+  },
+
+  // === KETTLEBELL ===
+  {
+    id: 'ex_kb_swing',
+    name: 'Kettlebell Swing ruso (potencia de cadera)',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['espalda', 'core'],
+    requiredEquipment: ['kettlebell'],
+    difficulty: 'intermedio',
+    pattern: 'bisagra',
+    sportBenefit: ['running', 'mountain', 'mywhoosh', 'general'],
+    defaultSets: 4,
+    defaultReps: '15-20',
+    restSeconds: 60,
+    instructions: 'Movimiento balístico desde la cadera (no sentadilla). Extiende glúteos explosivamente manteniendo brazos relajados.',
+  },
+  {
+    id: 'ex_kb_goblet_squat',
+    name: 'Goblet Squat con Kettlebell',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['core'],
+    requiredEquipment: ['kettlebell'],
+    difficulty: 'principiante',
+    pattern: 'rodilla',
+    sportBenefit: ['running', 'mountain', 'mywhoosh', 'general'],
+    defaultSets: 4,
+    defaultReps: '10-12',
+    restSeconds: 75,
+    instructions: 'Sujeta la pesa rusa por los cuernos pegada al pecho y baja profundo controlando rodillas.',
+  },
+  {
+    id: 'ex_kb_clean_press',
+    name: 'Clean & Press unilateral con Kettlebell',
+    muscleGroup: 'full_body',
+    secondaryMuscles: ['hombros', 'piernas', 'core'],
+    requiredEquipment: ['kettlebell'],
+    difficulty: 'avanzado',
+    pattern: 'empuje',
+    sportBenefit: ['general', 'mountain'],
+    defaultSets: 3,
+    defaultReps: '6-8 por brazo',
+    restSeconds: 75,
+    instructions: 'Cargada limpia a posición de rack seguida de press estricto activando glúteo y abdomen.',
+  },
+  {
+    id: 'ex_kb_turkish_getup',
+    name: 'Levantamiento turco (Turkish Get-Up)',
+    muscleGroup: 'full_body',
+    secondaryMuscles: ['core', 'hombros'],
+    requiredEquipment: ['kettlebell', 'mat'],
+    difficulty: 'avanzado',
+    pattern: 'movilidad',
+    sportBenefit: ['mountain', 'general'],
+    defaultSets: 3,
+    defaultReps: '3 por lado',
+    restSeconds: 75,
+    instructions: 'Pasa de tumbado a de pie manteniendo la kettlebell estable sobre la vertical del hombro.',
+  },
+
+  // === BARRA DE DOMINADAS ===
+  {
+    id: 'ex_pullups',
+    name: 'Dominadas pronas / neutras',
+    muscleGroup: 'espalda',
+    secondaryMuscles: ['brazos', 'core'],
+    requiredEquipment: ['pullup_bar'],
+    difficulty: 'intermedio',
+    pattern: 'traccion',
+    sportBenefit: ['mountain', 'general'],
+    defaultSets: 4,
+    defaultReps: '6-10',
+    restSeconds: 90,
+    instructions: 'Inicia deprimiendo escápulas, sube pecho hacia la barra y baja controlando 2 segundos.',
+  },
+  {
+    id: 'ex_chinups',
+    name: 'Dominadas supinas (bíceps + dorsal)',
+    muscleGroup: 'espalda',
+    secondaryMuscles: ['brazos'],
+    requiredEquipment: ['pullup_bar'],
+    difficulty: 'intermedio',
+    pattern: 'traccion',
+    sportBenefit: ['general'],
+    defaultSets: 3,
+    defaultReps: '6-10',
+    restSeconds: 90,
+    instructions: 'Agarre supino al ancho de hombros, evita balancear piernas.',
+  },
+  {
+    id: 'ex_hanging_knee_raise',
+    name: 'Elevaciones de rodillas/piernas colgado',
+    muscleGroup: 'core',
+    secondaryMuscles: ['brazos'],
+    requiredEquipment: ['pullup_bar'],
+    difficulty: 'intermedio',
+    pattern: 'core',
+    sportBenefit: ['running', 'mountain', 'general'],
+    defaultSets: 3,
+    defaultReps: '10-12',
+    restSeconds: 60,
+    instructions: 'Enrosca la pelvis hacia arriba al final del movimiento sin balanceo.',
+  },
+
+  // === BARRA CON DISCOS ===
+  {
+    id: 'ex_bb_squat',
+    name: 'Sentadilla trasera con barra',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['core'],
+    requiredEquipment: ['barbell'],
+    difficulty: 'intermedio',
+    pattern: 'rodilla',
+    sportBenefit: ['mywhoosh', 'running', 'general'],
+    defaultSets: 4,
+    defaultReps: '6-8',
+    restSeconds: 120,
+    instructions: 'Bracing abdominal antes de bajar, rodillas siguiendo la línea de los pies.',
+  },
+  {
+    id: 'ex_bb_deadlift',
+    name: 'Peso muerto convencional con barra',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['espalda', 'core'],
+    requiredEquipment: ['barbell'],
+    difficulty: 'intermedio',
+    pattern: 'bisagra',
+    sportBenefit: ['mywhoosh', 'mountain', 'general'],
+    defaultSets: 4,
+    defaultReps: '5-8',
+    restSeconds: 120,
+    instructions: 'Barra pegada a las tibias, saca pecho y empuja el suelo con las piernas.',
+  },
+  {
+    id: 'ex_bb_row',
+    name: 'Remo Pendlay / inclinado con barra',
+    muscleGroup: 'espalda',
+    secondaryMuscles: ['brazos', 'core'],
+    requiredEquipment: ['barbell'],
+    difficulty: 'intermedio',
+    pattern: 'traccion',
+    sportBenefit: ['general', 'mywhoosh'],
+    defaultSets: 4,
+    defaultReps: '8-10',
+    restSeconds: 90,
+    instructions: 'Espalda firme paralela o a 45° respecto al suelo, tira hacia el esternón bajo.',
+  },
+  {
+    id: 'ex_bb_ohp',
+    name: 'Press militar estricto con barra',
+    muscleGroup: 'hombros',
+    secondaryMuscles: ['brazos', 'core'],
+    requiredEquipment: ['barbell'],
+    difficulty: 'intermedio',
+    pattern: 'empuje',
+    sportBenefit: ['general'],
+    defaultSets: 3,
+    defaultReps: '6-10',
+    restSeconds: 90,
+    instructions: 'Empuje vertical estricto pasando la barra cerca de la cara.',
+  },
+
+  // === TRX / ANILLAS ===
+  {
+    id: 'ex_trx_row',
+    name: 'Remo invertido en TRX / anillas',
+    muscleGroup: 'espalda',
+    secondaryMuscles: ['brazos', 'core'],
+    requiredEquipment: ['trx'],
+    difficulty: 'principiante',
+    pattern: 'traccion',
+    sportBenefit: ['mywhoosh', 'mountain', 'general'],
+    defaultSets: 3,
+    defaultReps: '10-15',
+    restSeconds: 60,
+    instructions: 'Regula la dificultad cambiando la inclinación de tu cuerpo respecto al suelo.',
+  },
+  {
+    id: 'ex_trx_hamstring_curl',
+    name: 'Curl femoral en suspensión (TRX)',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['core'],
+    requiredEquipment: ['trx', 'mat'],
+    difficulty: 'intermedio',
+    pattern: 'bisagra',
+    sportBenefit: ['running', 'mountain'],
+    defaultSets: 3,
+    defaultReps: '10-12',
+    restSeconds: 60,
+    instructions: 'Talones en las cinchas, eleva cadera y flexiona rodillas hacia ti. Protección brutal de isquios para corredores.',
+  },
+  {
+    id: 'ex_trx_pushup',
+    name: 'Flexiones en TRX / anillas',
+    muscleGroup: 'pecho',
+    secondaryMuscles: ['core', 'hombros'],
+    requiredEquipment: ['trx'],
+    difficulty: 'intermedio',
+    pattern: 'empuje',
+    sportBenefit: ['general'],
+    defaultSets: 3,
+    defaultReps: '10-12',
+    restSeconds: 75,
+    instructions: 'Demanda máxima estabilidad escapular y de core durante todo el recorrido.',
+  },
+
+  // === CAJÓN / STEP (MUY TOP PARA MONTAÑA) ===
+  {
+    id: 'ex_box_stepup',
+    name: 'Step-Up unilateral (subida al cajón)',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['core'],
+    requiredEquipment: ['step_box'],
+    difficulty: 'principiante',
+    pattern: 'unilateral',
+    sportBenefit: ['mountain', 'running'],
+    defaultSets: 4,
+    defaultReps: '10 por pierna',
+    restSeconds: 60,
+    instructions: 'Sube empujando solo con la pierna de arriba sin darte impulso con el pie del suelo. Simula subida en montaña.',
+  },
+  {
+    id: 'ex_box_eccentric_stepdown',
+    name: 'Step-Down excéntrico (descenso controlado)',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['core'],
+    requiredEquipment: ['step_box'],
+    difficulty: 'intermedio',
+    pattern: 'unilateral',
+    sportBenefit: ['mountain', 'running'],
+    defaultSets: 3,
+    defaultReps: '10 por pierna',
+    restSeconds: 60,
+    instructions: 'Baja en 3 segundos hasta rozar el talón en el suelo sin perder alineación de rodilla. Específico para bajadas de trail.',
+  },
+  {
+    id: 'ex_box_jumps',
+    name: 'Saltos pliométricos al cajón',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['full_body'],
+    requiredEquipment: ['step_box'],
+    difficulty: 'intermedio',
+    pattern: 'cardio',
+    sportBenefit: ['running', 'mountain', 'general'],
+    defaultSets: 3,
+    defaultReps: '8',
+    restSeconds: 75,
+    instructions: 'Aterrizaje suave y silencioso arriba en media sentadilla. Baja caminando para preservar la calidad de salto.',
+  },
+
+  // === COMBA / RUEDA ABDOMINAL / FOAM ROLLER / RODILLO ===
+  {
+    id: 'ex_jump_rope',
+    name: 'Saltos a la comba (reactividad de tobillo)',
+    muscleGroup: 'full_body',
+    secondaryMuscles: ['piernas'],
+    requiredEquipment: ['jump_rope'],
+    difficulty: 'principiante',
+    pattern: 'cardio',
+    sportBenefit: ['running', 'mountain', 'general'],
+    defaultSets: 4,
+    defaultReps: '45 seg',
+    restSeconds: 30,
+    instructions: 'Contactos cortos y elásticos sobre metatarsos; mejora rigidez tendinosa y economía de carrera.',
+  },
+  {
+    id: 'ex_ab_wheel_rollout',
+    name: 'Rollout con rueda abdominal',
+    muscleGroup: 'core',
+    secondaryMuscles: ['espalda', 'hombros'],
+    requiredEquipment: ['ab_wheel', 'mat'],
+    difficulty: 'intermedio',
+    pattern: 'core',
+    sportBenefit: ['mywhoosh', 'running', 'general'],
+    defaultSets: 3,
+    defaultReps: '8-12',
+    restSeconds: 60,
+    instructions: 'Mantén retroversión pélvica y glúteos apretados al extenderte sin que caiga la zona lumbar.',
+  },
+  {
+    id: 'ex_foam_thoracic_ext',
+    name: 'Extensión torácica sobre Foam Roller',
+    muscleGroup: 'movilidad',
+    secondaryMuscles: ['espalda'],
+    requiredEquipment: ['roller_foam', 'mat'],
+    difficulty: 'principiante',
+    pattern: 'movilidad',
+    sportBenefit: ['mywhoosh', 'running', 'general'],
+    defaultSets: 2,
+    defaultReps: '10 respiraciones',
+    restSeconds: 30,
+    instructions: 'Coloca el rodillo bajo las escápulas y abre el pecho exhalando. Imprescindible tras sesiones largas en MyWhoosh.',
+  },
+  {
+    id: 'ex_trainer_warmup',
+    name: 'Activación 8 min en rodillo (cadencia 90+ rpm)',
+    muscleGroup: 'piernas',
+    secondaryMuscles: ['full_body'],
+    requiredEquipment: ['indoor_trainer'],
+    difficulty: 'principiante',
+    pattern: 'cardio',
+    sportBenefit: ['mywhoosh', 'general'],
+    defaultSets: 1,
+    defaultReps: '8 min Z1-Z2',
+    restSeconds: 30,
+    instructions: 'Calentamiento suave en zona 1-2 con 2 progresiones cortas de 20s antes del bloque de fuerza o movilidad.',
+  },
+];
+
+export const ROUTINE_GOAL_LABELS: Record<RoutineGoal, { label: string; description: string }> = {
+  fuerza_general: {
+    label: 'Fuerza General en Casa',
+    description: 'Equilibrio completo de empuje, tracción, pierna, bisagra y core adaptado a tu material.',
+  },
+  correr_montana: {
+    label: 'Fuerza para Correr y Montaña',
+    description: 'Énfasis unilateral, gemelos/sóleo, glúteo medio, estabilidad de rodilla en bajadas y core.',
+  },
+  ciclismo_mywhoosh: {
+    label: 'Complemento Ciclismo / MyWhoosh',
+    description: 'Cadena posterior, core anti-extensión, postura dorsal/escapular y movilidad de cadera.',
+  },
+  full_body_hiit: {
+    label: 'Full Body Metabólico / HIIT',
+    description: 'Bloque dinámico de alta densidad para quemar calorías y ganar capacidad de trabajo.',
+  },
+  tren_superior: {
+    label: 'Tren Superior Completo',
+    description: 'Pecho, espalda, hombros, brazos y estabilidad escapular.',
+  },
+  tren_inferior: {
+    label: 'Tren Inferior Potente',
+    description: 'Sentadillas, peso muerto, trabajo unilateral de pierna y glúteo.',
+  },
+  core_movilidad: {
+    label: 'Core y Descarga / Movilidad',
+    description: 'Ideal para días de recuperación entre salidas de running, MyWhoosh o montaña.',
+  },
+};
+
+export function isExerciseCompatible(exercise: Exercise, availableEquipmentIds: Set<string>): boolean {
+  return exercise.requiredEquipment.every((eqId) => availableEquipmentIds.has(eqId));
+}
+
+export function getCompatibleExercises(
+  availableEquipmentIds: string[],
+  exercisePool: Exercise[] = DEFAULT_EXERCISES
+): Exercise[] {
+  const eqSet = new Set(availableEquipmentIds);
+  return exercisePool.filter((ex) => isExerciseCompatible(ex, eqSet));
+}
+
+interface SlotRule {
+  patterns: Exercise['pattern'][];
+  muscles?: Exercise['muscleGroup'][];
+  preferSport?: 'running' | 'mountain' | 'mywhoosh' | 'general';
+}
+
+const GOAL_SLOTS: Record<RoutineGoal, SlotRule[]> = {
+  fuerza_general: [
+    { patterns: ['movilidad'], preferSport: 'general' },
+    { patterns: ['rodilla', 'unilateral'], muscles: ['piernas'] },
+    { patterns: ['empuje'], muscles: ['pecho', 'hombros'] },
+    { patterns: ['traccion'], muscles: ['espalda'] },
+    { patterns: ['bisagra'], muscles: ['piernas'] },
+    { patterns: ['empuje', 'traccion'], muscles: ['hombros', 'brazos', 'espalda'] },
+    { patterns: ['core'] },
+    { patterns: ['cardio', 'core'] },
+  ],
+  correr_montana: [
+    { patterns: ['movilidad'], preferSport: 'mountain' },
+    { patterns: ['unilateral'], muscles: ['piernas'], preferSport: 'mountain' },
+    { patterns: ['bisagra'], muscles: ['piernas'], preferSport: 'running' },
+    { patterns: ['rodilla', 'unilateral'], muscles: ['piernas'], preferSport: 'running' },
+    { patterns: ['core'], preferSport: 'running' },
+    { patterns: ['traccion', 'empuje'], preferSport: 'mountain' },
+    { patterns: ['cardio', 'unilateral'], preferSport: 'running' },
+    { patterns: ['core'] },
+  ],
+  ciclismo_mywhoosh: [
+    { patterns: ['movilidad'], preferSport: 'mywhoosh' },
+    { patterns: ['bisagra'], muscles: ['piernas'], preferSport: 'mywhoosh' },
+    { patterns: ['traccion'], muscles: ['espalda'], preferSport: 'mywhoosh' },
+    { patterns: ['unilateral', 'rodilla'], muscles: ['piernas'], preferSport: 'mywhoosh' },
+    { patterns: ['core'], preferSport: 'mywhoosh' },
+    { patterns: ['empuje'], preferSport: 'mywhoosh' },
+    { patterns: ['traccion', 'movilidad'], preferSport: 'mywhoosh' },
+    { patterns: ['core'] },
+  ],
+  full_body_hiit: [
+    { patterns: ['cardio'] },
+    { patterns: ['rodilla', 'unilateral'], muscles: ['piernas'] },
+    { patterns: ['empuje'] },
+    { patterns: ['traccion'] },
+    { patterns: ['bisagra', 'cardio'] },
+    { patterns: ['core'] },
+    { patterns: ['cardio', 'empuje'] },
+    { patterns: ['core'] },
+  ],
+  tren_superior: [
+    { patterns: ['movilidad'] },
+    { patterns: ['empuje'], muscles: ['pecho'] },
+    { patterns: ['traccion'], muscles: ['espalda'] },
+    { patterns: ['empuje'], muscles: ['hombros'] },
+    { patterns: ['traccion'], muscles: ['espalda', 'brazos'] },
+    { patterns: ['empuje', 'traccion'], muscles: ['brazos', 'pecho', 'hombros'] },
+    { patterns: ['core'] },
+    { patterns: ['core'] },
+  ],
+  tren_inferior: [
+    { patterns: ['movilidad'] },
+    { patterns: ['rodilla'], muscles: ['piernas'] },
+    { patterns: ['bisagra'], muscles: ['piernas'] },
+    { patterns: ['unilateral'], muscles: ['piernas'] },
+    { patterns: ['unilateral', 'rodilla'], muscles: ['piernas'] },
+    { patterns: ['bisagra', 'core'], muscles: ['piernas', 'core'] },
+    { patterns: ['core'] },
+    { patterns: ['cardio', 'unilateral'], muscles: ['piernas', 'full_body'] },
+  ],
+  core_movilidad: [
+    { patterns: ['movilidad'] },
+    { patterns: ['core'] },
+    { patterns: ['movilidad', 'traccion'] },
+    { patterns: ['core'] },
+    { patterns: ['bisagra', 'movilidad'] },
+    { patterns: ['core'] },
+    { patterns: ['movilidad'] },
+  ],
+};
+
+function targetCountForDuration(durationMin: number): number {
+  if (durationMin <= 20) return 4;
+  if (durationMin <= 30) return 5;
+  if (durationMin <= 45) return 6;
+  return 8;
+}
+
+function scoreExercise(
+  ex: Exercise,
+  rule: SlotRule,
+  selectedEquipment: Set<string>,
+  level: 'principiante' | 'intermedio' | 'avanzado',
+  goal: RoutineGoal,
+  seedBias: number
+): number {
+  let score = 0;
+
+  if (rule.patterns.includes(ex.pattern)) score += 45;
+  if (rule.muscles && rule.muscles.includes(ex.muscleGroup)) score += 25;
+  if (rule.preferSport && ex.sportBenefit.includes(rule.preferSport)) score += 22;
+
+  if (goal === 'correr_montana' && (ex.sportBenefit.includes('running') || ex.sportBenefit.includes('mountain'))) {
+    score += 18;
+  }
+  if (goal === 'ciclismo_mywhoosh' && ex.sportBenefit.includes('mywhoosh')) {
+    score += 18;
+  }
+
+  // Priorizar activamente ejercicios que utilicen el material seleccionado por el usuario
+  const nonEmptyEquipmentCount = ex.requiredEquipment.filter((id) => selectedEquipment.has(id)).length;
+  if (nonEmptyEquipmentCount > 0) {
+    score += 20 + nonEmptyEquipmentCount * 6;
+  }
+  // Evitar recomendar sesión de rodillo si el objetivo no es ciclismo o calentamiento
+  if (ex.requiredEquipment.includes('indoor_trainer') && goal !== 'ciclismo_mywhoosh' && goal !== 'full_body_hiit') {
+    score -= 35;
+  }
+
+  // Nivel
+  if (ex.difficulty === level) score += 12;
+  else if (level === 'principiante' && ex.difficulty === 'avanzado') score -= 30;
+  else if (level === 'avanzado' && ex.difficulty === 'principiante') score -= 5;
+
+  // Ligera variación determinística o aleatoria para que regenerar ofrezca alternativas frescas
+  const hash = (ex.id.charCodeAt(3) * 17 + seedBias * 31) % 13;
+  score += hash;
+
+  return score;
+}
+
+export function generateHomeRoutine(params: {
+  goal: RoutineGoal;
+  level: 'principiante' | 'intermedio' | 'avanzado';
+  durationMin: number;
+  availableEquipmentIds: string[];
+  exercisePool?: Exercise[];
+  variationSeed?: number;
+}): {
+  name: string;
+  goal: RoutineGoal;
+  level: 'principiante' | 'intermedio' | 'avanzado';
+  estimatedMinutes: number;
+  equipmentIds: string[];
+  items: RoutineExerciseItem[];
+} {
+  const pool = params.exercisePool ?? DEFAULT_EXERCISES;
+  const eqSet = new Set(params.availableEquipmentIds);
+  const compatible = pool.filter((ex) => isExerciseCompatible(ex, eqSet));
+
+  const targetCount = targetCountForDuration(params.durationMin);
+  const rules = GOAL_SLOTS[params.goal] ?? GOAL_SLOTS.fuerza_general;
+  const usedIds = new Set<string>();
+  const items: RoutineExerciseItem[] = [];
+  const seed = params.variationSeed ?? Math.floor(Math.random() * 100);
+
+  for (let i = 0; i < targetCount; i++) {
+    const rule = rules[i % rules.length];
+    const candidates = compatible.filter((ex) => !usedIds.has(ex.id));
+    if (candidates.length === 0) break;
+
+    candidates.sort(
+      (a, b) =>
+        scoreExercise(b, rule, eqSet, params.level, params.goal, seed + i) -
+        scoreExercise(a, rule, eqSet, params.level, params.goal, seed + i)
+    );
+
+    const chosen = candidates[0];
+    usedIds.add(chosen.id);
+
+    const setsAdjust = params.level === 'avanzado' ? 1 : params.level === 'principiante' && chosen.defaultSets > 3 ? -1 : 0;
+    const sets = Math.max(2, chosen.defaultSets + setsAdjust);
+    const restSeconds =
+      params.goal === 'full_body_hiit'
+        ? Math.max(25, chosen.restSeconds - 20)
+        : params.level === 'avanzado'
+          ? chosen.restSeconds
+          : chosen.restSeconds + 10;
+
+    const suggestedWeightKg =
+      chosen.requiredEquipment.includes('dumbbells')
+        ? params.level === 'principiante'
+          ? 6
+          : params.level === 'intermedio'
+            ? 12
+            : 18
+        : chosen.requiredEquipment.includes('kettlebell')
+          ? params.level === 'principiante'
+            ? 12
+            : 16
+          : chosen.requiredEquipment.includes('barbell')
+            ? params.level === 'principiante'
+              ? 30
+              : 50
+            : undefined;
+
+    items.push({
+      exerciseId: chosen.id,
+      exerciseName: chosen.name,
+      muscleGroup: chosen.muscleGroup,
+      requiredEquipment: chosen.requiredEquipment,
+      sets,
+      reps: chosen.defaultReps,
+      suggestedWeightKg,
+      restSeconds,
+      notes: chosen.instructions,
+    });
+  }
+
+  const goalInfo = ROUTINE_GOAL_LABELS[params.goal];
+  return {
+    name: `${goalInfo.label} (${params.durationMin} min)`,
+    goal: params.goal,
+    level: params.level,
+    estimatedMinutes: params.durationMin,
+    equipmentIds: Array.from(eqSet),
+    items,
+  };
+}
+
+export function getAlternativeExercises(
+  currentExerciseId: string,
+  availableEquipmentIds: string[],
+  excludeIds: string[] = [],
+  exercisePool: Exercise[] = DEFAULT_EXERCISES
+): Exercise[] {
+  const eqSet = new Set(availableEquipmentIds);
+  const current = exercisePool.find((e) => e.id === currentExerciseId);
+  const exclude = new Set([currentExerciseId, ...excludeIds]);
+
+  const compatible = exercisePool.filter((e) => !exclude.has(e.id) && isExerciseCompatible(e, eqSet));
+
+  return compatible.sort((a, b) => {
+    const aSamePattern = current && a.pattern === current.pattern ? 2 : 0;
+    const bSamePattern = current && b.pattern === current.pattern ? 2 : 0;
+    const aSameMuscle = current && a.muscleGroup === current.muscleGroup ? 1 : 0;
+    const bSameMuscle = current && b.muscleGroup === current.muscleGroup ? 1 : 0;
+    return bSamePattern + bSameMuscle - (aSamePattern + aSameMuscle);
+  });
+}

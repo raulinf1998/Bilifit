@@ -1,0 +1,27 @@
+[Unit]
+Description=Bilifit - Aplicación de seguimiento deportivo multideporte
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bilifit
+Group=bilifit
+WorkingDirectory=/opt/bilifit
+Environment=NODE_ENV=production
+Environment=HOSTNAME=0.0.0.0
+Environment=PORT=3000
+Environment=NEXT_TELEMETRY_DISABLED=1
+EnvironmentFile=-/opt/bilifit/.env
+ExecStart=/usr/bin/npm run start
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Endurecimiento básico compatible con LXC
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
