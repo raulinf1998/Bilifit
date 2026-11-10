@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import JSZip from 'jszip';
+import sharp from 'sharp';
 import { FitBaseType, FitEncoder } from 'fit-file-parser/encoder';
 
 // Usar una DB temporal aislada durante los tests
@@ -70,9 +71,12 @@ import {
 import {
   alignCoordsToMyWhooshWorld,
   getMyWhooshWorldByIdOrName,
+  getWorldDisplayBounds,
   MYWHOOSH_WORLDS,
   matchGpsToWorldRoads,
   resolveMyWhooshWorldForActivity,
+  toWorldDisplayCoord,
+  toWorldDisplayCoords,
 } from '../src/lib/mywhoosh-maps';
 import roadsDataset from '../src/lib/mywhoosh-roads-data.json';
 import {
@@ -385,36 +389,54 @@ test('MyWhoosh virtual worlds resolve, align (including Free Rides), avoid outdo
     return Math.log(Math.tan(Math.PI / 4 + rad / 2));
   };
 
-  // 1. Verificar los 19 SVG en disco, XML válido y relación de aspecto Mercator acorde a bounds
+  // 1. Verificar los 19 mapas WebP 3D en disco, cabecera WebP válida, dimensiones y relación de aspecto Mercator acorde a bounds visibles
   for (const w of MYWHOOSH_WORLDS) {
+    assert.ok(w.imageUrl.endsWith('.webp'), `Expected .webp asset for ${w.id}, got ${w.imageUrl}`);
     const rel = w.imageUrl.replace(/^\//, '');
     const full = path.join(process.cwd(), 'public', rel);
-    assert.ok(fs.existsSync(full), `Missing MyWhoosh SVG map file: ${full}`);
-    const svgText = fs.readFileSync(full, 'utf8');
-    assert.ok(svgText.includes('<svg') && svgText.includes('</svg>'), `Invalid SVG markup for ${w.id}`);
-    const vbMatch = svgText.match(/viewBox="0 0 (\d+) (\d+)"/);
-    assert.ok(vbMatch, `Missing viewBox in ${w.id}.svg`);
-    const svgW = Number(vbMatch[1]);
-    const svgH = Number(vbMatch[2]);
-    const [[s, west], [n, east]] = w.bounds;
+    assert.ok(fs.existsSync(full), `Missing MyWhoosh WebP map file: ${full}`);
+    const rawHead = fs.readFileSync(full);
+    assert.equal(rawHead.subarray(0, 4).toString('ascii'), 'RIFF', `Invalid RIFF header for ${w.id}.webp`);
+    assert.equal(rawHead.subarray(8, 12).toString('ascii'), 'WEBP', `Invalid WEBP signature for ${w.id}.webp`);
+
+    const meta = await sharp(full).metadata();
+    assert.ok(meta.width && meta.height && meta.width >= 1000 && meta.height >= 700, `Unexpected size for ${w.id}.webp`);
+    assert.deepEqual([meta.width, meta.height], w.svgSize, `Size mismatch between ${w.id}.webp and mywhoosh-roads-data.json`);
+
+    const [[s, west], [n, east]] = getWorldDisplayBounds(w);
     const expectedRatio = ((east - west) * (Math.PI / 180)) / (mercatorY(n) - mercatorY(s));
-    const actualRatio = svgW / svgH;
+    const actualRatio = meta.width / meta.height;
     assert.ok(
       Math.abs(actualRatio - expectedRatio) < 0.03,
-      `Mercator aspect ratio mismatch for ${w.id}: svg=${actualRatio.toFixed(3)} vs bounds=${expectedRatio.toFixed(3)}`
+      `Mercator aspect ratio mismatch for ${w.id}: webp=${actualRatio.toFixed(3)} vs displayBounds=${expectedRatio.toFixed(3)}`
     );
-    // Verificar que cada mapa incluye dibujo cartográfico ilustrado (gradientes, relieve/bandas, caminos y hitos)
-    assert.ok(svgText.includes(`id="bg-${w.id}"`), `Missing illustrated background gradient for ${w.id}`);
-    const pathCount = (svgText.match(/<path /g) || []).length;
-    assert.ok(pathCount >= 20, `Expected illustrated terrain + road paths for ${w.id}, got ${pathCount}`);
-    assert.ok(svgText.includes('<text '), `Expected landmark/title labels in ${w.id}.svg`);
   }
 
-  // Verificar que ActivityMap no incurra en la carrera asíncrona inicial al montar mapas MyWhoosh
+  // Verificar rotación cartográfica 90° CW de France para coincidir con mywhooshinfo.com
+  const franceWorld = getMyWhooshWorldByIdOrName('france')!;
+  assert.equal(franceWorld.mapRotationDeg, 90);
+  const franceDispBounds = getWorldDisplayBounds(franceWorld);
+  const [fDispLat, fDispLon] = toWorldDisplayCoord(franceWorld, 47.301, 3.895);
+  assert.ok(
+    fDispLat >= franceDispBounds[0][0] &&
+      fDispLat <= franceDispBounds[1][0] &&
+      fDispLon >= franceDispBounds[0][1] &&
+      fDispLon <= franceDispBounds[1][1],
+    'Transformed France display coord must stay inside rotated displayBounds'
+  );
+  const franceRotSample = toWorldDisplayCoords(franceWorld, [
+    [47.2835, 3.8723],
+    [47.3158, 3.9153],
+  ]);
+  assert.equal(franceRotSample.length, 2);
+
+  // Verificar que ActivityMap usa rotación conformal, overlay en tilePane e inicialización segura
   const activityMapSrc = fs.readFileSync(path.join(process.cwd(), 'src/components/ActivityMap.tsx'), 'utf8');
   assert.ok(activityMapSrc.includes('mapReadyTick'), 'ActivityMap should trigger layer setup once Leaflet finishes async import');
   assert.ok(activityMapSrc.includes('center: initialCenter'), 'ActivityMap should initialize L.map with center/zoom before fitBounds/imageOverlay');
-  assert.ok(activityMapSrc.includes("pane: 'tilePane'"), 'ActivityMap should mount virtual SVG overlay inside tilePane under route polylines');
+  assert.ok(activityMapSrc.includes("pane: 'tilePane'"), 'ActivityMap should mount virtual WebP overlay inside tilePane under route polylines');
+  assert.ok(activityMapSrc.includes('getWorldDisplayBounds'), 'ActivityMap should project virtual map bounds with conformal rotation support');
+  assert.ok(activityMapSrc.includes('toWorldDisplayCoords'), 'ActivityMap should rotate GPS polylines consistently with world display rotation');
 
   // 2. Detección por coordenadas dentro del bounding box de Colombia (con contexto virtual sí; sin contexto virtual no)
   const colMatch = resolveMyWhooshWorldForActivity({

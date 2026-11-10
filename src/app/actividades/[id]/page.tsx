@@ -553,7 +553,7 @@ export default function ActivityDetailPage() {
             defaultLayer={worldInfo ? 'virtual' : activity.sport === 'mountain' ? 'topo' : 'osm'}
             hoverPoint={hoverPoint}
             highlightPolyline={highlightPolyline}
-            heightClass="h-96"
+            heightClass="h-[440px]"
           />
         </div>
       )}

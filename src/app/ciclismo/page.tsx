@@ -249,7 +249,7 @@ export default function CyclingMyWhooshPage() {
               title={selectedWorldLatest?.title ?? selectedWorld.name}
               polyline={selectedWorldLatest?.polyline ?? null}
               defaultLayer="virtual"
-              heightClass="h-80"
+              heightClass="h-[420px]"
             />
             <div className="flex flex-wrap items-center justify-between gap-2 text-xs px-1" style={{ color: 'var(--text-secondary)' }}>
               <span>

@@ -5,8 +5,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Globe, Layers, Maximize2, Minimize2 } from 'lucide-react';
 import {
   alignCoordsToMyWhooshWorld,
+  getWorldDisplayBounds,
   isMyWhooshContext,
   resolveMyWhooshWorldForActivity,
+  toWorldDisplayCoord,
+  toWorldDisplayCoords,
 } from '@/lib/mywhoosh-maps';
 import { decodePolyline } from '@/lib/polyline';
 import type { ActivityPoint, SportType } from '@/types';
@@ -95,6 +98,11 @@ export default function ActivityMap({
     });
   }, [sport, subSport, worldName, title, deviceName, coords]);
 
+  const virtualDisplayBounds = useMemo(
+    () => (myWhooshMatch ? getWorldDisplayBounds(myWhooshMatch.world) : null),
+    [myWhooshMatch]
+  );
+
   const alignedTrace = useMemo(() => {
     if (!myWhooshMatch || coords.length < 2) return null;
     return alignCoordsToMyWhooshWorld(myWhooshMatch.world, coords);
@@ -114,12 +122,21 @@ export default function ActivityMap({
     prevWorldIdRef.current = matchedWorldId;
   }, [matchedWorldId, defaultLayer, layer]);
 
-  const displayCoords = useMemo(() => {
+  // Coordenadas geográficas alineadas al mundo (para sincronía de hover con perfil de altitud/telemetría)
+  const alignedWorldCoords = useMemo(() => {
     if (layer === 'virtual' && alignedTrace) {
       return alignedTrace.alignedCoords;
     }
     return coords;
   }, [layer, alignedTrace, coords]);
+
+  // Coordenadas proyectadas al lienzo visual del mundo (incluye rotación conformal p. ej. 90° CW en France)
+  const displayCoords = useMemo(() => {
+    if (layer === 'virtual' && myWhooshMatch) {
+      return toWorldDisplayCoords(myWhooshMatch.world, alignedWorldCoords);
+    }
+    return alignedWorldCoords;
+  }, [layer, myWhooshMatch, alignedWorldCoords]);
 
   const canRenderMap = coords.length >= 2 || Boolean(myWhooshMatch);
 
@@ -139,11 +156,9 @@ export default function ActivityMap({
         mapRef.current = null;
       }
 
-      const initialCenter: [number, number] = myWhooshMatch
-        ? [
-            (myWhooshMatch.bounds[0][0] + myWhooshMatch.bounds[1][0]) / 2,
-            (myWhooshMatch.bounds[0][1] + myWhooshMatch.bounds[1][1]) / 2,
-          ]
+      const initBounds = virtualDisplayBounds ?? myWhooshMatch?.bounds;
+      const initialCenter: [number, number] = initBounds
+        ? [(initBounds[0][0] + initBounds[1][0]) / 2, (initBounds[0][1] + initBounds[1][1]) / 2]
         : coords[0] ?? [40, -3];
 
       const map = L.map(containerRef.current, {
@@ -189,7 +204,7 @@ export default function ActivityMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canRenderMap]);
 
-  // Actualizar capa base + traza + encuadre cuando el mapa esté listo o cambien capa, mundo o datos
+  // Actualizar capa base + traza + hitos + encuadre cuando el mapa esté listo o cambien capa, mundo o datos
   useEffect(() => {
     const map = mapRef.current;
     const L = leafletRef.current;
@@ -202,29 +217,32 @@ export default function ActivityMap({
     }
     routeGroup.clearLayers();
 
-    const isVirtual = layer === 'virtual' && Boolean(myWhooshMatch);
+    const isVirtual = layer === 'virtual' && Boolean(myWhooshMatch) && Boolean(virtualDisplayBounds);
 
     // Calcular y aplicar vista/encuadre ANTES de añadir ImageOverlay para evitar 'Set map center and zoom first'
     let routeLine: import('leaflet').Polyline | null = null;
     if (displayCoords.length >= 2) {
       if (isVirtual) {
+        // Borde contraste estilo mywhooshinfo sobre el terreno 3D
         L.polyline(displayCoords, {
-          color: '#0f172a',
-          weight: 7,
-          opacity: 0.5,
+          color: '#3b0764',
+          weight: 7.5,
+          opacity: 0.65,
           lineJoin: 'round',
+          lineCap: 'round',
         }).addTo(routeGroup);
       }
 
       routeLine = L.polyline(displayCoords, {
-        color: isVirtual ? '#fc4c02' : color,
-        weight: isVirtual ? 4.2 : 4,
-        opacity: 0.96,
+        color: isVirtual ? '#d946ef' : color,
+        weight: isVirtual ? 4.4 : 4,
+        opacity: 0.98,
         lineJoin: 'round',
+        lineCap: 'round',
       }).addTo(routeGroup);
 
       L.circleMarker(displayCoords[0], {
-        radius: 6,
+        radius: 5.5,
         color: '#ffffff',
         weight: 2,
         fillColor: '#10b981',
@@ -234,7 +252,7 @@ export default function ActivityMap({
         .addTo(routeGroup);
 
       L.circleMarker(displayCoords[displayCoords.length - 1], {
-        radius: 6,
+        radius: 5.5,
         color: '#ffffff',
         weight: 2,
         fillColor: '#ef4444',
@@ -243,18 +261,35 @@ export default function ActivityMap({
         .bindTooltip('Fin')
         .addTo(routeGroup);
 
-      if (isVirtual && myWhooshMatch && fitScope === 'world') {
-        map.fitBounds(myWhooshMatch.bounds, { padding: [10, 10], animate: false });
+      if (isVirtual && virtualDisplayBounds && fitScope === 'world') {
+        map.fitBounds(virtualDisplayBounds, { padding: [8, 8], animate: false });
       } else {
         map.fitBounds(routeLine.getBounds(), { padding: [24, 24], animate: false });
       }
-    } else if (isVirtual && myWhooshMatch) {
-      map.fitBounds(myWhooshMatch.bounds, { padding: [10, 10], animate: false });
+    } else if (isVirtual && virtualDisplayBounds) {
+      map.fitBounds(virtualDisplayBounds, { padding: [8, 8], animate: false });
     }
 
+    // Pines interactivos discretos para hitos clave del mundo (tooltip limpio al pasar el ratón)
     if (isVirtual && myWhooshMatch) {
+      for (const lm of myWhooshMatch.world.landmarks) {
+        const pt = toWorldDisplayCoord(myWhooshMatch.world, lm.lat, lm.lon);
+        const label = lm.eleM ? `${lm.name} · ${lm.eleM} m` : lm.name;
+        L.circleMarker(pt, {
+          radius: 4,
+          color: '#f8fafc',
+          weight: 1.5,
+          fillColor: '#0f172a',
+          fillOpacity: 0.85,
+        })
+          .bindTooltip(label, { direction: 'top', offset: [0, -4] })
+          .addTo(routeGroup);
+      }
+    }
+
+    if (isVirtual && myWhooshMatch && virtualDisplayBounds) {
       if (containerRef.current) containerRef.current.style.background = myWhooshMatch.world.backgroundColor;
-      const overlay = L.imageOverlay(myWhooshMatch.world.imageUrl, myWhooshMatch.bounds, {
+      const overlay = L.imageOverlay(myWhooshMatch.world.imageUrl, virtualDisplayBounds, {
         pane: 'tilePane',
         zIndex: 1,
         opacity: 1,
@@ -277,7 +312,7 @@ export default function ActivityMap({
     }
 
     map.invalidateSize({ animate: false });
-  }, [mapReadyTick, layer, myWhooshMatch, defaultLayer, displayCoords, color, fitScope]);
+  }, [mapReadyTick, layer, myWhooshMatch, virtualDisplayBounds, defaultLayer, displayCoords, color, fitScope]);
 
   // Resaltar segmento sobre el mapa si hay highlightPolyline
   useEffect(() => {
@@ -293,7 +328,8 @@ export default function ActivityMap({
     if (highlightPolyline) {
       let hCoords = decodePolyline(highlightPolyline);
       if (layer === 'virtual' && myWhooshMatch && hCoords.length >= 2) {
-        hCoords = alignCoordsToMyWhooshWorld(myWhooshMatch.world, hCoords).alignedCoords;
+        const aligned = alignCoordsToMyWhooshWorld(myWhooshMatch.world, hCoords).alignedCoords;
+        hCoords = toWorldDisplayCoords(myWhooshMatch.world, aligned);
       }
       if (hCoords.length >= 2) {
         highlightLayerRef.current = L.polyline(hCoords, {
