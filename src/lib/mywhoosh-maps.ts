@@ -18,6 +18,8 @@ export interface MyWhooshWorldDefinition {
   altBounds?: Array<[[number, number], [number, number]]>;
   imageUrl: string;
   svgSize: [number, number];
+  /** Rotación cartográfica horaria respecto a lat/lon crudo (p. ej. 90° CW en France) */
+  mapRotationDeg?: number;
   backgroundColor: string;
   accentColor: string;
   routesCount: number;
@@ -29,6 +31,49 @@ export interface MyWhooshWorldDefinition {
   routes: string[];
   landmarks: MyWhooshLandmark[];
   keywords: string[];
+}
+
+export function getWorldDisplayBounds(
+  world: Pick<MyWhooshWorldDefinition, 'bounds' | 'mapRotationDeg'>
+): [[number, number], [number, number]] {
+  const [[south, west], [north, east]] = world.bounds;
+  if (world.mapRotationDeg !== 90) return world.bounds;
+  const latC = (south + north) / 2;
+  const lonC = (west + east) / 2;
+  const cosC = Math.cos((latC * Math.PI) / 180);
+  const dSouth = latC - (east - lonC) * cosC;
+  const dNorth = latC - (west - lonC) * cosC;
+  const dWest = lonC + (south - latC) / cosC;
+  const dEast = lonC + (north - latC) / cosC;
+  return [
+    [Number(dSouth.toFixed(6)), Number(dWest.toFixed(6))],
+    [Number(dNorth.toFixed(6)), Number(dEast.toFixed(6))],
+  ];
+}
+
+export function toWorldDisplayCoord(
+  world: Pick<MyWhooshWorldDefinition, 'bounds' | 'mapRotationDeg'>,
+  lat: number,
+  lon: number
+): [number, number] {
+  if (world.mapRotationDeg !== 90) return [lat, lon];
+  const [[south, west], [north, east]] = world.bounds;
+  const latC = (south + north) / 2;
+  const lonC = (west + east) / 2;
+  const cosC = Math.cos((latC * Math.PI) / 180);
+  return [latC - (lon - lonC) * cosC, lonC + (lat - latC) / cosC];
+}
+
+export function toWorldDisplayCoords(
+  world: Pick<MyWhooshWorldDefinition, 'bounds' | 'mapRotationDeg'>,
+  coords: Array<[number, number]>
+): Array<[number, number]> {
+  if (world.mapRotationDeg !== 90 || coords.length === 0) return coords;
+  const [[south, west], [north, east]] = world.bounds;
+  const latC = (south + north) / 2;
+  const lonC = (west + east) / 2;
+  const cosC = Math.cos((latC * Math.PI) / 180);
+  return coords.map(([lat, lon]) => [latC - (lon - lonC) * cosC, lonC + (lat - latC) / cosC]);
 }
 
 interface RoadsWorldEntry {
@@ -66,8 +111,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     regionLabel: 'Abu Dabi · EAU',
     ...metaFor('hudayriyat', [[23.33, 54.952], [23.416, 55.056]]),
     altBounds: [[[24.395, 54.315], [24.445, 54.37]]],
-    imageUrl: '/maps/mywhoosh/hudayriyat.svg',
-    backgroundColor: '#b9c6c4',
+    imageUrl: '/maps/mywhoosh/hudayriyat.webp',
+    backgroundColor: '#0b2638',
     accentColor: '#06b6d4',
     routesCount: 8,
     maxElevationM: 313,
@@ -97,8 +142,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Cañones de Arenisca, Hegra y Roca del Elefante',
     regionLabel: 'AlUla · Arabia Saudí',
     ...metaFor('alula', [[26.543, 37.721], [26.648, 37.807]]),
-    imageUrl: '/maps/mywhoosh/alula.svg',
-    backgroundColor: '#cfb7a1',
+    imageUrl: '/maps/mywhoosh/alula.webp',
+    backgroundColor: '#987c55',
     accentColor: '#f97316',
     routesCount: 16,
     maxElevationM: 679,
@@ -143,8 +188,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Desierto de Liwa, Jebel Jais y Jebel Hafeet',
     regionLabel: 'EAU y Baréin',
     ...metaFor('arabia', [[23.334, 52.162], [23.52, 52.277]]),
-    imageUrl: '/maps/mywhoosh/arabia.svg',
-    backgroundColor: '#cfc3ac',
+    imageUrl: '/maps/mywhoosh/arabia.webp',
+    backgroundColor: '#0b2638',
     accentColor: '#f59e0b',
     routesCount: 30,
     maxElevationM: 925,
@@ -192,8 +237,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Flandes, Ardenas, Muur y Koppenberg',
     regionLabel: 'Flandes · Bélgica',
     ...metaFor('belgium', [[50.748, 3.455], [50.867, 3.608]]),
-    imageUrl: '/maps/mywhoosh/belgium.svg',
-    backgroundColor: '#b9c3b4',
+    imageUrl: '/maps/mywhoosh/belgium.webp',
+    backgroundColor: '#465c2a',
     accentColor: '#10b981',
     routesCount: 10,
     maxElevationM: 492,
@@ -243,8 +288,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Cordillera Andina, Alto Limonar y Cristo Rey',
     regionLabel: 'Cordillera de los Andes · Colombia',
     ...metaFor('colombia', [[4.563, -72.87], [4.671, -72.752]]),
-    imageUrl: '/maps/mywhoosh/colombia.svg',
-    backgroundColor: '#b5c2b6',
+    imageUrl: '/maps/mywhoosh/colombia.webp',
+    backgroundColor: '#335323',
     accentColor: '#eab308',
     routesCount: 13,
     maxElevationM: 1667,
@@ -284,8 +329,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Costa de Queensland, Cities Loop y Harbour Bridge',
     regionLabel: 'Queensland · Australia',
     ...metaFor('australia', [[-21.031, 148.717], [-20.975, 148.809]]),
-    imageUrl: '/maps/mywhoosh/australia.svg',
-    backgroundColor: '#b4c5bd',
+    imageUrl: '/maps/mywhoosh/australia.webp',
+    backgroundColor: '#0b2638',
     accentColor: '#22c55e',
     routesCount: 14,
     maxElevationM: 589,
@@ -326,8 +371,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Golden Gate, Alcatraz, Hollywood Hills y Sierra',
     regionLabel: 'California · EE. UU.',
     ...metaFor('california', [[38.38, -120.422], [38.457, -120.326]]),
-    imageUrl: '/maps/mywhoosh/california.svg',
-    backgroundColor: '#bcc5b8',
+    imageUrl: '/maps/mywhoosh/california.webp',
+    backgroundColor: '#0b2638',
     accentColor: '#ec4899',
     routesCount: 13,
     maxElevationM: 815,
@@ -367,8 +412,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Monte Fuji, Tokio Dome y Kioto',
     regionLabel: 'Honshu · Japón',
     ...metaFor('japan', [[35.403, 135.097], [35.482, 135.187]]),
-    imageUrl: '/maps/mywhoosh/japan.svg',
-    backgroundColor: '#bcc2c7',
+    imageUrl: '/maps/mywhoosh/japan.webp',
+    backgroundColor: '#0b2638',
     accentColor: '#f43f5e',
     routesCount: 15,
     maxElevationM: 1584,
@@ -410,8 +455,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Isla Central, Hyperion City y Snowfall Mountain',
     regionLabel: 'Isla Virtual · MyWhoosh',
     ...metaFor('mywhoosh-world', [[24.967, -71.036], [25.019, -70.972]]),
-    imageUrl: '/maps/mywhoosh/mywhoosh-world.svg',
-    backgroundColor: '#b3c4c9',
+    imageUrl: '/maps/mywhoosh/mywhoosh-world.webp',
+    backgroundColor: '#0b2638',
     accentColor: '#38bdf8',
     routesCount: 10,
     maxElevationM: 1014,
@@ -451,8 +496,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Zúrich, Limmat Loop, Seeblick Spin y Zürichbergstrasse',
     regionLabel: 'Zúrich · Suiza',
     ...metaFor('switzerland', [[47.314, 8.492], [47.405, 8.618]]),
-    imageUrl: '/maps/mywhoosh/switzerland.svg',
-    backgroundColor: '#bcc7c9',
+    imageUrl: '/maps/mywhoosh/switzerland.webp',
+    backgroundColor: '#40572d',
     accentColor: '#ef4444',
     routesCount: 10,
     maxElevationM: 932,
@@ -486,9 +531,10 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'France',
     subtitle: 'Morvan, Cobbled Classic, París y Col du Galibier',
     regionLabel: 'Morvan y Alpes · Francia',
-    ...metaFor('france', [[47.276, 3.862], [47.324, 3.926]]),
-    imageUrl: '/maps/mywhoosh/france.svg',
-    backgroundColor: '#b7c7b0',
+    ...metaFor('france', [[47.24881, 3.85573], [47.35581, 4.00736]]),
+    imageUrl: '/maps/mywhoosh/france.webp',
+    mapRotationDeg: 90,
+    backgroundColor: '#0b2638',
     accentColor: '#3b82f6',
     routesCount: 10,
     maxElevationM: 1930,
@@ -503,8 +549,10 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
       'Morvan Loop',
     ],
     landmarks: [
+      { name: 'Col du Galibier', lat: 47.263, lon: 3.987, eleM: 1930 },
+      { name: 'Puy de Dôme', lat: 47.294, lon: 3.874, eleM: 560 },
       { name: 'Mission Stage 2 / Morvan', lat: 47.301, lon: 3.895, eleM: 168 },
-      { name: 'Circuito Clásico', lat: 47.291, lon: 3.882 },
+      { name: 'Tour de Corse', lat: 47.337, lon: 3.886 },
     ],
     keywords: [
       'france',
@@ -524,8 +572,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Himalaya, Timbu, Dragon Rae y Pele La',
     regionLabel: 'Bután · Himalaya',
     ...metaFor('bhutan', [[27.44, 89.6], [27.52, 89.7]]),
-    imageUrl: '/maps/mywhoosh/bhutan.svg',
-    backgroundColor: '#c0c4bd',
+    imageUrl: '/maps/mywhoosh/bhutan.webp',
+    backgroundColor: '#2e4723',
     accentColor: '#a855f7',
     routesCount: 8,
     maxElevationM: 1018,
@@ -544,8 +592,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Montreal, Mount Royal y Camillien Houde',
     regionLabel: 'Quebec · Canadá',
     ...metaFor('canada', [[45.492, -73.618], [45.524, -73.574]]),
-    imageUrl: '/maps/mywhoosh/canada.svg',
-    backgroundColor: '#b7c7b0',
+    imageUrl: '/maps/mywhoosh/canada.webp',
+    backgroundColor: '#0b2638',
     accentColor: '#ef4444',
     routesCount: 3,
     maxElevationM: 984,
@@ -564,8 +612,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Ascenso Maratón de 9 Secciones (2642m D+)',
     regionLabel: 'Alta Montaña · MyWhoosh',
     ...metaFor('endurance-climb', [[25.002, -71.042], [25.062, -70.962]]),
-    imageUrl: '/maps/mywhoosh/endurance-climb.svg',
-    backgroundColor: '#ccd1d9',
+    imageUrl: '/maps/mywhoosh/endurance-climb.webp',
+    backgroundColor: '#5b6b56',
     accentColor: '#a855f7',
     routesCount: 3,
     maxElevationM: 2642,
@@ -581,8 +629,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Circuito Urbano de Triatlón e Indoor Racing',
     regionLabel: 'Supertri E · MyWhoosh',
     ...metaFor('supertri', [[24.398, 54.328], [24.432, 54.372]]),
-    imageUrl: '/maps/mywhoosh/supertri.svg',
-    backgroundColor: '#c6d6cd',
+    imageUrl: '/maps/mywhoosh/supertri.webp',
+    backgroundColor: '#0b2638',
     accentColor: '#06b6d4',
     routesCount: 2,
     maxElevationM: 57,
@@ -598,8 +646,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Campeonato Mundial UCI Cycling Esports 2024',
     regionLabel: 'UCI Esports 2024 · Abu Dabi',
     ...metaFor('uci-2024', [[24.44, 54.35], [24.49, 54.42]]),
-    imageUrl: '/maps/mywhoosh/uci-2024.svg',
-    backgroundColor: '#bfced6',
+    imageUrl: '/maps/mywhoosh/uci-2024.webp',
+    backgroundColor: '#0b2638',
     accentColor: '#38bdf8',
     routesCount: 3,
     maxElevationM: 432,
@@ -615,8 +663,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Campeonato Mundial UCI Cycling Esports 2025',
     regionLabel: 'UCI Esports 2025 · Abu Dabi',
     ...metaFor('uci-2025', [[24.5, 54.4], [24.55, 54.47]]),
-    imageUrl: '/maps/mywhoosh/uci-2025.svg',
-    backgroundColor: '#bfced6',
+    imageUrl: '/maps/mywhoosh/uci-2025.webp',
+    backgroundColor: '#566733',
     accentColor: '#38bdf8',
     routesCount: 3,
     maxElevationM: 751,
@@ -632,8 +680,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Pearl District & Horizon District (UCI 2026)',
     regionLabel: 'UCI Esports 2026 · MyWhoosh',
     ...metaFor('uci-2026', [[24.56, 54.45], [24.61, 54.52]]),
-    imageUrl: '/maps/mywhoosh/uci-2026.svg',
-    backgroundColor: '#bfced6',
+    imageUrl: '/maps/mywhoosh/uci-2026.webp',
+    backgroundColor: '#0b2638',
     accentColor: '#38bdf8',
     routesCount: 3,
     maxElevationM: 142,
@@ -649,8 +697,8 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     subtitle: 'Lago Bled · Eslovenia (Circuito Remo MyWhoosh)',
     regionLabel: 'Bled · Eslovenia',
     ...metaFor('bled', [[46.355, 14.075], [46.375, 14.115]]),
-    imageUrl: '/maps/mywhoosh/bled.svg',
-    backgroundColor: '#c5d4d2',
+    imageUrl: '/maps/mywhoosh/bled.webp',
+    backgroundColor: '#0b2638',
     accentColor: '#0ea5e9',
     routesCount: 1,
     maxElevationM: 5,
@@ -1319,6 +1367,15 @@ export function matchGpsToWorldRoads(
     if (sol && sol.rmsM <= 26 && (!best || sol.rmsM < best.rmsM)) {
       best = { world, rmsM: sol.rmsM };
       if (sol.rmsM < 10) break;
+    } else {
+      const robustSol = solveRigidForNetwork(net, sample, false, 95 * 95);
+      if (robustSol) {
+        const { medianM, p70M } = evalPointQuantilesM(sample, net, robustSol);
+        if (medianM <= 16 && p70M <= 28 && (!best || medianM < best.rmsM)) {
+          best = { world, rmsM: medianM };
+          if (medianM < 10) break;
+        }
+      }
     }
   }
   return best;
