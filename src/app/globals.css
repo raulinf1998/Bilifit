@@ -57,3 +57,9 @@ body {
   font-family: inherit;
   z-index: 1;
 }
+
+.leaflet-container img.leaflet-image-layer,
+.leaflet-container .leaflet-tile-pane img {
+  max-width: none !important;
+  max-height: none !important;
+}

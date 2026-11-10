@@ -403,7 +403,18 @@ test('MyWhoosh virtual worlds resolve, align (including Free Rides), avoid outdo
       Math.abs(actualRatio - expectedRatio) < 0.03,
       `Mercator aspect ratio mismatch for ${w.id}: svg=${actualRatio.toFixed(3)} vs bounds=${expectedRatio.toFixed(3)}`
     );
+    // Verificar que cada mapa incluye dibujo cartográfico ilustrado (gradientes, relieve/bandas, caminos y hitos)
+    assert.ok(svgText.includes(`id="bg-${w.id}"`), `Missing illustrated background gradient for ${w.id}`);
+    const pathCount = (svgText.match(/<path /g) || []).length;
+    assert.ok(pathCount >= 20, `Expected illustrated terrain + road paths for ${w.id}, got ${pathCount}`);
+    assert.ok(svgText.includes('<text '), `Expected landmark/title labels in ${w.id}.svg`);
   }
+
+  // Verificar que ActivityMap no incurra en la carrera asíncrona inicial al montar mapas MyWhoosh
+  const activityMapSrc = fs.readFileSync(path.join(process.cwd(), 'src/components/ActivityMap.tsx'), 'utf8');
+  assert.ok(activityMapSrc.includes('mapReadyTick'), 'ActivityMap should trigger layer setup once Leaflet finishes async import');
+  assert.ok(activityMapSrc.includes('center: initialCenter'), 'ActivityMap should initialize L.map with center/zoom before fitBounds/imageOverlay');
+  assert.ok(activityMapSrc.includes("pane: 'tilePane'"), 'ActivityMap should mount virtual SVG overlay inside tilePane under route polylines');
 
   // 2. Detección por coordenadas dentro del bounding box de Colombia (con contexto virtual sí; sin contexto virtual no)
   const colMatch = resolveMyWhooshWorldForActivity({
