@@ -1,7 +1,7 @@
 import FitParser from 'fit-file-parser';
 import { computeSessionExtras, enrichPointsTelemetry } from '@/lib/analytics';
 import { calculateNormalizedPower } from '@/lib/metrics';
-import { resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
+import { isMyWhooshContext, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
 import { detectMyWhooshWorld, type ParsedActivityData } from '@/lib/parsers/gpx';
 import { computeElevationGainLoss, downsamplePoints, encodePolyline } from '@/lib/polyline';
 import type { ActivityExtras, ActivityLap, ActivityPoint, SportType } from '@/types';
@@ -13,28 +13,39 @@ function mapFitSport(
   elevationGain: number,
   distanceMeters: number,
   coords: Array<[number, number]>,
-  hasPower: boolean
+  hasPower: boolean,
+  deviceName?: string
 ): { sport: SportType; subSport?: string; worldName?: string } {
   const sport = sportRaw.toLowerCase();
   const sub = subSportRaw.toLowerCase();
   const fn = fileName.toLowerCase();
-  const resolvedWorld = resolveMyWhooshWorldForActivity({
-    worldName: detectMyWhooshWorld(fileName),
-    title: fileName,
-    coords,
-  });
-  const worldName = resolvedWorld?.world.name ?? detectMyWhooshWorld(fileName);
-
-  if (
+  const devLower = (deviceName ?? '').toLowerCase();
+  const hasVirtualHint =
     sub.includes('virtual') ||
     sub.includes('indoor_cycling') ||
     sub.includes('spin') ||
     fn.includes('mywhoosh') ||
     fn.includes('whoosh') ||
     fn.includes('zwift') ||
-    (resolvedWorld && (hasPower || sport.includes('cycling')))
-  ) {
-    return { sport: 'mywhoosh', subSport: 'MyWhoosh Indoor', worldName };
+    devLower.includes('mywhoosh') ||
+    devLower.includes('zwift') ||
+    isMyWhooshContext({ title: fileName, subSport: subSportRaw, deviceName });
+
+  const resolvedWorld = resolveMyWhooshWorldForActivity({
+    worldName: hasVirtualHint ? detectMyWhooshWorld(fileName) : undefined,
+    title: fileName,
+    sport: sport.includes('cycling') || sport.includes('biking') ? 'cycling' : undefined,
+    subSport: subSportRaw,
+    deviceName,
+    coords,
+  });
+
+  if (hasVirtualHint || (resolvedWorld && (hasPower || sport.includes('cycling')))) {
+    return {
+      sport: 'mywhoosh',
+      subSport: 'MyWhoosh Indoor',
+      worldName: resolvedWorld?.world.name,
+    };
   }
 
   if (sport.includes('hiking') || sub.includes('trail') || sub.includes('mountain')) {
@@ -192,7 +203,7 @@ export async function parseFitBuffer(buffer: Buffer, fileName = 'actividad.fit')
   const sportRaw = String(session?.sport ?? sportMsg?.sport ?? 'running');
   const subSportRaw = String(session?.sub_sport ?? sportMsg?.sub_sport ?? '');
   const hasPower = wattsCount > 5 || (typeof session?.avg_power === 'number' && session.avg_power > 0);
-  const mapped = mapFitSport(sportRaw, subSportRaw, fileName, elevationGain, distanceMeters, coordsForPoly, hasPower);
+  const mapped = mapFitSport(sportRaw, subSportRaw, fileName, elevationGain, distanceMeters, coordsForPoly, hasPower, deviceName);
 
   const enrichedPoints = enrichPointsTelemetry(points, mapped.sport);
 

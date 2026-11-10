@@ -11,6 +11,8 @@ import {
   enrichPointsTelemetry,
 } from '@/lib/analytics';
 import { DEFAULT_EXERCISES, DEFAULT_HOME_EQUIPMENT } from '@/lib/home-workouts';
+import { isMyWhooshContext, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
+import { decodePolyline } from '@/lib/polyline';
 import { buildSeedActivityRows, SEED_GEAR, SEED_PROFILE, SEED_ROUTES, SEED_ROUTINES } from '@/lib/seed';
 import { buildSegmentFromRange, matchPointsToSegment } from '@/lib/segments';
 import type {
@@ -58,9 +60,93 @@ export function getDb(): Database.Database {
 
   initSchema(db);
   seedIfEmpty(db);
+  backfillMyWhooshWorlds(db);
 
   dbInstance = db;
   return dbInstance;
+}
+
+export function backfillMyWhooshWorlds(db: Database.Database = getDb()): number {
+  const candidates = db
+    .prepare(
+      `SELECT id, sport, sub_sport, title, world_name, polyline, points_json, extras_json
+       FROM activities
+       WHERE (world_name IS NULL OR TRIM(world_name) = '')
+         AND sport IN ('mywhoosh', 'cycling')`
+    )
+    .all() as Array<Record<string, unknown>>;
+
+  if (candidates.length === 0) return 0;
+
+  const updateStmt = db.prepare(`
+    UPDATE activities
+    SET sport = ?, sub_sport = ?, world_name = ?
+    WHERE id = ?
+  `);
+
+  let updated = 0;
+  const tx = db.transaction(() => {
+    for (const row of candidates) {
+      const sport = String(row.sport) as SportType;
+      const subSport = row.sub_sport ? String(row.sub_sport) : null;
+      const title = String(row.title ?? '');
+      let deviceName: string | null = null;
+      if (row.extras_json) {
+        try {
+          const ex = JSON.parse(String(row.extras_json)) as { deviceName?: string | null };
+          deviceName = ex.deviceName ?? null;
+        } catch {
+          deviceName = null;
+        }
+      }
+
+      const virtualCtx = isMyWhooshContext({
+        sport,
+        subSport,
+        worldName: null,
+        title,
+        deviceName,
+      });
+
+      if (!virtualCtx && sport !== 'mywhoosh') continue;
+
+      let coords: Array<[number, number]> = [];
+      if (row.points_json) {
+        try {
+          const pts = JSON.parse(String(row.points_json)) as Array<{ lat?: number; lon?: number }>;
+          coords = pts
+            .filter((p): p is { lat: number; lon: number } => typeof p.lat === 'number' && typeof p.lon === 'number')
+            .map((p) => [p.lat, p.lon]);
+        } catch {
+          coords = [];
+        }
+      }
+      if (coords.length === 0 && row.polyline) {
+        coords = decodePolyline(String(row.polyline));
+      }
+
+      const resolved = resolveMyWhooshWorldForActivity({
+        worldName: null,
+        title,
+        sport,
+        subSport,
+        deviceName,
+        coords,
+      });
+
+      const nextSport: SportType = virtualCtx ? 'mywhoosh' : sport;
+      const nextSubSport = virtualCtx ? 'MyWhoosh Indoor' : subSport;
+      const nextWorld = resolved?.world.name ?? null;
+
+      if (nextWorld || (virtualCtx && sport !== 'mywhoosh')) {
+        updateStmt.run(nextSport, nextSubSport, nextWorld, String(row.id));
+        updated++;
+      }
+    }
+  });
+  tx();
+
+  return updated;
 }
 
 function initSchema(db: Database.Database) {

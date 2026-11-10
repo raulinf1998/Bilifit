@@ -23,6 +23,7 @@ import { parseGpxString, generateGpxString } from '../src/lib/parsers/gpx';
 import { parseTcxString } from '../src/lib/parsers/tcx';
 import { parseUploadedActivityBatch, parseUploadedActivityFile } from '../src/lib/parsers';
 import {
+  applyHealthSyncMetadata,
   groupHealthSyncFiles,
   parseHealthSyncCsv,
   parseHuaweiMotionPathJson,
@@ -43,11 +44,13 @@ import {
   isExerciseCompatible,
 } from '../src/lib/home-workouts';
 import {
+  backfillMyWhooshWorlds,
   createActivity,
   createCustomEquipment,
   createSegmentAndMatch,
   getActivityById,
   getAthleteProfile,
+  getDb,
   getSegmentWithEfforts,
   listActivities,
   listHomeEquipment,
@@ -64,7 +67,14 @@ import {
   computeTerrainBreakdown,
   enrichPointsTelemetry,
 } from '../src/lib/analytics';
-import { MYWHOOSH_WORLDS, resolveMyWhooshWorldForActivity } from '../src/lib/mywhoosh-maps';
+import {
+  alignCoordsToMyWhooshWorld,
+  getMyWhooshWorldByIdOrName,
+  MYWHOOSH_WORLDS,
+  matchGpsToWorldRoads,
+  resolveMyWhooshWorldForActivity,
+} from '../src/lib/mywhoosh-maps';
+import roadsDataset from '../src/lib/mywhoosh-roads-data.json';
 import {
   connectMyWhooshAccount,
   decodeJwtExpiry,
@@ -367,28 +377,310 @@ test('SQLite DB initializes seed data, toggles equipment, and persists activitie
   assert.equal(mapStravaSport('Run', 'TrailRun', 'Trail Picos').sport, 'mountain');
 });
 
-test('MyWhoosh virtual worlds resolve by coordinates and title and have SVG assets on disk', () => {
+test('MyWhoosh virtual worlds resolve, align (including Free Rides), avoid outdoor false positives, and backfill safely', async () => {
+  assert.equal(MYWHOOSH_WORLDS.length, 19);
+
+  const mercatorY = (lat: number) => {
+    const rad = (lat * Math.PI) / 180;
+    return Math.log(Math.tan(Math.PI / 4 + rad / 2));
+  };
+
+  // 1. Verificar los 19 SVG en disco, XML válido y relación de aspecto Mercator acorde a bounds
   for (const w of MYWHOOSH_WORLDS) {
     const rel = w.imageUrl.replace(/^\//, '');
     const full = path.join(process.cwd(), 'public', rel);
     assert.ok(fs.existsSync(full), `Missing MyWhoosh SVG map file: ${full}`);
+    const svgText = fs.readFileSync(full, 'utf8');
+    assert.ok(svgText.includes('<svg') && svgText.includes('</svg>'), `Invalid SVG markup for ${w.id}`);
+    const vbMatch = svgText.match(/viewBox="0 0 (\d+) (\d+)"/);
+    assert.ok(vbMatch, `Missing viewBox in ${w.id}.svg`);
+    const svgW = Number(vbMatch[1]);
+    const svgH = Number(vbMatch[2]);
+    const [[s, west], [n, east]] = w.bounds;
+    const expectedRatio = ((east - west) * (Math.PI / 180)) / (mercatorY(n) - mercatorY(s));
+    const actualRatio = svgW / svgH;
+    assert.ok(
+      Math.abs(actualRatio - expectedRatio) < 0.03,
+      `Mercator aspect ratio mismatch for ${w.id}: svg=${actualRatio.toFixed(3)} vs bounds=${expectedRatio.toFixed(3)}`
+    );
   }
 
-  // Detección por coordenadas dentro del bounding box de Colombia (lat ~4.61, lon ~-72.81)
+  // 2. Detección por coordenadas dentro del bounding box de Colombia (con contexto virtual sí; sin contexto virtual no)
   const colMatch = resolveMyWhooshWorldForActivity({
     coords: [
       [4.605, -72.825],
       [4.622, -72.801],
     ],
+    sport: 'mywhoosh',
     title: 'Entreno matinal sin nombre de mundo',
   });
   assert.equal(colMatch?.world.id, 'colombia');
+  assert.equal(
+    resolveMyWhooshWorldForActivity({
+      coords: [
+        [4.605, -72.825],
+        [4.622, -72.801],
+      ],
+      sport: 'cycling',
+      title: 'Entreno real por Colombia',
+    }),
+    null
+  );
 
-  // Detección por nombre de ruta/título
+  // 3. Detección por nombre de ruta/título cuando existe contexto virtual
   const arabiaMatch = resolveMyWhooshWorldForActivity({
     title: 'Subida dura a Jebel Jais',
+    sport: 'mywhoosh',
   });
   assert.equal(arabiaMatch?.world.id, 'arabia');
+
+  // 4. Protección anti-falsos-positivos en salidas reales exteriores (Zúrich y Oviedo)
+  assert.equal(
+    resolveMyWhooshWorldForActivity({
+      title: 'Morning Commute Zurich',
+      sport: 'cycling',
+      subSport: 'road',
+      deviceName: 'Garmin Edge 540',
+      coords: [
+        [47.3769, 8.5417],
+        [47.3785, 8.5442],
+      ],
+    }),
+    null
+  );
+  assert.equal(
+    resolveMyWhooshWorldForActivity({
+      title: 'Salida carretera Oviedo - Naranco',
+      sport: 'cycling',
+      coords: [
+        [43.3619, -5.8494],
+        [43.385, -5.868],
+      ],
+    }),
+    null
+  );
+
+  // GPX real de exterior en Zúrich sin marca virtual no debe clasificarse como MyWhoosh
+  const outdoorZurichGpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Garmin Connect" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk><name>Morning Commute Zurich</name><type>Cycling</type><trkseg>
+    <trkpt lat="47.3769" lon="8.5417"><ele>408</ele><time>2026-10-12T07:00:00Z</time></trkpt>
+    <trkpt lat="47.3792" lon="8.5448"><ele>416</ele><time>2026-10-12T07:04:00Z</time></trkpt>
+  </trkseg></trk>
+</gpx>`;
+  const parsedOutdoor = parseGpxString(outdoorZurichGpx, 'morning_commute_zurich.gpx');
+  assert.equal(parsedOutdoor.sport, 'cycling');
+  assert.equal(parsedOutdoor.worldName ?? null, null);
+
+  // 5. Alineación: modo native, datum offset rigid-road-lock, Free Ride parcial y centered
+  const alulaWorld = getMyWhooshWorldByIdOrName('alula')!;
+  const alulaNetwork = (roadsDataset.worlds as unknown as Record<string, { tracks?: Array<Array<[number, number]>> }>).alula;
+  const baseTrack: Array<[number, number]> = [];
+  for (const seg of (alulaNetwork.tracks ?? []).slice(0, 6)) {
+    for (const pt of seg) {
+      baseTrack.push([pt[0], pt[1]]);
+    }
+  }
+  assert.ok(baseTrack.length >= 25, 'AlUla road dataset should have sample coordinates');
+
+  // 5a. Native (sin offset)
+  const nativeAligned = alignCoordsToMyWhooshWorld(alulaWorld, baseTrack);
+  assert.equal(nativeAligned.mode, 'native');
+  assert.equal(nativeAligned.alignedCoords.length, baseTrack.length);
+
+  // 5b. Datum offset completo -> rigid-road-lock
+  const shiftedTrack = baseTrack.map(([la, lo]): [number, number] => [la + 0.0085, lo - 0.0065]);
+  const lockedMatch = matchGpsToWorldRoads(shiftedTrack);
+  assert.ok(lockedMatch && lockedMatch.world.id === 'alula');
+  const rigidAligned = alignCoordsToMyWhooshWorld(alulaWorld, shiftedTrack);
+  assert.equal(rigidAligned.mode, 'rigid-road-lock');
+  assert.equal(rigidAligned.alignedCoords.length, shiftedTrack.length);
+  assert.ok((rigidAligned.rmsErrorM ?? 99) < 15);
+
+  // 5c. Free Ride con un 30% de extensión/intersección nueva no cartografiada + desplazamiento -> Huber lock
+  const splitIdx = Math.floor(shiftedTrack.length * 0.72);
+  const lastShifted = shiftedTrack[splitIdx - 1];
+  const freeRideTrack: Array<[number, number]> = shiftedTrack.map((pt, i) =>
+    i < splitIdx ? pt : [lastShifted[0] + (i - splitIdx + 1) * 0.0018, lastShifted[1] + (i - splitIdx + 1) * 0.0015]
+  );
+  const freeRideAligned = alignCoordsToMyWhooshWorld(alulaWorld, freeRideTrack);
+  assert.equal(freeRideAligned.mode, 'rigid-road-lock');
+  assert.equal(freeRideAligned.alignedCoords.length, freeRideTrack.length);
+
+  // 5d. Mundo esquemático -> centered dentro de los bounds
+  const bhutanWorld = getMyWhooshWorldByIdOrName('bhutan')!;
+  const centeredAligned = alignCoordsToMyWhooshWorld(bhutanWorld, [
+    [43.36, -5.85],
+    [43.38, -5.86],
+    [43.39, -5.84],
+  ]);
+  assert.equal(centeredAligned.mode, 'centered');
+  assert.equal(centeredAligned.alignedCoords.length, 3);
+  const [[bS, bW], [bN, bE]] = bhutanWorld.bounds;
+  for (const [lat, lon] of centeredAligned.alignedCoords) {
+    assert.ok(lat >= bS && lat <= bN && lon >= bW && lon <= bE, 'Centered track must fit inside Bhutan bounds');
+  }
+
+  // 6. FIT virtual MyWhoosh con nombre de archivo genérico + Health Sync CSV con título virtual
+  const mwEncoder = new FitEncoder();
+  const mwDate = new Date('2026-08-18T09:00:00Z');
+  const mwFitTs = FitEncoder.toFitTimestamp(mwDate);
+  const degSemi = (d: number) => Math.round((d * 2147483648) / 180);
+  const devNameBytes = FitEncoder.string('MyWhoosh');
+  mwEncoder.writeMessage(0, [
+    { number: 0, size: 1, baseType: FitBaseType.Enum, value: 4 },
+    { number: 4, size: 4, baseType: FitBaseType.Uint32, value: mwFitTs },
+  ], 0);
+  mwEncoder.writeMessage(23, [
+    { number: 0, size: 1, baseType: FitBaseType.Uint8, value: 0 },
+    { number: 27, size: devNameBytes.byteLength, baseType: FitBaseType.String, value: devNameBytes },
+  ], 3);
+  mwEncoder.writeMessage(18, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: mwFitTs + 900 },
+    { number: 2, size: 4, baseType: FitBaseType.Uint32, value: mwFitTs },
+    { number: 5, size: 1, baseType: FitBaseType.Enum, value: 2 }, // cycling
+    { number: 6, size: 1, baseType: FitBaseType.Enum, value: 58 }, // virtual_activity
+    { number: 7, size: 4, baseType: FitBaseType.Uint32, value: 900 * 1000 },
+    { number: 8, size: 4, baseType: FitBaseType.Uint32, value: 900 * 1000 },
+    { number: 9, size: 4, baseType: FitBaseType.Uint32, value: 8500 * 100 },
+  ], 1);
+  mwEncoder.writeMessage(20, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: mwFitTs },
+    { number: 0, size: 4, baseType: FitBaseType.Sint32, value: degSemi(baseTrack[0][0]) },
+    { number: 1, size: 4, baseType: FitBaseType.Sint32, value: degSemi(baseTrack[0][1]) },
+    { number: 5, size: 4, baseType: FitBaseType.Uint32, value: 0 },
+  ], 2);
+  mwEncoder.writeMessage(20, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: mwFitTs + 900 },
+    { number: 0, size: 4, baseType: FitBaseType.Sint32, value: degSemi(baseTrack[10][0]) },
+    { number: 1, size: 4, baseType: FitBaseType.Sint32, value: degSemi(baseTrack[10][1]) },
+    { number: 5, size: 4, baseType: FitBaseType.Uint32, value: 8500 * 100 },
+  ], 2);
+  const mwFitBytes = mwEncoder.close();
+  const mwFitBuf = Buffer.from(mwFitBytes.buffer, mwFitBytes.byteOffset, mwFitBytes.byteLength);
+  const fitParsed = await parseUploadedActivityFile('2026.08.18 11.00-CYCLING.fit', mwFitBuf);
+  assert.equal(fitParsed.activities.length, 1);
+  assert.equal(fitParsed.activities[0].sport, 'mywhoosh');
+  assert.equal(fitParsed.activities[0].worldName, 'AlUla');
+
+  const csvOverride = applyHealthSyncMetadata(
+    {
+      ...fitParsed.activities[0],
+      sport: 'cycling',
+      subSport: 'Carretera',
+      worldName: undefined,
+      title: 'CYCLING',
+    },
+    {
+      originApp: 'MyWhoosh',
+      activityType: 'VIRTUAL_RIDE',
+      activityName: 'MyWhoosh Free Ride Hudayriyat',
+      dateTimeRaw: null,
+      elapsedSec: 900,
+      activeSec: 900,
+      distanceMeters: 8500,
+      calories: 250,
+      steps: null,
+      avgHr: 145,
+      maxHr: 165,
+      avgSpeedMs: null,
+      maxSpeedMs: null,
+    }
+  );
+  assert.equal(csvOverride.sport, 'mywhoosh');
+  assert.equal(csvOverride.worldName, 'Hudayriyat');
+
+  // 7. Migración backfillMyWhooshWorlds: corrige sesiones históricas sin tocar salidas outdoor reales
+  const legacyMw = createActivity({
+    id: 'act_legacy_mw_backfill',
+    externalId: null,
+    source: 'strava',
+    sport: 'cycling',
+    subSport: 'Carretera',
+    title: 'MyWhoosh - Culture Ride',
+    description: null,
+    startedAt: '2026-08-19T10:00:00Z',
+    durationSec: 1800,
+    movingTimeSec: 1800,
+    distanceMeters: 18000,
+    elevationGain: 150,
+    elevationLoss: 150,
+    avgSpeedMs: 10,
+    maxSpeedMs: 13,
+    avgHr: 148,
+    maxHr: 168,
+    avgWatts: 215,
+    normalizedPower: 225,
+    maxWatts: 350,
+    avgCadence: 88,
+    calories: 420,
+    tss: 55,
+    rpe: 6,
+    gearId: null,
+    worldName: null,
+    polyline: encodePolyline(baseTrack.slice(0, 12)),
+    startLat: baseTrack[0][0],
+    startLon: baseTrack[0][1],
+    points: [],
+    strengthLogs: [],
+    totalVolumeKg: null,
+    extras: { deviceName: 'MyWhoosh' },
+    createdAt: new Date().toISOString(),
+  });
+  assert.equal(legacyMw.worldName, null);
+
+  const realOutdoor = createActivity({
+    id: 'act_real_zurich_outdoor',
+    externalId: null,
+    source: 'gpx',
+    sport: 'cycling',
+    subSport: 'Carretera',
+    title: 'Morning Commute Zurich',
+    description: null,
+    startedAt: '2026-08-20T07:30:00Z',
+    durationSec: 1200,
+    movingTimeSec: 1200,
+    distanceMeters: 7500,
+    elevationGain: 90,
+    elevationLoss: 80,
+    avgSpeedMs: 6.25,
+    maxSpeedMs: 10,
+    avgHr: 130,
+    maxHr: 152,
+    avgWatts: null,
+    normalizedPower: null,
+    maxWatts: null,
+    avgCadence: null,
+    calories: 210,
+    tss: 25,
+    rpe: 4,
+    gearId: null,
+    worldName: null,
+    polyline: encodePolyline([
+      [47.3769, 8.5417],
+      [47.3792, 8.5448],
+    ]),
+    startLat: 47.3769,
+    startLon: 8.5417,
+    points: [],
+    strengthLogs: [],
+    totalVolumeKg: null,
+    extras: { deviceName: 'Garmin Edge 540' },
+    createdAt: new Date().toISOString(),
+  });
+
+  const db = getDb();
+  const updatedCount = backfillMyWhooshWorlds(db);
+  assert.ok(updatedCount >= 1);
+  assert.equal(backfillMyWhooshWorlds(db), 0, 'backfillMyWhooshWorlds must be idempotent');
+
+  const migrated = getActivityById('act_legacy_mw_backfill');
+  assert.equal(migrated?.sport, 'mywhoosh');
+  assert.equal(migrated?.worldName, 'AlUla');
+
+  const untouchedOutdoor = getActivityById(realOutdoor.id);
+  assert.equal(untouchedOutdoor?.sport, 'cycling');
+  assert.equal(untouchedOutdoor?.worldName, null);
 });
 
 test('Analytics engine computes splits, GAP, best efforts, HR/pace zones, terrain and extras', () => {

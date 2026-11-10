@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 993" width="1200" height="993">
+  <defs>
+    <linearGradient id="bgGrad-endurance-climb" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ccd1d9" />
+      <stop offset="55%" stop-color="#bfc7d1" />
+      <stop offset="100%" stop-color="#b0bac7" />
+    </linearGradient>
+    <pattern id="grid-endurance-climb" width="72" height="72" patternUnits="userSpaceOnUse">
+      <path d="M 72 0 L 0 0 0 72" fill="none" stroke="rgba(15,23,42,0.055)" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="993" fill="url(#bgGrad-endurance-climb)" />
+  <rect width="1200" height="993" fill="url(#grid-endurance-climb)" />
+  <ellipse cx="648" cy="387" rx="596" ry="477" fill="#7e8da1" fill-opacity="0.13" stroke="#516175" stroke-opacity="0.18" stroke-width="1.4" />
+  <ellipse cx="480" cy="497" rx="503" ry="402" fill="#7e8da1" fill-opacity="0.13" stroke="#516175" stroke-opacity="0.18" stroke-width="1.4" />
+  <ellipse cx="648" cy="387" rx="410" ry="328" fill="#7e8da1" fill-opacity="0.13" stroke="#516175" stroke-opacity="0.18" stroke-width="1.4" />
+  <ellipse cx="480" cy="497" rx="316" ry="253" fill="#7e8da1" fill-opacity="0.13" stroke="#516175" stroke-opacity="0.18" stroke-width="1.4" />
+  <ellipse cx="648" cy="387" rx="224" ry="179" fill="#7e8da1" fill-opacity="0.13" stroke="#516175" stroke-opacity="0.18" stroke-width="1.4" />
+  <g stroke="rgba(15,23,42,0.22)" stroke-width="10.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 192.0 794.4 L 336.0 655.4 L 264.0 516.4 L 528.0 456.8 L 456.0 317.8 L 768.0 278.0 L 960.0 178.7" />
+  </g>
+  <g stroke="#334155" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 192.0 794.4 L 336.0 655.4 L 264.0 516.4 L 528.0 456.8 L 456.0 317.8 L 768.0 278.0 L 960.0 178.7" />
+  </g>
+  <g stroke="#f8fafc" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 192.0 794.4 L 336.0 655.4 L 264.0 516.4 L 528.0 456.8 L 456.0 317.8 L 768.0 278.0 L 960.0 178.7" />
+  </g>
+  <g stroke="#a855f7" stroke-opacity="0.45" stroke-width="1.2" stroke-dasharray="6 6" stroke-linecap="round" fill="none">
+    <path d="M 192.0 794.4 L 336.0 655.4 L 264.0 516.4 L 528.0 456.8 L 456.0 317.8 L 768.0 278.0 L 960.0 178.7" />
+  </g>
+  <polygon points="960,170.7 967,183.7 953,183.7" fill="#f97316" stroke="#0f172a" stroke-width="2" />
+  <rect x="970.0" y="167.7" width="181.2" height="22" rx="6" fill="rgba(15,23,42,0.82)" stroke="rgba(255,255,255,0.16)" stroke-width="1" />
+  <text x="979.0" y="182.7" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" font-weight="700" fill="#f8fafc">Cima Section 9/9 · 2642m</text>
+  <polygon points="528,448.8 535,461.8 521,461.8" fill="#f97316" stroke="#0f172a" stroke-width="2" />
+  <rect x="538.0" y="445.8" width="181.2" height="22" rx="6" fill="rgba(15,23,42,0.82)" stroke="rgba(255,255,255,0.16)" stroke-width="1" />
+  <text x="547.0" y="460.8" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" font-weight="700" fill="#f8fafc">Campamento Medio · 1280m</text>
+  <circle cx="192" cy="794.4" r="5.5" fill="#a855f7" stroke="#0f172a" stroke-width="2" />
+  <rect x="202.0" y="783.4" width="113.2" height="22" rx="6" fill="rgba(15,23,42,0.82)" stroke="rgba(255,255,255,0.16)" stroke-width="1" />
+  <text x="211.0" y="798.4" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" font-weight="700" fill="#f8fafc">Base Endurance</text>
+  <g transform="translate(1152, 945)" opacity="0.92">
+    <circle cx="0" cy="0" r="24" fill="rgba(15,23,42,0.82)" stroke="rgba(255,255,255,0.24)" stroke-width="1.5"/>
+    <polygon points="0,-16 4.5,0 0,-3 -4.5,0" fill="#f97316"/>
+    <polygon points="0,16 4.5,0 0,3 -4.5,0" fill="#cbd5e1"/>
+    <text x="0" y="2" text-anchor="middle" font-family="system-ui,sans-serif" font-size="9" font-weight="800" fill="#ffffff" stroke="rgba(15,23,42,0.9)" stroke-width="2.4" paint-order="stroke">N</text>
+  </g>
+  <rect x="22" y="917" width="392" height="54" rx="12" fill="rgba(15,23,42,0.84)" stroke="rgba(255,255,255,0.18)" />
+  <circle cx="46" cy="944" r="8" fill="#a855f7" />
+  <text x="64" y="941" font-family="system-ui,-apple-system,sans-serif" font-size="16" font-weight="800" letter-spacing="1.1" fill="#ffffff">ENDURANCE CLIMB</text>
+  <text x="64" y="959" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" font-weight="500" fill="#cbd5e1">Ascenso Maratón 9 Secciones · 3 rutas · 2642m D+</text>
+</svg>

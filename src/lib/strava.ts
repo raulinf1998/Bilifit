@@ -7,7 +7,7 @@ import {
   getDb,
 } from '@/lib/db';
 import { calculateNormalizedPower, estimateActivityTSS } from '@/lib/metrics';
-import { resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
+import { isMyWhooshContext, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
 import { detectMyWhooshWorld } from '@/lib/parsers/gpx';
 import { decodePolyline, downsamplePoints } from '@/lib/polyline';
 import type { ActivityLap, ActivityPoint, SportType, StravaConnectionStatus } from '@/types';
@@ -207,15 +207,23 @@ export function mapStravaSport(
   const t = (sportType || stravaType || '').toLowerCase();
   const titleLower = name.toLowerCase();
   const devLower = (deviceName || '').toLowerCase();
+  const isVirtual =
+    t === 'virtualride' ||
+    devLower.includes('mywhoosh') ||
+    titleLower.includes('mywhoosh') ||
+    titleLower.includes('zwift') ||
+    isMyWhooshContext({ title: name, deviceName, subSport: t === 'virtualride' ? 'virtual_activity' : t });
+
   const resolvedWorld = resolveMyWhooshWorldForActivity({
-    worldName: detectMyWhooshWorld(`${name} ${deviceName || ''}`),
+    worldName: isVirtual ? detectMyWhooshWorld(`${name} ${deviceName || ''}`) : undefined,
     title: name,
+    subSport: isVirtual ? 'virtual_activity' : t,
+    deviceName,
     coords,
   });
-  const worldName = resolvedWorld?.world.name ?? detectMyWhooshWorld(`${name} ${deviceName || ''}`);
 
-  if (t === 'virtualride' || devLower.includes('mywhoosh') || titleLower.includes('mywhoosh') || titleLower.includes('zwift')) {
-    return { sport: 'mywhoosh', subSport: 'MyWhoosh Indoor', worldName };
+  if (isVirtual || (resolvedWorld && (t === 'ride' || t === 'virtualride'))) {
+    return { sport: 'mywhoosh', subSport: 'MyWhoosh Indoor', worldName: resolvedWorld?.world.name };
   }
   if (t === 'trailrun') {
     return { sport: 'mountain', subSport: 'Trail Running' };
@@ -409,6 +417,21 @@ export async function syncStravaActivities(limit = 30, fetchStreams = true): Pro
 
     points = enrichPointsTelemetry(points, mapped.sport);
 
+    let resolvedWorldName = mapped.worldName ?? null;
+    if (!resolvedWorldName && mapped.sport === 'mywhoosh') {
+      const pointCoords = points
+        .filter((p): p is ActivityPoint & { lat: number; lon: number } => typeof p.lat === 'number' && typeof p.lon === 'number')
+        .map((p) => [p.lat, p.lon] as [number, number]);
+      resolvedWorldName =
+        resolveMyWhooshWorldForActivity({
+          title: item.name,
+          sport: mapped.sport,
+          subSport: mapped.subSport,
+          deviceName: item.device_name,
+          coords: pointCoords.length > 0 ? pointCoords : polylineCoords,
+        })?.world.name ?? null;
+    }
+
     const rawCad = item.average_cadence;
     const adjustedCadence =
       rawCad && (mapped.sport === 'running' || mapped.sport === 'mountain') && rawCad < 115
@@ -481,7 +504,7 @@ export async function syncStravaActivities(limit = 30, fetchStreams = true): Pro
       tss,
       rpe: item.perceived_exertion ?? null,
       gearId: null,
-      worldName: mapped.worldName ?? null,
+      worldName: resolvedWorldName,
       polyline,
       startLat: item.start_latlng?.[0] ?? points[0]?.lat ?? null,
       startLon: item.start_latlng?.[1] ?? points[0]?.lon ?? null,

@@ -1,44 +1,88 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1279" width="1200" height="1279">
   <defs>
-    <radialGradient id="bgGrad" cx="50%" cy="48%" r="68%">
-      <stop offset="0%" stop-color="#c5cfc5" />
-      <stop offset="100%" stop-color="#b6c5c8" />
-    </radialGradient>
-    <pattern id="grid" width="80" height="80" patternUnits="userSpaceOnUse">
-      <path d="M 80 0 L 0 0 0 80" fill="none" stroke="rgba(15,23,42,0.06)" stroke-width="1"/>
+    <linearGradient id="bgGrad-switzerland" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#c5d4d2" />
+      <stop offset="55%" stop-color="#b8cac8" />
+      <stop offset="100%" stop-color="#a9bfbd" />
+    </linearGradient>
+    <pattern id="grid-switzerland" width="72" height="72" patternUnits="userSpaceOnUse">
+      <path d="M 72 0 L 0 0 0 72" fill="none" stroke="rgba(15,23,42,0.055)" stroke-width="1"/>
     </pattern>
   </defs>
-  <rect width="1200" height="900" fill="url(#bgGrad)" />
-  <rect width="1200" height="900" fill="url(#grid)" />
-  <ellipse cx="440" cy="420" rx="285" ry="193.8" fill="#adbbae" fill-opacity="0.35" stroke="#5f7069" stroke-opacity="0.22" stroke-width="1.5" />
-  <ellipse cx="440" cy="420" rx="230" ry="156.4" fill="none" fill-opacity="0.35" stroke="#5f7069" stroke-opacity="0.22" stroke-width="1.5" />
-  <ellipse cx="440" cy="420" rx="175" ry="119.00000000000001" fill="none" fill-opacity="0.35" stroke="#5f7069" stroke-opacity="0.22" stroke-width="1.5" />
-  <ellipse cx="440" cy="420" rx="120" ry="81.60000000000001" fill="none" fill-opacity="0.35" stroke="#5f7069" stroke-opacity="0.22" stroke-width="1.5" />
-  <ellipse cx="760" cy="340" rx="245" ry="166.60000000000002" fill="#adbbae" fill-opacity="0.35" stroke="#5f7069" stroke-opacity="0.22" stroke-width="1.5" />
-  <ellipse cx="760" cy="340" rx="190" ry="129.20000000000002" fill="none" fill-opacity="0.35" stroke="#5f7069" stroke-opacity="0.22" stroke-width="1.5" />
-  <ellipse cx="760" cy="340" rx="135" ry="91.80000000000001" fill="none" fill-opacity="0.35" stroke="#5f7069" stroke-opacity="0.22" stroke-width="1.5" />
-  <ellipse cx="760" cy="340" rx="80" ry="54.400000000000006" fill="none" fill-opacity="0.35" stroke="#5f7069" stroke-opacity="0.22" stroke-width="1.5" />
-  <ellipse cx="620" cy="560" rx="225" ry="153.0" fill="#adbbae" fill-opacity="0.35" stroke="#5f7069" stroke-opacity="0.22" stroke-width="1.5" />
-  <ellipse cx="620" cy="560" rx="170" ry="115.60000000000001" fill="none" fill-opacity="0.35" stroke="#5f7069" stroke-opacity="0.22" stroke-width="1.5" />
-  <ellipse cx="620" cy="560" rx="115" ry="78.2" fill="none" fill-opacity="0.35" stroke="#5f7069" stroke-opacity="0.22" stroke-width="1.5" />
-  <ellipse cx="620" cy="560" rx="60" ry="40.800000000000004" fill="none" fill-opacity="0.35" stroke="#5f7069" stroke-opacity="0.22" stroke-width="1.5" />
-  <path d="M 60 820 C 310 660 470 590 680 650 C 870 705 1020 520 1210 470" fill="none" stroke="#7aa5b8" stroke-width="18" stroke-opacity="0.45" stroke-linecap="round" />
-  <path d="M 654.5 450.0 L 894.5 231.4 L 305.5 180.0 L 240.0 617.1 L 741.8 694.3 L 654.5 450.0" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
-  <path d="M 654.5 450.0 L 894.5 231.4 L 305.5 180.0 L 240.0 617.1 L 741.8 694.3 L 654.5 450.0" fill="none" stroke="#475569" stroke-opacity="0.45" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="10 6" />
-  <circle cx="654.5" cy="450.0" r="7" fill="#ef4444" stroke="#0f172a" stroke-width="2" />
-  <rect x="665.5" y="437.0" width="185.2" height="24" rx="6" fill="rgba(15,23,42,0.78)" />
-  <text x="674.5" y="453.0" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="700" fill="#f8fafc">Zúrich Circuito · 466m</text>
-  <circle cx="305.5" cy="180.0" r="7" fill="#ef4444" stroke="#0f172a" stroke-width="2" />
-  <rect x="316.5" y="167.0" width="162.4" height="24" rx="6" fill="rgba(15,23,42,0.78)" />
-  <text x="325.5" y="183.0" font-family="system-ui,-apple-system,sans-serif" font-size="13" font-weight="700" fill="#f8fafc">Alpine Climb · 880m</text>
-  <g transform="translate(56, 56)" opacity="0.72">
-    <circle cx="0" cy="0" r="22" fill="rgba(15,23,42,0.55)" stroke="rgba(255,255,255,0.4)" stroke-width="1.5"/>
-    <polygon points="0,-15 5,3 0,-1 -5,3" fill="#ef4444"/>
-    <polygon points="0,15 5,3 0,6 -5,3" fill="#cbd5e1"/>
-    <text x="0" y="-25" text-anchor="middle" font-family="system-ui,sans-serif" font-size="10" font-weight="800" fill="#0f172a">N</text>
+  <rect width="1200" height="1279" fill="url(#bgGrad-switzerland)" />
+  <rect width="1200" height="1279" fill="url(#grid-switzerland)" />
+  <ellipse cx="648" cy="499" rx="720" ry="576" fill="#7d9b99" fill-opacity="0.13" stroke="#4f6e6c" stroke-opacity="0.18" stroke-width="1.4" />
+  <ellipse cx="480" cy="640" rx="608" ry="486" fill="#7d9b99" fill-opacity="0.13" stroke="#4f6e6c" stroke-opacity="0.18" stroke-width="1.4" />
+  <ellipse cx="648" cy="499" rx="495" ry="396" fill="#7d9b99" fill-opacity="0.13" stroke="#4f6e6c" stroke-opacity="0.18" stroke-width="1.4" />
+  <ellipse cx="480" cy="640" rx="383" ry="306" fill="#7d9b99" fill-opacity="0.13" stroke="#4f6e6c" stroke-opacity="0.18" stroke-width="1.4" />
+  <ellipse cx="648" cy="499" rx="270" ry="216" fill="#7d9b99" fill-opacity="0.13" stroke="#4f6e6c" stroke-opacity="0.18" stroke-width="1.4" />
+  <polygon points="381,1279 381,520.3 609.5,604.6 761.9,1279" fill="#6fa9c9" fill-opacity="0.72" stroke="#3b7799" stroke-opacity="0.55" stroke-width="2" />
+  <path d="M 495.2 576.5 L 466.7 407.8 L 371.4 239.1 L 219 42.2" fill="none" stroke="#6fa9c9" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.78" />
+  <path d="M 495.2 576.5 L 466.7 407.8 L 371.4 239.1 L 219 42.2" fill="none" stroke="#3b7799" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.35" />
+  <g stroke="rgba(15,23,42,0.22)" stroke-width="10.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 393.8 816 L 376.4 810.1 L 356.6 817.5 L 331.9 819.1 L 328.4 868.6 L 339.3 908.2 L 340 1042.6 L 343.2 1062.6 L 349.7 1072.7 L 361 1077.2 L 373.6 1077.2 L 408 1060.2 L 450.8 1065.5 L 482.6 1054.1 L 511.2 1055.5 L 519 1052.5 L 528.2 1040.4 L 528.8 1012.1 L 569.9 1010.6 L 582.7 1006.1 L 594.3 997.1 L 604.2 976.6 L 623.5 909.3 L 638.5 890.5 L 666.1 871.4 L 689 906.1 L 693.5 926.4 L 695.6 979.8 L 711 1018.6 L 727.6 1048.1 L 725.5 1062.8 L 707.7 1090.8 L 701.9 1108.4 L 701.5 1128.4 L 707.3 1146.6 L 721.8 1162.6 L 750.9 1174 L 787.2 1175.8 L 819.6 1168.5 L 832.5 1157.2 L 843.9 1134.6 L 849 1110.2 L 847.4 1081.1 L 838.4 1040.1 L 801 948.1 L 796.2 912.3 L 783 890.3 L 781 874.5 L 784.2 857.3 L 790.7 846.4 L 818.6 840.6 L 825.1 836.2 L 833 796.2 L 786.8 786.5 L 779.9 782.1 L 776.7 772 L 783.6 747.3 L 750.7 693.9 L 621.8 750.4" />
+    <path d="M 978.9 567.7 L 983.7 563.6 L 1014.8 556.3 L 1024 514.7 L 1088.6 527.7 L 1103.8 540 L 1109.6 565 L 1093 609.4 L 1106.6 634.6 L 1107.5 649.6 L 1094.8 682.8 L 1089.2 710.6 L 1073.7 724.9 L 1059 723.8 L 1038.9 710.9 L 1012.3 718.8 L 990.1 662.5 L 986.1 629.4 L 972.7 607.2 L 972.3 585.2 L 981.4 565" />
+    <path d="M 1038.7 710.9 L 1012.6 719.3 L 990.7 664.7" />
+    <path d="M 1089.4 710.3 L 1074 724.9" />
+    <path d="M 1086.8 527.3 L 1102.1 537.4 L 1108 549.7 L 1109.8 564" />
+    <path d="M 981 565.3 L 1008.7 559.7 L 1015.5 555.3" />
+    <path d="M 991.7 667.6 L 986.1 629.4" />
+    <path d="M 972.1 605.1 L 973 581.4 L 981.6 564.9" />
+    <path d="M 1011.7 558.7 L 1016.4 552.1" />
   </g>
-  <rect x="28" y="814" width="330" height="58" rx="12" fill="rgba(15,23,42,0.78)" stroke="rgba(255,255,255,0.16)" />
-  <circle cx="54" cy="843" r="8" fill="#ef4444" />
-  <text x="74" y="840" font-family="system-ui,-apple-system,sans-serif" font-size="18" font-weight="800" letter-spacing="1.2" fill="#ffffff">SWITZERLAND</text>
-  <text x="74" y="860" font-family="system-ui,-apple-system,sans-serif" font-size="12" font-weight="500" fill="#cbd5e1">Zúrich & Alpes Suizos · MyWhoosh Virtual Map</text>
+  <g stroke="#334155" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 393.8 816 L 376.4 810.1 L 356.6 817.5 L 331.9 819.1 L 328.4 868.6 L 339.3 908.2 L 340 1042.6 L 343.2 1062.6 L 349.7 1072.7 L 361 1077.2 L 373.6 1077.2 L 408 1060.2 L 450.8 1065.5 L 482.6 1054.1 L 511.2 1055.5 L 519 1052.5 L 528.2 1040.4 L 528.8 1012.1 L 569.9 1010.6 L 582.7 1006.1 L 594.3 997.1 L 604.2 976.6 L 623.5 909.3 L 638.5 890.5 L 666.1 871.4 L 689 906.1 L 693.5 926.4 L 695.6 979.8 L 711 1018.6 L 727.6 1048.1 L 725.5 1062.8 L 707.7 1090.8 L 701.9 1108.4 L 701.5 1128.4 L 707.3 1146.6 L 721.8 1162.6 L 750.9 1174 L 787.2 1175.8 L 819.6 1168.5 L 832.5 1157.2 L 843.9 1134.6 L 849 1110.2 L 847.4 1081.1 L 838.4 1040.1 L 801 948.1 L 796.2 912.3 L 783 890.3 L 781 874.5 L 784.2 857.3 L 790.7 846.4 L 818.6 840.6 L 825.1 836.2 L 833 796.2 L 786.8 786.5 L 779.9 782.1 L 776.7 772 L 783.6 747.3 L 750.7 693.9 L 621.8 750.4" />
+    <path d="M 978.9 567.7 L 983.7 563.6 L 1014.8 556.3 L 1024 514.7 L 1088.6 527.7 L 1103.8 540 L 1109.6 565 L 1093 609.4 L 1106.6 634.6 L 1107.5 649.6 L 1094.8 682.8 L 1089.2 710.6 L 1073.7 724.9 L 1059 723.8 L 1038.9 710.9 L 1012.3 718.8 L 990.1 662.5 L 986.1 629.4 L 972.7 607.2 L 972.3 585.2 L 981.4 565" />
+    <path d="M 1038.7 710.9 L 1012.6 719.3 L 990.7 664.7" />
+    <path d="M 1089.4 710.3 L 1074 724.9" />
+    <path d="M 1086.8 527.3 L 1102.1 537.4 L 1108 549.7 L 1109.8 564" />
+    <path d="M 981 565.3 L 1008.7 559.7 L 1015.5 555.3" />
+    <path d="M 991.7 667.6 L 986.1 629.4" />
+    <path d="M 972.1 605.1 L 973 581.4 L 981.6 564.9" />
+    <path d="M 1011.7 558.7 L 1016.4 552.1" />
+  </g>
+  <g stroke="#f8fafc" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 393.8 816 L 376.4 810.1 L 356.6 817.5 L 331.9 819.1 L 328.4 868.6 L 339.3 908.2 L 340 1042.6 L 343.2 1062.6 L 349.7 1072.7 L 361 1077.2 L 373.6 1077.2 L 408 1060.2 L 450.8 1065.5 L 482.6 1054.1 L 511.2 1055.5 L 519 1052.5 L 528.2 1040.4 L 528.8 1012.1 L 569.9 1010.6 L 582.7 1006.1 L 594.3 997.1 L 604.2 976.6 L 623.5 909.3 L 638.5 890.5 L 666.1 871.4 L 689 906.1 L 693.5 926.4 L 695.6 979.8 L 711 1018.6 L 727.6 1048.1 L 725.5 1062.8 L 707.7 1090.8 L 701.9 1108.4 L 701.5 1128.4 L 707.3 1146.6 L 721.8 1162.6 L 750.9 1174 L 787.2 1175.8 L 819.6 1168.5 L 832.5 1157.2 L 843.9 1134.6 L 849 1110.2 L 847.4 1081.1 L 838.4 1040.1 L 801 948.1 L 796.2 912.3 L 783 890.3 L 781 874.5 L 784.2 857.3 L 790.7 846.4 L 818.6 840.6 L 825.1 836.2 L 833 796.2 L 786.8 786.5 L 779.9 782.1 L 776.7 772 L 783.6 747.3 L 750.7 693.9 L 621.8 750.4" />
+    <path d="M 978.9 567.7 L 983.7 563.6 L 1014.8 556.3 L 1024 514.7 L 1088.6 527.7 L 1103.8 540 L 1109.6 565 L 1093 609.4 L 1106.6 634.6 L 1107.5 649.6 L 1094.8 682.8 L 1089.2 710.6 L 1073.7 724.9 L 1059 723.8 L 1038.9 710.9 L 1012.3 718.8 L 990.1 662.5 L 986.1 629.4 L 972.7 607.2 L 972.3 585.2 L 981.4 565" />
+    <path d="M 1038.7 710.9 L 1012.6 719.3 L 990.7 664.7" />
+    <path d="M 1089.4 710.3 L 1074 724.9" />
+    <path d="M 1086.8 527.3 L 1102.1 537.4 L 1108 549.7 L 1109.8 564" />
+    <path d="M 981 565.3 L 1008.7 559.7 L 1015.5 555.3" />
+    <path d="M 991.7 667.6 L 986.1 629.4" />
+    <path d="M 972.1 605.1 L 973 581.4 L 981.6 564.9" />
+    <path d="M 1011.7 558.7 L 1016.4 552.1" />
+  </g>
+  <g stroke="#ef4444" stroke-opacity="0.45" stroke-width="1.2" stroke-dasharray="6 6" stroke-linecap="round" fill="none">
+    <path d="M 393.8 816 L 376.4 810.1 L 356.6 817.5 L 331.9 819.1 L 328.4 868.6 L 339.3 908.2 L 340 1042.6 L 343.2 1062.6 L 349.7 1072.7 L 361 1077.2 L 373.6 1077.2 L 408 1060.2 L 450.8 1065.5 L 482.6 1054.1 L 511.2 1055.5 L 519 1052.5 L 528.2 1040.4 L 528.8 1012.1 L 569.9 1010.6 L 582.7 1006.1 L 594.3 997.1 L 604.2 976.6 L 623.5 909.3 L 638.5 890.5 L 666.1 871.4 L 689 906.1 L 693.5 926.4 L 695.6 979.8 L 711 1018.6 L 727.6 1048.1 L 725.5 1062.8 L 707.7 1090.8 L 701.9 1108.4 L 701.5 1128.4 L 707.3 1146.6 L 721.8 1162.6 L 750.9 1174 L 787.2 1175.8 L 819.6 1168.5 L 832.5 1157.2 L 843.9 1134.6 L 849 1110.2 L 847.4 1081.1 L 838.4 1040.1 L 801 948.1 L 796.2 912.3 L 783 890.3 L 781 874.5 L 784.2 857.3 L 790.7 846.4 L 818.6 840.6 L 825.1 836.2 L 833 796.2 L 786.8 786.5 L 779.9 782.1 L 776.7 772 L 783.6 747.3 L 750.7 693.9 L 621.8 750.4" />
+    <path d="M 978.9 567.7 L 983.7 563.6 L 1014.8 556.3 L 1024 514.7 L 1088.6 527.7 L 1103.8 540 L 1109.6 565 L 1093 609.4 L 1106.6 634.6 L 1107.5 649.6 L 1094.8 682.8 L 1089.2 710.6 L 1073.7 724.9 L 1059 723.8 L 1038.9 710.9 L 1012.3 718.8 L 990.1 662.5 L 986.1 629.4 L 972.7 607.2 L 972.3 585.2 L 981.4 565" />
+    <path d="M 1038.7 710.9 L 1012.6 719.3 L 990.7 664.7" />
+    <path d="M 1089.4 710.3 L 1074 724.9" />
+    <path d="M 1086.8 527.3 L 1102.1 537.4 L 1108 549.7 L 1109.8 564" />
+    <path d="M 981 565.3 L 1008.7 559.7 L 1015.5 555.3" />
+    <path d="M 991.7 667.6 L 986.1 629.4" />
+    <path d="M 972.1 605.1 L 973 581.4 L 981.6 564.9" />
+    <path d="M 1011.7 558.7 L 1016.4 552.1" />
+  </g>
+  <polygon points="352.9,140.5 359.9,153.5 345.9,153.5" fill="#f97316" stroke="#0f172a" stroke-width="2" />
+  <rect x="362.9" y="137.5" width="181.2" height="22" rx="6" fill="rgba(15,23,42,0.82)" stroke="rgba(255,255,255,0.16)" stroke-width="1" />
+  <text x="371.9" y="152.5" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" font-weight="700" fill="#f8fafc">Zürichbergstrasse · 466m</text>
+  <circle cx="533.3" cy="843.5" r="5.5" fill="#ef4444" stroke="#0f172a" stroke-width="2" />
+  <rect x="543.3" y="832.5" width="92.8" height="22" rx="6" fill="rgba(15,23,42,0.82)" stroke="rgba(255,255,255,0.16)" stroke-width="1" />
+  <text x="552.3" y="847.5" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" font-weight="700" fill="#f8fafc">Limmat Loop</text>
+  <circle cx="1038.1" cy="604.6" r="5.5" fill="#ef4444" stroke="#0f172a" stroke-width="2" />
+  <rect x="1048.1" y="593.6" width="106.4" height="22" rx="6" fill="rgba(15,23,42,0.82)" stroke="rgba(255,255,255,0.16)" stroke-width="1" />
+  <text x="1057.1" y="608.6" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" font-weight="700" fill="#f8fafc">Seeblick Spin</text>
+  <circle cx="600" cy="1110.5" r="5.5" fill="#ef4444" stroke="#0f172a" stroke-width="2" />
+  <rect x="610.0" y="1099.5" width="113.2" height="22" rx="6" fill="rgba(15,23,42,0.82)" stroke="rgba(255,255,255,0.16)" stroke-width="1" />
+  <text x="619.0" y="1114.5" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" font-weight="700" fill="#f8fafc">Lago de Zúrich</text>
+  <g transform="translate(1152, 1231)" opacity="0.92">
+    <circle cx="0" cy="0" r="24" fill="rgba(15,23,42,0.82)" stroke="rgba(255,255,255,0.24)" stroke-width="1.5"/>
+    <polygon points="0,-16 4.5,0 0,-3 -4.5,0" fill="#f97316"/>
+    <polygon points="0,16 4.5,0 0,3 -4.5,0" fill="#cbd5e1"/>
+    <text x="0" y="2" text-anchor="middle" font-family="system-ui,sans-serif" font-size="9" font-weight="800" fill="#ffffff" stroke="rgba(15,23,42,0.9)" stroke-width="2.4" paint-order="stroke">N</text>
+  </g>
+  <rect x="22" y="1203" width="444" height="54" rx="12" fill="rgba(15,23,42,0.84)" stroke="rgba(255,255,255,0.18)" />
+  <circle cx="46" cy="1230" r="8" fill="#ef4444" />
+  <text x="64" y="1227" font-family="system-ui,-apple-system,sans-serif" font-size="16" font-weight="800" letter-spacing="1.1" fill="#ffffff">SWITZERLAND</text>
+  <text x="64" y="1245" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" font-weight="500" fill="#cbd5e1">Zúrich y Limmat · 10 rutas · Máx 932m D+ · GPS Calibrado</text>
 </svg>

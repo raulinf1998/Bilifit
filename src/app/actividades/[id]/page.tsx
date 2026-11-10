@@ -35,7 +35,8 @@ import {
   getCogganPowerZones,
   sportColor,
 } from '@/lib/metrics';
-import { resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
+import { isMyWhooshContext, MYWHOOSH_WORLDS, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
+import { decodePolyline } from '@/lib/polyline';
 import type { ActivityDetail, ActivityPoint, AthleteProfile, GearItem, SportType } from '@/types';
 
 type AnalysisTab = 'splits' | 'efforts' | 'zones' | 'terrain';
@@ -52,6 +53,7 @@ export default function ActivityDetailPage() {
 
   const [title, setTitle] = useState('');
   const [sport, setSport] = useState<SportType>('running');
+  const [worldName, setWorldName] = useState('');
   const [gearId, setGearId] = useState('');
   const [rpe, setRpe] = useState(6);
   const [description, setDescription] = useState('');
@@ -79,6 +81,7 @@ export default function ActivityDetailPage() {
       setActivity(actRes.activity);
       setTitle(actRes.activity.title);
       setSport(actRes.activity.sport);
+      setWorldName(actRes.activity.worldName ?? '');
       setGearId(actRes.activity.gearId ?? '');
       setRpe(actRes.activity.rpe ?? 6);
       setDescription(actRes.activity.description ?? '');
@@ -105,6 +108,7 @@ export default function ActivityDetailPage() {
       body: JSON.stringify({
         title,
         sport,
+        worldName: sport === 'mywhoosh' || worldName ? worldName || null : null,
         gearId: gearId || null,
         rpe,
         description,
@@ -180,10 +184,31 @@ export default function ActivityDetailPage() {
 
   const worldInfo = useMemo(() => {
     if (!activity) return null;
-    if (activity.sport !== 'mywhoosh' && !activity.worldName) return null;
+    const coords: Array<[number, number]> = activity.points.some(
+      (p) => typeof p.lat === 'number' && typeof p.lon === 'number'
+    )
+      ? activity.points
+          .filter((p): p is ActivityPoint & { lat: number; lon: number } => typeof p.lat === 'number' && typeof p.lon === 'number')
+          .map((p) => [p.lat, p.lon])
+      : activity.polyline
+        ? decodePolyline(activity.polyline)
+        : [];
+    const deviceName = activity.extras?.deviceName ?? null;
+    const virtualCtx = isMyWhooshContext({
+      sport: activity.sport,
+      subSport: activity.subSport,
+      worldName: activity.worldName,
+      title: activity.title,
+      deviceName,
+    });
+    if (!virtualCtx && coords.length === 0) return null;
     return resolveMyWhooshWorldForActivity({
       worldName: activity.worldName,
       title: activity.title,
+      sport: activity.sport,
+      subSport: activity.subSport,
+      deviceName,
+      coords,
     });
   }, [activity]);
 
@@ -310,6 +335,24 @@ export default function ActivityDetailPage() {
                 <option value="strength">Fuerza en Casa</option>
               </select>
             </div>
+            {(sport === 'mywhoosh' || Boolean(worldName)) && (
+              <div>
+                <label className="block text-xs mb-1" style={{ color: 'var(--text-secondary)' }}>Mundo Virtual MyWhoosh</label>
+                <select
+                  value={worldName}
+                  onChange={(e) => setWorldName(e.target.value)}
+                  className="w-full rounded-lg border px-3 py-2 text-sm"
+                  style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
+                >
+                  <option value="">Auto-detectar por GPS / título</option>
+                  {MYWHOOSH_WORLDS.map((w) => (
+                    <option key={w.id} value={w.name}>
+                      {w.name} ({w.regionLabel})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="block text-xs mb-1" style={{ color: 'var(--text-secondary)' }}>Material asociado</label>
               <select
@@ -502,10 +545,12 @@ export default function ActivityDetailPage() {
             points={activity.points}
             polyline={activity.polyline}
             sport={activity.sport}
+            subSport={activity.subSport}
+            deviceName={extras.deviceName ?? null}
             worldName={activity.worldName}
             title={activity.title}
             color={sportColor(activity.sport)}
-            defaultLayer={activity.sport === 'mountain' ? 'topo' : 'osm'}
+            defaultLayer={worldInfo ? 'virtual' : activity.sport === 'mountain' ? 'topo' : 'osm'}
             hoverPoint={hoverPoint}
             highlightPolyline={highlightPolyline}
             heightClass="h-96"
