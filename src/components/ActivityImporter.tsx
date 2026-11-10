@@ -50,15 +50,15 @@ export default function ActivityImporter({ onImported }: { onImported?: () => vo
         <div className="text-sm font-semibold">
           {files.length > 0
             ? `${files.length} archivo(s) seleccionado(s): ${files.map((f) => f.name).join(', ')}`
-            : 'Arrastra o haz clic para subir .FIT, .GPX (MyWhoosh/GPS), .TCX o .ZIP de Strava'}
+            : 'Arrastra o haz clic para subir .FIT, .GPX, .TCX, .ZIP (Huawei / Health Sync / MyWhoosh)'}
         </div>
         <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-          Compatible con archivos GPX con vatios de MyWhoosh, relojes Garmin/Coros/Suunto y exportaciones ZIP de Strava
+          Compatible con exportaciones de Huawei Health (Privacidad .ZIP / HiTrack), lotes de Health Sync, MyWhoosh y relojes GPS
         </div>
         <input
           type="file"
           multiple
-          accept=".fit,.gpx,.tcx,.zip,.gz,.xml"
+          accept=".fit,.gpx,.tcx,.zip,.gz,.xml,.json,.csv"
           className="hidden"
           onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
         />

@@ -41,6 +41,10 @@ function mapFitSport(
     return { sport: 'mountain', subSport: sub.includes('trail') ? 'Trail Running' : 'Montaña / Senderismo' };
   }
 
+  if (sport.includes('walking') || sport === 'walk') {
+    return { sport: 'mountain', subSport: 'Caminata' };
+  }
+
   if (sport.includes('running') || sport === 'run') {
     const km = distanceMeters / 1000;
     if (km >= 4 && elevationGain / km > 35 && elevationGain >= 300) {
@@ -81,8 +85,9 @@ export async function parseFitBuffer(buffer: Buffer, fileName = 'actividad.fit')
 
   // Detectar nombre del dispositivo / fabricante
   const mainDev = parsed.device_infos?.find((d) => (d.device_index ?? 0) === 0) ?? parsed.device_infos?.[0];
-  const devManuf = mainDev?.manufacturer ? String(mainDev.manufacturer) : '';
-  const devProd = mainDev?.product_name ? String(mainDev.product_name) : '';
+  const fileIdMeta = parsed.file_ids?.[0];
+  const devManuf = mainDev?.manufacturer ? String(mainDev.manufacturer) : fileIdMeta?.manufacturer ? String(fileIdMeta.manufacturer) : '';
+  const devProd = mainDev?.product_name ? String(mainDev.product_name) : fileIdMeta?.product_name ? String(fileIdMeta.product_name) : '';
   const deviceName = [devManuf, devProd].filter(Boolean).join(' ').trim() || undefined;
 
   const startDate = session?.start_time ?? records[0]?.timestamp ?? parsed.activity?.timestamp ?? new Date();

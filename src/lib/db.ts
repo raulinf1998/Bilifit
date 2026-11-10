@@ -33,7 +33,7 @@ import type {
 
 let dbInstance: Database.Database | null = null;
 
-function getDbPath(): string {
+export function getDbPath(): string {
   const configured = process.env.BILIFIT_DB_PATH;
   if (configured) {
     return path.isAbsolute(configured)
@@ -87,6 +87,70 @@ function initSchema(db: Database.Database) {
       athlete_id INTEGER,
       athlete_name TEXT,
       last_sync_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS mywhoosh_config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      email TEXT,
+      password_enc TEXT,
+      access_token TEXT,
+      refresh_token TEXT,
+      whoosh_id TEXT,
+      device_id TEXT,
+      rider_name TEXT,
+      ftp_watts INTEGER,
+      token_expires_at INTEGER,
+      auto_sync_enabled INTEGER NOT NULL DEFAULT 0,
+      sync_interval_min INTEGER NOT NULL DEFAULT 15,
+      sync_in_progress INTEGER NOT NULL DEFAULT 0,
+      sync_started_at TEXT,
+      last_sync_at TEXT,
+      last_sync_status TEXT NOT NULL DEFAULT 'idle',
+      last_error TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS mywhoosh_imports (
+      activity_id TEXT PRIMARY KEY,
+      activity_file_id TEXT,
+      local_activity_id TEXT,
+      title TEXT NOT NULL,
+      started_at TEXT,
+      status TEXT NOT NULL DEFAULT 'imported',
+      error TEXT,
+      imported_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS huawei_config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      watch_dir TEXT,
+      google_client_id TEXT,
+      google_client_secret_enc TEXT,
+      google_access_token TEXT,
+      google_refresh_token TEXT,
+      google_token_expires_at INTEGER,
+      google_account_email TEXT,
+      drive_folder_id TEXT,
+      drive_folder_name TEXT,
+      auto_sync_enabled INTEGER NOT NULL DEFAULT 0,
+      sync_interval_min INTEGER NOT NULL DEFAULT 15,
+      sync_in_progress INTEGER NOT NULL DEFAULT 0,
+      sync_started_at TEXT,
+      last_sync_at TEXT,
+      last_sync_status TEXT NOT NULL DEFAULT 'idle',
+      last_error TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS huawei_imports (
+      item_key TEXT PRIMARY KEY,
+      file_name TEXT NOT NULL,
+      drive_file_id TEXT,
+      local_activity_id TEXT,
+      title TEXT NOT NULL,
+      started_at TEXT,
+      channel TEXT NOT NULL DEFAULT 'folder',
+      status TEXT NOT NULL DEFAULT 'imported',
+      error TEXT,
+      imported_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS gear_items (
@@ -269,6 +333,16 @@ function seedIfEmpty(db: Database.Database) {
   const stravaCount = db.prepare('SELECT COUNT(*) as c FROM strava_config').get() as { c: number };
   if (stravaCount.c === 0) {
     db.prepare('INSERT INTO strava_config (id) VALUES (1)').run();
+  }
+
+  const mwCount = db.prepare('SELECT COUNT(*) as c FROM mywhoosh_config').get() as { c: number };
+  if (mwCount.c === 0) {
+    db.prepare('INSERT INTO mywhoosh_config (id) VALUES (1)').run();
+  }
+
+  const hwCount = db.prepare('SELECT COUNT(*) as c FROM huawei_config').get() as { c: number };
+  if (hwCount.c === 0) {
+    db.prepare('INSERT INTO huawei_config (id) VALUES (1)').run();
   }
 
   const eqCount = db.prepare('SELECT COUNT(*) as c FROM home_equipment').get() as { c: number };
@@ -716,20 +790,30 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
   return getActivityById(input.id)!;
 }
 
-export function findDuplicateActivity(startedAt: string, sport: SportType, distanceMeters: number, externalId?: string | null): boolean {
+export function hasActivityWithExternalId(externalId: string): boolean {
+  const row = getDb().prepare('SELECT id FROM activities WHERE external_id = ?').get(externalId);
+  return Boolean(row);
+}
+
+export function findDuplicateActivityId(startedAt: string, sport: SportType, distanceMeters: number, externalId?: string | null): string | null {
   const db = getDb();
   if (externalId) {
-    const byExt = db.prepare('SELECT id FROM activities WHERE external_id = ?').get(externalId);
-    if (byExt) return true;
+    const byExt = db.prepare('SELECT id FROM activities WHERE external_id = ?').get(externalId) as { id: string } | undefined;
+    if (byExt) return byExt.id;
   }
   const ts = Date.parse(startedAt);
-  if (!Number.isFinite(ts)) return false;
+  if (!Number.isFinite(ts)) return null;
   const minIso = new Date(ts - 180_000).toISOString();
   const maxIso = new Date(ts + 180_000).toISOString();
   const rows = db
     .prepare('SELECT id, distance_meters FROM activities WHERE sport = ? AND started_at BETWEEN ? AND ?')
     .all(sport, minIso, maxIso) as Array<{ id: string; distance_meters: number }>;
-  return rows.some((r) => Math.abs(r.distance_meters - distanceMeters) < 250);
+  const match = rows.find((r) => Math.abs(r.distance_meters - distanceMeters) < 250);
+  return match?.id ?? null;
+}
+
+export function findDuplicateActivity(startedAt: string, sport: SportType, distanceMeters: number, externalId?: string | null): boolean {
+  return Boolean(findDuplicateActivityId(startedAt, sport, distanceMeters, externalId));
 }
 
 export function updateActivity(

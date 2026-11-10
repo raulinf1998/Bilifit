@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Award, Bike, Flame, Gauge, Globe, Zap } from 'lucide-react';
 import ActivityImporter from '@/components/ActivityImporter';
 import ActivityMap from '@/components/ActivityMap';
+import MyWhooshConnectorCard from '@/components/MyWhooshConnectorCard';
 import { SportBadge } from '@/components/SportBadge';
 import { formatDistanceKm, formatDuration, getCogganPowerZones } from '@/lib/metrics';
 import { MYWHOOSH_WORLDS, getMyWhooshWorldByIdOrName } from '@/lib/mywhoosh-maps';
@@ -157,6 +158,9 @@ export default function CyclingMyWhooshPage() {
         </div>
       </div>
 
+      {/* Conexión directa nativa MyWhoosh */}
+      <MyWhooshConnectorCard onSynced={load} />
+
       {/* Atlas Interactivo de Mundos de MyWhoosh */}
       <div className="card-surface p-5 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -256,10 +260,10 @@ export default function CyclingMyWhooshPage() {
 
         <div className="lg:col-span-7 card-surface p-5 space-y-4">
           <div>
-            <h2 className="text-base font-bold">Importar Sesión de MyWhoosh</h2>
+            <h2 className="text-base font-bold">Importar Archivos Manualmente (.FIT / .GPX / .TCX)</h2>
             <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
-              Bilifit soporta tanto las sesiones sincronizadas desde <strong>Strava (VirtualRide)</strong> como los archivos
-              <strong> .GPX</strong> (incluyendo vatios y cadencia de MyWhoosh 5.x) o <strong>.FIT</strong> descargados de la web de MyWhoosh.
+              Además de la sincronización directa nativa arriba, puedes subir manualmente archivos <strong>.FIT</strong> o{' '}
+              <strong>.GPX</strong> (incluyendo vatios y cadencia de MyWhoosh 5.x) o sesiones de ciclismo exterior.
             </p>
           </div>
           <ActivityImporter onImported={load} />

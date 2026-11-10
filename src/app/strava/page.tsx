@@ -12,6 +12,8 @@ import {
   Unlink,
 } from 'lucide-react';
 import ActivityImporter from '@/components/ActivityImporter';
+import HuaweiConnectorCard from '@/components/HuaweiConnectorCard';
+import MyWhooshConnectorCard from '@/components/MyWhooshConnectorCard';
 import type { StravaConnectionStatus } from '@/types';
 
 export default function StravaAndImportPage() {
@@ -35,9 +37,13 @@ export default function StravaAndImportPage() {
     loadStatus();
     const qs = new URLSearchParams(window.location.search);
     if (qs.get('connected') === '1') {
-      setNotice({ type: 'ok', text: '¡Cuenta de Strava vinculada correctamente! Ya puedes sincronizar tus actividades.' });
+      setNotice({ type: 'ok', text: '¡Cuenta de Strava vinculada correctamente!' });
     } else if (qs.get('error')) {
-      setNotice({ type: 'err', text: `Error en la autorización de Strava: ${qs.get('error')}` });
+      setNotice({ type: 'err', text: `Error en Strava: ${qs.get('error')}` });
+    } else if (qs.get('huawei_connected') === '1') {
+      setNotice({ type: 'ok', text: '¡Google Drive vinculado para Huawei Health! Ya puedes sincronizar tus entrenos.' });
+    } else if (qs.get('huawei_error')) {
+      setNotice({ type: 'err', text: `Error conectando Google Drive: ${qs.get('huawei_error')}` });
     }
   }, [loadStatus]);
 
@@ -100,10 +106,11 @@ export default function StravaAndImportPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2.5">
           <RefreshCw className="h-6 w-6 text-[#fc4c02]" />
-          Vinculación con Strava e Importación Universal
+          Conexiones Directas e Importación (Sin Strava)
         </h1>
         <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
-          Conecta tu cuenta de Strava vía OAuth 2.0 para traer tus carreras, salidas MyWhoosh y montaña, o sube archivos directamente sin API.
+          Conecta <strong>MyWhoosh</strong> y tu reloj <strong>Huawei / Huawei Health</strong> directamente en local, o sube archivos{' '}
+          <code>.FIT</code> / <code>.GPX</code> / <code>.TCX</code> / <code>.ZIP</code>.
         </p>
       </div>
 
@@ -120,32 +127,55 @@ export default function StravaAndImportPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Bloque Strava OAuth */}
-        <div className="lg:col-span-6 card-surface p-5 space-y-5">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <h2 className="text-base font-bold">Conexión Directa API de Strava (OAuth 2.0)</h2>
-              <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                Sincroniza actividades, polilíneas GPS, potencia MyWhoosh, FC y streams.
-              </p>
-            </div>
-            <span
-              className={`text-xs font-semibold px-3 py-1 rounded-full border ${
-                status?.connected
-                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                  : 'bg-slate-500/15 text-slate-400 border-slate-500/30'
-              }`}
-            >
-              {status?.connected ? `Conectado (${status.athleteName ?? 'Atleta'})` : 'No vinculado'}
-            </span>
-          </div>
+      {/* 1. Conexión directa nativa MyWhoosh */}
+      <MyWhooshConnectorCard />
 
-          {/* Guía rápida */}
+      {/* 2. Conexión directa Huawei Watch / Huawei Health */}
+      <HuaweiConnectorCard />
+
+      {/* 3. Importador Universal manual */}
+      <div className="card-surface p-5 space-y-4">
+        <div>
+          <h2 className="text-base font-bold">Importador Universal Manual (.FIT / .GPX / .TCX / .ZIP / Huawei)</h2>
+          <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
+            Sube archivos sueltos o un lote de <strong>Health Sync</strong> (agrupa automáticamente <code>.fit</code> +{' '}
+            <code>.tcx</code> + <code>.gpx</code> + <code>.csv</code> sin duplicar), exportaciones <code>.zip</code> de Huawei
+            Privacidad, ficheros <code>HiTrack_*</code> o rutas de MyWhoosh.
+          </p>
+        </div>
+        <ActivityImporter />
+      </div>
+
+      {/* 4. Strava (Legado / Opcional, colapsado salvo si está conectado) */}
+      <details
+        open={Boolean(status?.connected)}
+        className="card-surface p-5 space-y-4"
+      >
+        <summary className="cursor-pointer list-none flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-bold" style={{ color: 'var(--text-secondary)' }}>
+              Strava API OAuth 2.0 (Legado · Opcional)
+            </h2>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              Innecesario si usas MyWhoosh y Huawei Health directamente. Manténlo plegado o úsalo solo para migrar historial antiguo.
+            </p>
+          </div>
+          <span
+            className={`text-xs font-semibold px-3 py-1 rounded-full border ${
+              status?.connected
+                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                : 'bg-slate-500/15 text-slate-400 border-slate-500/30'
+            }`}
+          >
+            {status?.connected ? `Conectado (${status.athleteName ?? 'Atleta'})` : 'Opcional · No vinculado'}
+          </span>
+        </summary>
+
+        <div className="pt-3 space-y-4 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
           <div className="rounded-xl border p-3.5 text-xs space-y-2" style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}>
             <div className="font-semibold flex items-center gap-1.5 text-amber-300">
               <ShieldAlert className="h-4 w-4" />
-              Cómo configurar tu propia app de Strava:
+              Solo si quieres conectar tu propia app de Strava:
             </div>
             <ol className="list-decimal pl-4 space-y-1" style={{ color: 'var(--text-secondary)' }}>
               <li>
@@ -158,16 +188,14 @@ export default function StravaAndImportPage() {
                 >
                   strava.com/settings/api <ExternalLink className="h-3 w-3" />
                 </a>{' '}
-                y crea una aplicación (requiere suscripción Strava activa en el programa Standard desde junio 2026).
+                y crea una aplicación.
               </li>
               <li>
-                Pon como <strong>Authorization Callback Domain</strong> el dominio o IP de esta app (por ejemplo{' '}
+                Authorization Callback Domain:{' '}
                 <code className="px-1 py-0.5 rounded bg-slate-800 text-cyan-300">
                   {status?.redirectUriHint ? new URL(status.redirectUriHint).hostname : '192.168.1.47'}
                 </code>
-                ).
               </li>
-              <li>Introduce tu Client ID y Client Secret abajo (o en `.env.local`) y pulsa conectar.</li>
             </ol>
           </div>
 
@@ -213,7 +241,7 @@ export default function StravaAndImportPage() {
             </form>
           )}
 
-          <div className="flex flex-wrap items-center gap-3 pt-2 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+          <div className="flex flex-wrap items-center gap-3">
             {status?.configured && !status?.connected && (
               <a
                 href="/api/strava/auth"
@@ -232,7 +260,7 @@ export default function StravaAndImportPage() {
                   className="inline-flex items-center gap-2 rounded-xl bg-[#fc4c02] hover:bg-[#e54400] px-5 py-2.5 text-sm font-bold text-white"
                 >
                   {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                  {syncing ? 'Sincronizando...' : 'Sincronizar Actividades Ahora'}
+                  {syncing ? 'Sincronizando...' : 'Sincronizar Strava'}
                 </button>
                 <button
                   type="button"
@@ -244,41 +272,8 @@ export default function StravaAndImportPage() {
               </>
             )}
           </div>
-
-          {status?.lastSyncAt && (
-            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              Última sincronización: {new Date(status.lastSyncAt).toLocaleString('es-ES')}
-            </div>
-          )}
         </div>
-
-        {/* Bloque Importador Universal sin API */}
-        <div className="lg:col-span-6 card-surface p-5 space-y-4">
-          <div>
-            <h2 className="text-base font-bold">Importador Universal Sin API (.FIT / .GPX / .TCX / .ZIP)</h2>
-            <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
-              ¿No quieres pagar suscripción de Strava para usar su API? Exporta tu historial desde Strava en un{' '}
-              <strong>.ZIP</strong>, descarga los archivos <strong>.GPX / .FIT</strong> de <strong>MyWhoosh</strong> o de tu reloj GPS y súbelos aquí sin límites.
-            </p>
-          </div>
-          <ActivityImporter />
-          <div
-            className="rounded-xl border p-3.5 text-xs space-y-1.5"
-            style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
-          >
-            <div className="font-semibold text-emerald-400">
-              Tip sin suscripción Strava: Health Sync + Google Drive / Proxmox
-            </div>
-            <p>
-              Si no tienes Strava Premium, puedes usar <strong>Health Sync</strong> en Android (origen Strava → destino{' '}
-              <strong>Google Drive</strong> en formato .FIT/.GPX) o exportar el archivo masivo desde{' '}
-              <em>strava.com/settings/account → Descargar archivo</em>. También puedes automatizar en tu LXC de Proxmox{' '}
-              <code>192.168.1.47</code> un script con <code>rclone</code> que envíe nuevos archivos a{' '}
-              <code>POST /api/import</code> (Bilifit omite duplicados automáticamente).
-            </p>
-          </div>
-        </div>
-      </div>
+      </details>
     </div>
   );
 }

@@ -18,7 +18,15 @@ import {
 import { FitnessPMCChart, WeeklyVolumeChart, type WeeklyBucket } from '@/components/Charts';
 import { SportBadge } from '@/components/SportBadge';
 import { formatDistanceKm, formatDuration, formatPaceMinKm } from '@/lib/metrics';
-import type { Activity, AthleteProfile, FitnessDayPoint, GearItem, StravaConnectionStatus } from '@/types';
+import type {
+  Activity,
+  AthleteProfile,
+  FitnessDayPoint,
+  GearItem,
+  HuaweiConnectionStatus,
+  MyWhooshConnectionStatus,
+  StravaConnectionStatus,
+} from '@/types';
 
 interface DashboardPayload {
   profile: AthleteProfile;
@@ -42,6 +50,8 @@ interface DashboardPayload {
   routinesCount: number;
   pendingRoutesCount: number;
   strava: StravaConnectionStatus;
+  mywhoosh?: MyWhooshConnectionStatus;
+  huawei?: HuaweiConnectionStatus;
 }
 
 export default function DashboardPage() {
@@ -69,7 +79,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { profile, summary, pmc, weeklyBuckets, recentActivities, gear, strava } = data;
+  const { profile, summary, pmc, weeklyBuckets, recentActivities, gear, strava, mywhoosh, huawei } = data;
   const targetPct = Math.min(100, Math.round((summary.weekDurationHours / Math.max(1, profile.weeklyTargetHours)) * 100));
   const wKg = profile.weightKg > 0 ? (profile.ftpWatts / profile.weightKg).toFixed(2) : '0.00';
 
@@ -105,7 +115,11 @@ export default function DashboardPage() {
             style={{ borderColor: 'var(--border-subtle)' }}
           >
             <Upload className="h-4 w-4 text-[#fc4c02]" />
-            {strava.connected ? 'Sincronizar Strava' : 'Strava / Importar'}
+            {mywhoosh?.connected || huawei?.googleConnected
+              ? 'MyWhoosh / Huawei'
+              : strava.connected
+                ? 'Sincronizar / Importar'
+                : 'Conectar / Importar'}
           </Link>
         </div>
       </div>
@@ -217,7 +231,9 @@ export default function DashboardPage() {
           </div>
           <div className="mt-3 font-semibold text-sm">Centro MyWhoosh</div>
           <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            {summary.monthBySport.mywhoosh ?? 0} sesiones este mes · FTP {profile.ftpWatts} W
+            {mywhoosh?.connected
+              ? `Sincronizado directo · ${summary.monthBySport.mywhoosh ?? 0} este mes`
+              : `${summary.monthBySport.mywhoosh ?? 0} sesiones este mes · FTP ${profile.ftpWatts} W`}
           </div>
         </Link>
 
@@ -241,9 +257,15 @@ export default function DashboardPage() {
             </div>
             <ArrowRight className="h-4 w-4 opacity-50 group-hover:translate-x-1 transition-transform" />
           </div>
-          <div className="mt-3 font-semibold text-sm">Strava & Archivos</div>
+          <div className="mt-3 font-semibold text-sm">MyWhoosh & Huawei Watch</div>
           <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            {strava.connected ? `Conectado (${strava.athleteName})` : 'OAuth + subida .FIT/.GPX/.ZIP'}
+            {mywhoosh?.connected && (huawei?.googleConnected || (huawei?.watchDirFileCount ?? 0) > 0)
+              ? 'MyWhoosh + Huawei activos (Sin Strava)'
+              : mywhoosh?.connected
+                ? `MyWhoosh directo (${mywhoosh.riderName || mywhoosh.email})`
+                : huawei?.googleConnected || (huawei?.watchDirFileCount ?? 0) > 0
+                  ? `Huawei listo (${huawei?.importedCount ?? 0} sesiones)`
+                  : 'Conectar directo o subir .FIT/.GPX'}
           </div>
         </Link>
       </div>

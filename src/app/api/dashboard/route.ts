@@ -8,6 +8,8 @@ import {
   listRoutines,
 } from '@/lib/db';
 import { calculatePMC } from '@/lib/metrics';
+import { getHuaweiStatus } from '@/lib/huawei-sync';
+import { getMyWhooshStatus } from '@/lib/mywhoosh-sync';
 import { getStravaStatus } from '@/lib/strava';
 
 export async function GET() {
@@ -95,5 +97,7 @@ export async function GET() {
     routinesCount: listRoutines().length,
     pendingRoutesCount: listMountainRoutes().filter((r) => r.status === 'pending').length,
     strava: getStravaStatus(),
+    mywhoosh: getMyWhooshStatus(),
+    huawei: getHuaweiStatus(),
   });
 }

@@ -17,6 +17,7 @@ function toNum(val: unknown): number | undefined {
 }
 
 export function parseTcxString(xmlText: string, fileName = 'actividad.tcx'): ParsedActivityData {
+  const cleanXml = xmlText.replace(/^\uFEFF/, '');
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_',
@@ -24,7 +25,7 @@ export function parseTcxString(xmlText: string, fileName = 'actividad.tcx'): Par
     parseTagValue: true,
   });
 
-  const parsed = parser.parse(xmlText);
+  const parsed = parser.parse(cleanXml);
   const db = parsed?.TrainingCenterDatabase;
   const activities = asArray(db?.Activities?.Activity);
   const act = activities[0];
