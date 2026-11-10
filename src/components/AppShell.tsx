@@ -27,7 +27,7 @@ const NAV_ITEMS = [
   { href: '/ciclismo', label: 'MyWhoosh y Bici', icon: Bike },
   { href: '/montana', label: 'Rutas Montaña', icon: Mountain },
   { href: '/casa', label: 'Casa y Rutinas', icon: Dumbbell, highlight: true },
-  { href: '/strava', label: 'Strava e Importar', icon: RefreshCw },
+  { href: '/strava', label: 'Conexiones e Importar', icon: RefreshCw },
   { href: '/material', label: 'Zapatillas y Bicis', icon: Wrench },
   { href: '/ajustes', label: 'Ajustes Atleta', icon: Settings },
 ];
@@ -124,7 +124,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             className="flex items-center justify-center gap-2 w-full py-2.5 px-3 rounded-xl text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25 transition-colors"
           >
             <Upload className="h-3.5 w-3.5" />
-            Importar GPX / FIT / MyWhoosh
+            MyWhoosh · Huawei · Archivos
           </Link>
           <div className="flex items-center gap-2 px-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
             <ShieldCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
@@ -158,7 +158,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             href="/strava"
             className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-[#fc4c02]/15 text-[#fc4c02] border border-[#fc4c02]/30"
           >
-            Strava / GPX
+            Conectar / GPX
           </Link>
           <button
             type="button"

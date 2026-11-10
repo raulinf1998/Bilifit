@@ -71,6 +71,8 @@ export interface TerrainSplit {
 
 export interface ActivityExtras {
   deviceName?: string | null;
+  steps?: number | null;
+  originApp?: string | null;
   avgTemp?: number | null;
   minTemp?: number | null;
   maxTemp?: number | null;
@@ -152,7 +154,7 @@ export interface StrengthSetLog {
 export interface Activity {
   id: string;
   externalId?: string | null;
-  source: 'manual' | 'gpx' | 'fit' | 'tcx' | 'strava' | 'bilifit_home';
+  source: 'manual' | 'gpx' | 'fit' | 'tcx' | 'strava' | 'mywhoosh' | 'huawei' | 'bilifit_home';
   sport: SportType;
   subSport?: string | null;
   title: string;
@@ -332,3 +334,85 @@ export interface StravaConnectionStatus {
   tokenExpiresAt?: number | null;
   redirectUriHint?: string;
 }
+
+export interface MyWhooshImportLog {
+  activityId: string;
+  activityFileId?: string | null;
+  localActivityId?: string | null;
+  title: string;
+  startedAt?: string | null;
+  status: 'imported' | 'skipped' | 'failed';
+  error?: string | null;
+  importedAt: string;
+}
+
+export interface MyWhooshConnectionStatus {
+  connected: boolean;
+  hasEnvCredentials: boolean;
+  hasSavedPassword: boolean;
+  email?: string | null;
+  whooshId?: string | null;
+  riderName?: string | null;
+  ftpWatts?: number | null;
+  autoSyncEnabled: boolean;
+  syncIntervalMin: number;
+  syncInProgress: boolean;
+  lastSyncAt?: string | null;
+  lastSyncStatus: 'idle' | 'ok' | 'error' | 'needs_reconnect';
+  lastError?: string | null;
+  tokenExpiresAt?: number | null;
+  importedCount: number;
+  recentImports: MyWhooshImportLog[];
+}
+
+export interface MyWhooshSyncResult {
+  imported: number;
+  skipped: number;
+  failed: number;
+  totalFetched: number;
+  errors: string[];
+}
+
+export interface HuaweiImportLog {
+  itemKey: string;
+  fileName: string;
+  driveFileId?: string | null;
+  localActivityId?: string | null;
+  title: string;
+  startedAt?: string | null;
+  channel: 'folder' | 'drive' | 'upload';
+  status: 'imported' | 'skipped' | 'failed';
+  error?: string | null;
+  importedAt: string;
+}
+
+export interface HuaweiConnectionStatus {
+  watchDir: string;
+  watchDirExists: boolean;
+  watchDirFileCount: number;
+  googleConfigured: boolean;
+  googleConnected: boolean;
+  hasGoogleEnvCredentials: boolean;
+  googleClientId?: string | null;
+  googleAccountEmail?: string | null;
+  driveFolderId?: string | null;
+  driveFolderName?: string | null;
+  googleRedirectUriHint?: string;
+  autoSyncEnabled: boolean;
+  syncIntervalMin: number;
+  syncInProgress: boolean;
+  lastSyncAt?: string | null;
+  lastSyncStatus: 'idle' | 'ok' | 'error' | 'needs_reconnect';
+  lastError?: string | null;
+  importedCount: number;
+  recentImports: HuaweiImportLog[];
+}
+
+export interface HuaweiSyncResult {
+  imported: number;
+  skipped: number;
+  failed: number;
+  scanned: number;
+  errors: string[];
+}
+

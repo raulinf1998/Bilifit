@@ -9,6 +9,8 @@ import { FitBaseType, FitEncoder } from 'fit-file-parser/encoder';
 // Usar una DB temporal aislada durante los tests
 const tmpDb = path.join(os.tmpdir(), `bilifit-test-${Date.now()}.db`);
 process.env.BILIFIT_DB_PATH = tmpDb;
+process.env.BILIFIT_SECRET = 'bilifit-test-secret';
+process.env.BILIFIT_DISABLE_SCHEDULER = '1';
 
 import {
   calculateCyclingTSS,
@@ -19,7 +21,21 @@ import {
 import { decodePolyline, encodePolyline } from '../src/lib/polyline';
 import { parseGpxString, generateGpxString } from '../src/lib/parsers/gpx';
 import { parseTcxString } from '../src/lib/parsers/tcx';
-import { parseUploadedActivityFile } from '../src/lib/parsers';
+import { parseUploadedActivityBatch, parseUploadedActivityFile } from '../src/lib/parsers';
+import {
+  groupHealthSyncFiles,
+  parseHealthSyncCsv,
+  parseHuaweiMotionPathJson,
+  parseHiTrackText,
+} from '../src/lib/parsers/huawei';
+import {
+  disconnectGoogleDrive,
+  exchangeGoogleDriveCode,
+  getGoogleDriveAuthUrl,
+  getHuaweiStatus,
+  syncHuaweiActivities,
+  updateHuaweiPreferences,
+} from '../src/lib/huawei-sync';
 import {
   DEFAULT_EXERCISES,
   generateHomeRoutine,
@@ -49,6 +65,20 @@ import {
   enrichPointsTelemetry,
 } from '../src/lib/analytics';
 import { MYWHOOSH_WORLDS, resolveMyWhooshWorldForActivity } from '../src/lib/mywhoosh-maps';
+import {
+  connectMyWhooshAccount,
+  decodeJwtExpiry,
+  decryptSecret,
+  disconnectMyWhoosh,
+  encryptSecret,
+  extractMyWhooshActivityBuffer,
+  getMyWhooshStatus,
+  parseMyWhooshActivityPage,
+  syncMyWhooshActivities,
+  updateMyWhooshSyncPreferences,
+  validateMyWhooshDownloadUrl,
+  type FetchLike,
+} from '../src/lib/mywhoosh-sync';
 import { buildSegmentFromRange, detectClimbCandidates, matchPointsToSegment } from '../src/lib/segments';
 import { mapStravaSport } from '../src/lib/strava';
 
@@ -505,4 +535,518 @@ test('Segments engine seeds initial segments, detects climb candidates and match
 
   const directMatch = matchPointsToSegment(baseActivity, routePts, built);
   assert.ok(directMatch && directMatch.durationSec > 100);
+});
+
+test('MyWhoosh native sync engine encrypts secrets, validates URLs, refreshes tokens and imports FIT/BOM-GPX rides', async () => {
+  // 1. Cifrado simétrico AES-256-GCM
+  const cipher = encryptSecret('mi-clave-super-secreta');
+  assert.ok(cipher.startsWith('v1:'));
+  assert.notEqual(cipher, 'mi-clave-super-secreta');
+  assert.equal(decryptSecret(cipher), 'mi-clave-super-secreta');
+
+  // 2. Decodificación exp JWT
+  const futureExp = Math.floor(Date.now() / 1000) + 14 * 86400;
+  const makeJwt = (exp: number) =>
+    `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.sig`;
+  const validJwt = makeJwt(futureExp);
+  const soonExpiringJwt = makeJwt(Math.floor(Date.now() / 1000) + 3600);
+  assert.equal(decodeJwtExpiry(validJwt), futureExp);
+
+  // 3. Validación anti-SSRF de URLs firmadas
+  assert.doesNotThrow(() =>
+    validateMyWhooshDownloadUrl('https://mywhooshprod.s3.eu-west-1.amazonaws.com/ride/123/abc.fit?X-Amz-Signature=deadbeef')
+  );
+  for (const unsafe of [
+    'http://mywhooshprod.s3.amazonaws.com/ride.fit',
+    'https://localhost/ride.fit',
+    'https://127.0.0.1/ride.fit',
+    'https://192.168.1.47/ride.fit',
+    'https://evil.example.com/ride.fit',
+  ]) {
+    assert.throws(() => validateMyWhooshDownloadUrl(unsafe), `Should reject unsafe URL: ${unsafe}`);
+  }
+
+  // 4. Parseo de respuesta de actividades con distintos formatos de fecha
+  const parsedPage = parseMyWhooshActivityPage(
+    {
+      data: {
+        totalPages: 1,
+        results: [
+          {
+            id: 'mw-act-1',
+            activityFileId: 'mw-file-1',
+            title: 'Jebel Jais Climb',
+            startDatetime: '2026-11-05T17:30:00.000Z',
+            worldName: 'Arabia',
+          },
+          {
+            id: 'mw-act-2',
+            activityFileId: 'mw-file-2',
+            title: 'Hudayriyat Evening Spin',
+            date: 1762444800_000,
+          },
+        ],
+      },
+    },
+    1
+  );
+  assert.equal(parsedPage.items.length, 2);
+  assert.equal(parsedPage.items[0].activityFileId, 'mw-file-1');
+  assert.ok(parsedPage.items[1].startedAt?.startsWith('2025-'));
+
+  // 5. Detección binaria de FIT / DMS y GPX con BOM UTF-8
+  const bomGpx = Buffer.concat([
+    Buffer.from([0xef, 0xbb, 0xbf]),
+    Buffer.from(
+      `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="MyWhoosh" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">
+  <trk><name>Hudayriyat Evening Spin</name><type>VirtualRide</type><trkseg>
+    <trkpt lat="24.410" lon="54.340"><ele>12</ele><time>2026-11-06T18:00:00Z</time><extensions><power>210</power><gpxtpx:TrackPointExtension><gpxtpx:hr>145</gpxtpx:hr><gpxtpx:cad>88</gpxtpx:cad></gpxtpx:TrackPointExtension></extensions></trkpt>
+    <trkpt lat="24.414" lon="54.345"><ele>15</ele><time>2026-11-06T18:05:00Z</time><extensions><power>235</power><gpxtpx:TrackPointExtension><gpxtpx:hr>152</gpxtpx:hr><gpxtpx:cad>91</gpxtpx:cad></gpxtpx:TrackPointExtension></extensions></trkpt>
+    <trkpt lat="24.418" lon="54.350"><ele>18</ele><time>2026-11-06T18:10:00Z</time><extensions><power>245</power><gpxtpx:TrackPointExtension><gpxtpx:hr>158</gpxtpx:hr><gpxtpx:cad>92</gpxtpx:cad></gpxtpx:TrackPointExtension></extensions></trkpt>
+  </trkseg></trk>
+</gpx>`,
+      'utf8'
+    ),
+  ]);
+  const extractedBom = extractMyWhooshActivityBuffer(bomGpx, 'mw-act-2');
+  assert.equal(extractedBom.fileName, 'mywhoosh_mw-act-2.gpx');
+
+  // Construir FIT binario real con evento incompleto (caso FitTrackee) y timestamp válido
+  const encoder = new FitEncoder();
+  const baseDate = new Date('2026-11-05T17:30:00Z');
+  const fitTs = FitEncoder.toFitTimestamp(baseDate);
+  const degToSemi = (deg: number) => Math.round((deg * 2147483648) / 180);
+  encoder.writeMessage(0, [
+    { number: 0, size: 1, baseType: FitBaseType.Enum, value: 4 },
+    { number: 4, size: 4, baseType: FitBaseType.Uint32, value: fitTs },
+  ], 0);
+  encoder.writeMessage(18, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: fitTs + 1200 },
+    { number: 2, size: 4, baseType: FitBaseType.Uint32, value: fitTs },
+    { number: 5, size: 1, baseType: FitBaseType.Enum, value: 2 }, // cycling
+    { number: 6, size: 1, baseType: FitBaseType.Enum, value: 58 }, // virtual_activity
+    { number: 7, size: 4, baseType: FitBaseType.Uint32, value: 1200 * 1000 },
+    { number: 8, size: 4, baseType: FitBaseType.Uint32, value: 1200 * 1000 },
+    { number: 9, size: 4, baseType: FitBaseType.Uint32, value: 12500 * 100 },
+    { number: 20, size: 2, baseType: FitBaseType.Uint16, value: 245 }, // avg_power
+  ], 1);
+  encoder.writeMessage(20, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: fitTs },
+    { number: 0, size: 4, baseType: FitBaseType.Sint32, value: degToSemi(23.40) },
+    { number: 1, size: 4, baseType: FitBaseType.Sint32, value: degToSemi(52.20) },
+    { number: 5, size: 4, baseType: FitBaseType.Uint32, value: 0 },
+    { number: 7, size: 2, baseType: FitBaseType.Uint16, value: 240 },
+    { number: 3, size: 1, baseType: FitBaseType.Uint8, value: 150 },
+    { number: 4, size: 1, baseType: FitBaseType.Uint8, value: 90 },
+  ], 2);
+  encoder.writeMessage(20, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: fitTs + 1200 },
+    { number: 0, size: 4, baseType: FitBaseType.Sint32, value: degToSemi(23.48) },
+    { number: 1, size: 4, baseType: FitBaseType.Sint32, value: degToSemi(52.24) },
+    { number: 5, size: 4, baseType: FitBaseType.Uint32, value: 12500 * 100 },
+    { number: 7, size: 2, baseType: FitBaseType.Uint16, value: 255 },
+    { number: 3, size: 1, baseType: FitBaseType.Uint8, value: 164 },
+    { number: 4, size: 1, baseType: FitBaseType.Uint8, value: 94 },
+  ], 2);
+  const fitUint8 = encoder.close();
+  const fitBuf = Buffer.from(fitUint8.buffer, fitUint8.byteOffset, fitUint8.byteLength);
+
+  // 6. Mock completo de API MyWhoosh (login + player-data + refresh 401->200 + S3 FIT/GPX)
+  let refreshedOnce = false;
+  let activitiesCalls = 0;
+  const mockFetch: FetchLike = async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const authHeader =
+      init?.headers && !Array.isArray(init.headers)
+        ? (init.headers as Record<string, string>).Authorization || (init.headers as Record<string, string>).authorization
+        : undefined;
+
+    if (url.includes('/http-service/api/login')) {
+      return new Response(
+        JSON.stringify({
+          Success: true,
+          AccessToken: soonExpiringJwt,
+          RefreshToken: 'mw-refresh-1',
+          WhooshId: 'rider-999',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (url.includes('/http-service/api/tokens/generate')) {
+      refreshedOnce = true;
+      return new Response(
+        JSON.stringify({
+          AccessToken: validJwt,
+          RefreshToken: 'mw-refresh-2',
+          WhooshId: 'rider-999',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (url.includes('/player/player-data')) {
+      return new Response(
+        JSON.stringify({
+          PlayerDataStruct: {
+            PlayerProfileStruct: { PlayerFirstName: 'Raul', PlayerLastName: 'Oviedo' },
+            PlayerPersonalStruct: { FtpPlayer: 262 },
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (url.includes('/v2/rider/profile/activities')) {
+      activitiesCalls++;
+      if (authHeader === `Bearer ${soonExpiringJwt}`) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      return new Response(
+        JSON.stringify({
+          data: {
+            totalPages: 1,
+            results: [
+              {
+                id: 'mw-fit-100',
+                activityFileId: 'file-fit-100',
+                title: 'Subida Jebel Jais',
+                startDatetime: '2026-11-05T17:30:00.000Z',
+                worldName: 'Arabia',
+              },
+              {
+                id: 'mw-gpx-101',
+                activityFileId: 'file-gpx-101',
+                title: 'Hudayriyat Evening Spin',
+                startDatetime: '2026-11-06T18:00:00.000Z',
+                worldName: 'Hudayriyat',
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (url.includes('/v2/rider/profile/download-activity-file')) {
+      const parsedBody = JSON.parse(String(init?.body || '{}')) as { fileId?: string };
+      const signed =
+        parsedBody.fileId === 'file-fit-100'
+          ? 'https://mywhooshprod.s3.eu-west-1.amazonaws.com/ride/rider-999/file-fit-100.dms'
+          : 'https://mywhooshprod.s3.eu-west-1.amazonaws.com/ride/rider-999/file-gpx-101.gpx';
+      return new Response(JSON.stringify({ data: signed }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (url.includes('file-fit-100.dms')) {
+      assert.equal(authHeader, undefined, 'Must not forward Bearer token to S3');
+      return new Response(new Uint8Array(fitBuf), { status: 200 });
+    }
+    if (url.includes('file-gpx-101.gpx')) {
+      assert.equal(authHeader, undefined, 'Must not forward Bearer token to S3');
+      return new Response(new Uint8Array(bomGpx), { status: 200 });
+    }
+    return new Response('Not found', { status: 404 });
+  };
+
+  const connectedStatus = await connectMyWhooshAccount(
+    {
+      email: 'raul@example.com',
+      password: 'secret-password',
+      rememberPassword: false,
+      autoSyncEnabled: true,
+      syncIntervalMin: 15,
+    },
+    mockFetch
+  );
+  assert.equal(connectedStatus.connected, true);
+  assert.equal(connectedStatus.riderName, 'Raul Oviedo');
+  assert.equal(connectedStatus.ftpWatts, 262);
+  assert.equal(connectedStatus.hasSavedPassword, false);
+  assert.equal(connectedStatus.autoSyncEnabled, true);
+
+  const firstSync = await syncMyWhooshActivities({ fetchImpl: mockFetch });
+  assert.equal(refreshedOnce, true, 'Should refresh soon-to-expire token automatically');
+  assert.ok(activitiesCalls >= 1);
+  assert.equal(firstSync.imported, 2);
+  assert.equal(firstSync.failed, 0);
+
+  const allActivities = listActivities({ sport: 'mywhoosh' });
+  const fitImported = allActivities.find((a) => a.externalId === 'mywhoosh_mw-fit-100');
+  const gpxImported = allActivities.find((a) => a.externalId === 'mywhoosh_mw-gpx-101');
+  assert.ok(fitImported, 'FIT activity from MyWhoosh should be persisted');
+  assert.equal(fitImported.source, 'mywhoosh');
+  assert.equal(fitImported.title, 'Subida Jebel Jais');
+  assert.equal(fitImported.worldName, 'Arabia');
+  assert.ok(gpxImported, 'BOM-GPX activity from MyWhoosh should be persisted');
+  assert.equal(gpxImported.worldName, 'Hudayriyat');
+
+  // Segunda sincronización debe omitir las 2 existentes sin duplicar
+  const secondSync = await syncMyWhooshActivities({ fetchImpl: mockFetch });
+  assert.equal(secondSync.imported, 0);
+  assert.equal(secondSync.skipped, 2);
+
+  // Preferencias y desconexión mantienen actividades
+  const updatedPrefs = updateMyWhooshSyncPreferences({ autoSyncEnabled: false, syncIntervalMin: 30 });
+  assert.equal(updatedPrefs.autoSyncEnabled, false);
+  assert.equal(updatedPrefs.syncIntervalMin, 30);
+
+  const afterDisconnect = disconnectMyWhoosh();
+  assert.equal(afterDisconnect.connected, false);
+  assert.ok(getMyWhooshStatus().importedCount >= 2, 'Imported MyWhoosh rides remain in Bilifit after disconnect');
+});
+
+test('Huawei Health parsers, Health Sync smart bundling, local watch folder and Google Drive sync work end-to-end', async () => {
+  // 1. Parser HiTrack nativo (ignora centinelas lat=90,lon=-80 y lat=0,lon=0)
+  const hitrackText = [
+    'tp=lbs;k=1;lat=0.0;lon=0.0;alt=0;t=0',
+    'tp=lbs;k=2;lat=43.37845;lon=-5.81892;alt=193;t=1785219720',
+    'tp=lbs;k=3;lat=43.38120;lon=-5.81650;alt=210;t=1785220020',
+    'tp=lbs;k=4;lat=90.0;lon=-80.0;alt=0;t=0',
+    'tp=h-r;k=1785219720;v=142',
+    'tp=h-r;k=1785220020;v=164',
+    'tp=s-r;k=1785219720;v=168',
+    'tp=s-r;k=1785220020;v=174',
+    'tp=alti;k=1785219720;v=195.5',
+    'tp=alti;k=1785220020;v=214.0',
+    'tp=rs;k=0;v=33',
+  ].join('\n');
+
+  const hiParsed = parseHiTrackText(hitrackText, {
+    fileName: 'HiTrack_1785219720000',
+    sportTypeCode: 4,
+    startTimeMs: 1785219720_000,
+    totalTimeMs: 300_000,
+    totalDistanceM: 1250,
+    caloriesKcal: 112,
+    steps: 1480,
+  });
+  assert.equal(hiParsed.sport, 'running');
+  assert.equal(hiParsed.distanceMeters, 1250);
+  assert.equal(hiParsed.calories, 112);
+  assert.equal(hiParsed.extras?.steps, 1480);
+  assert.ok(hiParsed.points.length >= 2);
+  assert.ok(hiParsed.points.every((p) => p.lat !== 90 && p.lat !== 0));
+
+  // 2. Parser JSON Centro de Privacidad Huawei (incluyendo partTimeMap malformado) + ZIP
+  const huaweiPrivacyJson = `[{
+    "recordDay": 20260728,
+    "partTimeMap": {0:1234, 60:5678},
+    "motionPathData": [{
+      "sportType": 282,
+      "startTime": 1785314067000,
+      "timeZone": "+0200",
+      "attribute": "HW_EXT_TRACK_DETAIL@is${hitrackText.replace(/\n/g, '\\n')}&&HW_EXT_TRACK_SIMPLIFY@is{\\"totalDistance\\": 6420, \\"totalTime\\": 2700000, \\"totalCalories\\": 512000, \\"avgHeartRate\\": 138, \\"maxHeartRate\\": 166, \\"totalSteps\\": 7890}"
+    }]
+  }]`;
+  const motionList = parseHuaweiMotionPathJson(huaweiPrivacyJson, 'motion path detail data.json');
+  assert.equal(motionList.length, 1);
+  assert.equal(motionList[0].sport, 'mountain');
+  assert.equal(motionList[0].distanceMeters, 6420);
+  assert.equal(motionList[0].calories, 512);
+  assert.equal(motionList[0].extras?.steps, 7890);
+
+  const privacyZip = new JSZip();
+  privacyZip.file('Motion path detail data & description/motion path detail data1785314067.json', huaweiPrivacyJson);
+  const privacyZipBuf = await privacyZip.generateAsync({ type: 'nodebuffer' });
+  const zipParsed = await parseUploadedActivityFile('huawei_privacy_export.zip', privacyZipBuf);
+  assert.equal(zipParsed.activities.length, 1);
+  assert.equal(zipParsed.activities[0].sport, 'mountain');
+
+  // 3. Health Sync CSV + agrupación inteligente (.fit > .tcx > .gpx, ignorando .kml)
+  const csvSample = [
+    'Aplicación de origen,Tipo de actividad,Nombre de la actividad,Fecha,Hora,Tiempo transcurrido,Tiempo activo,Distancia (km),Calorías (kcal),Pasos,Frecuencia cardíaca media,Frecuencia cardíaca máxima,Velocidad media,Máxima velocidad,Estilo principal,Número de brazadas,Número de largos',
+    'HuaweiHealth,RUNNING,Rodaje Naranco Matinal,2026.07.28 08.22,08:22:00,1809,1806,4.2,319.0,5120,152,169,8.37,14.76,,0,0',
+  ].join('\n');
+  const csvMeta = parseHealthSyncCsv(csvSample);
+  assert.ok(csvMeta);
+  assert.equal(csvMeta.activityName, 'Rodaje Naranco Matinal');
+  assert.equal(csvMeta.steps, 5120);
+  assert.equal(csvMeta.originApp, 'HuaweiHealth');
+
+  // Construir FIT válido de Health Sync
+  const encoder = new FitEncoder();
+  const runDate = new Date('2026-07-28T06:22:00Z');
+  const fitTs = FitEncoder.toFitTimestamp(runDate);
+  const degToSemi = (deg: number) => Math.round((deg * 2147483648) / 180);
+  encoder.writeMessage(0, [
+    { number: 0, size: 1, baseType: FitBaseType.Enum, value: 4 },
+    { number: 4, size: 4, baseType: FitBaseType.Uint32, value: fitTs },
+  ], 0);
+  encoder.writeMessage(18, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: fitTs + 1806 },
+    { number: 2, size: 4, baseType: FitBaseType.Uint32, value: fitTs },
+    { number: 5, size: 1, baseType: FitBaseType.Enum, value: 1 }, // running
+    { number: 7, size: 4, baseType: FitBaseType.Uint32, value: 1809 * 1000 },
+    { number: 8, size: 4, baseType: FitBaseType.Uint32, value: 1806 * 1000 },
+    { number: 9, size: 4, baseType: FitBaseType.Uint32, value: 4200 * 100 },
+  ], 1);
+  encoder.writeMessage(20, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: fitTs },
+    { number: 0, size: 4, baseType: FitBaseType.Sint32, value: degToSemi(43.378) },
+    { number: 1, size: 4, baseType: FitBaseType.Sint32, value: degToSemi(-5.818) },
+    { number: 5, size: 4, baseType: FitBaseType.Uint32, value: 0 },
+    { number: 3, size: 1, baseType: FitBaseType.Uint8, value: 145 },
+  ], 2);
+  encoder.writeMessage(20, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: fitTs + 1806 },
+    { number: 0, size: 4, baseType: FitBaseType.Sint32, value: degToSemi(43.395) },
+    { number: 1, size: 4, baseType: FitBaseType.Sint32, value: degToSemi(-5.805) },
+    { number: 5, size: 4, baseType: FitBaseType.Uint32, value: 4200 * 100 },
+    { number: 3, size: 1, baseType: FitBaseType.Uint8, value: 162 },
+  ], 2);
+  const fitUint8 = encoder.close();
+  const hsFitBuf = Buffer.from(fitUint8.buffer, fitUint8.byteOffset, fitUint8.byteLength);
+
+  const gpxDummy = Buffer.from(
+    `<gpx version="1.1"><trk><name>RUNNING</name><trkseg><trkpt lat="43.378" lon="-5.818"><time>2026-07-28T06:22:00Z</time></trkpt></trkseg></trk></gpx>`,
+    'utf8'
+  );
+
+  const grouped = groupHealthSyncFiles([
+    { fileName: '2026.07.28 08.22-RUNNING.kml', item: 'kml' },
+    { fileName: '2026.07.28 08.22-RUNNING.gpx', item: 'gpx' },
+    { fileName: '2026.07.28 08.22-RUNNING.fit', item: 'fit' },
+    { fileName: 'RUNNING 2026.07.28 08.22 Strava.csv', item: 'csv' },
+  ]);
+  assert.equal(grouped.length, 1);
+  assert.equal(grouped[0].primary.item, 'fit');
+  assert.equal(grouped[0].csvMetaItem?.item, 'csv');
+
+  const batchParsed = await parseUploadedActivityBatch([
+    { fileName: '2026.07.28 08.22-RUNNING.gpx', buffer: gpxDummy },
+    { fileName: '2026.07.28 08.22-RUNNING.fit', buffer: hsFitBuf },
+    { fileName: 'RUNNING 2026.07.28 08.22 Strava.csv', buffer: Buffer.from(csvSample, 'utf8') },
+  ]);
+  assert.equal(batchParsed.activities.length, 1);
+  assert.equal(batchParsed.activities[0].title, 'Rodaje Naranco Matinal');
+  assert.equal(batchParsed.activities[0].extras?.steps, 5120);
+
+  // 4. Sincronización automática desde carpeta local (Watch Folder)
+  const watchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bilifit-huawei-watch-'));
+  try {
+    fs.writeFileSync(path.join(watchDir, '2026.07.28 08.22-RUNNING.fit'), hsFitBuf);
+    fs.writeFileSync(path.join(watchDir, '2026.07.28 08.22-RUNNING.gpx'), gpxDummy);
+    fs.writeFileSync(path.join(watchDir, 'RUNNING 2026.07.28 08.22 Strava.csv'), csvSample, 'utf8');
+
+    updateHuaweiPreferences({ watchDir, autoSyncEnabled: true, syncIntervalMin: 15 });
+    const folderSync1 = await syncHuaweiActivities({ mode: 'folder' });
+    assert.equal(folderSync1.imported, 1);
+    assert.equal(folderSync1.failed, 0);
+
+    const huaweiActs = listActivities({ sport: 'running' }).filter((a) => a.source === 'huawei');
+    assert.ok(huaweiActs.some((a) => a.title === 'Rodaje Naranco Matinal'));
+
+    const folderSync2 = await syncHuaweiActivities({ mode: 'folder' });
+    assert.equal(folderSync2.imported, 0);
+    assert.equal(folderSync2.skipped, 1);
+  } finally {
+    fs.rmSync(watchDir, { recursive: true, force: true });
+  }
+
+  // 5. Google Drive OAuth + autodescubrimiento carpeta + descarga priorizada (.fit > .gpx) + CSV
+  updateHuaweiPreferences({
+    googleClientId: 'google-client-123',
+    googleClientSecret: 'google-secret-xyz',
+  });
+  const authUrl = getGoogleDriveAuthUrl('http://localhost:3000', 'state-abc');
+  assert.ok(authUrl.includes('drive.readonly') && authUrl.includes('state=state-abc'));
+
+  // Segunda sesión distinta (Caminata 2026.08.15) para probar descarga desde Drive sin colisionar con la de carpeta
+  const encWalk = new FitEncoder();
+  const walkDate = new Date('2026-08-15T07:10:00Z');
+  const walkFitTs = FitEncoder.toFitTimestamp(walkDate);
+  encWalk.writeMessage(0, [
+    { number: 0, size: 1, baseType: FitBaseType.Enum, value: 4 },
+    { number: 4, size: 4, baseType: FitBaseType.Uint32, value: walkFitTs },
+  ], 0);
+  encWalk.writeMessage(18, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: walkFitTs + 2400 },
+    { number: 2, size: 4, baseType: FitBaseType.Uint32, value: walkFitTs },
+    { number: 5, size: 1, baseType: FitBaseType.Enum, value: 11 }, // walking
+    { number: 7, size: 4, baseType: FitBaseType.Uint32, value: 2400 * 1000 },
+    { number: 8, size: 4, baseType: FitBaseType.Uint32, value: 2400 * 1000 },
+    { number: 9, size: 4, baseType: FitBaseType.Uint32, value: 3100 * 100 },
+  ], 1);
+  encWalk.writeMessage(20, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: walkFitTs },
+    { number: 0, size: 4, baseType: FitBaseType.Sint32, value: degToSemi(43.370) },
+    { number: 1, size: 4, baseType: FitBaseType.Sint32, value: degToSemi(-5.840) },
+    { number: 5, size: 4, baseType: FitBaseType.Uint32, value: 0 },
+  ], 2);
+  const walkFitUint8 = encWalk.close();
+  const walkFitBuf = Buffer.from(walkFitUint8.buffer, walkFitUint8.byteOffset, walkFitUint8.byteLength);
+  const walkCsv = [
+    'Aplicación de origen,Tipo de actividad,Nombre de la actividad,Fecha,Hora,Tiempo transcurrido,Tiempo activo,Distancia (km),Calorías (kcal),Pasos',
+    'HuaweiHealth,WALKING,Paseo Senda del Oso,2026.08.15 09.10,09:10:00,2400,2400,3.1,195,4320',
+  ].join('\n');
+
+  let gpxDownloadAttempted = false;
+  const mockGoogleFetch: typeof fetch = async (input) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    if (url.includes('oauth2.googleapis.com/token')) {
+      return new Response(
+        JSON.stringify({
+          access_token: 'gdrive-access-token',
+          refresh_token: 'gdrive-refresh-token',
+          expires_in: 3600,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (url.includes('/drive/v3/about')) {
+      return new Response(JSON.stringify({ user: { emailAddress: 'raul@gmail.com' } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (url.includes('/drive/v3/files') && url.includes('application%2Fvnd.google-apps.folder')) {
+      return new Response(
+        JSON.stringify({
+          files: [{ id: 'folder-hs-1', name: 'Health Sync Actividades', mimeType: 'application/vnd.google-apps.folder' }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (url.includes('/drive/v3/files/file-walk-fit?alt=media')) {
+      return new Response(new Uint8Array(walkFitBuf), { status: 200 });
+    }
+    if (url.includes('/drive/v3/files/file-walk-gpx?alt=media')) {
+      gpxDownloadAttempted = true;
+      return new Response(new Uint8Array(gpxDummy), { status: 200 });
+    }
+    if (url.includes('/drive/v3/files/file-walk-csv?alt=media')) {
+      return new Response(walkCsv, { status: 200 });
+    }
+    if (url.includes('/drive/v3/files?')) {
+      return new Response(
+        JSON.stringify({
+          files: [
+            { id: 'file-walk-gpx', name: '2026.08.15 09.10-WALKING.gpx' },
+            { id: 'file-walk-fit', name: '2026.08.15 09.10-WALKING.fit' },
+            { id: 'file-walk-csv', name: 'WALKING 2026.08.15 09.10 Strava.csv' },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response('Not found', { status: 404 });
+  };
+
+  const gdStatus = await exchangeGoogleDriveCode('auth-code-1', 'http://localhost:3000', mockGoogleFetch);
+  assert.equal(gdStatus.googleConnected, true);
+  assert.equal(gdStatus.googleAccountEmail, 'raul@gmail.com');
+  assert.equal(gdStatus.driveFolderId, 'folder-hs-1');
+  assert.equal(gdStatus.driveFolderName, 'Health Sync Actividades');
+
+  const driveSync = await syncHuaweiActivities({ mode: 'drive', fetchImpl: mockGoogleFetch });
+  assert.equal(driveSync.imported, 1);
+  assert.equal(gpxDownloadAttempted, false, 'Should only download .fit and skip redundant .gpx in Drive bundle');
+
+  const walkImported = listActivities({ sport: 'mountain' }).find((a) => a.title === 'Paseo Senda del Oso');
+  assert.ok(walkImported, 'Google Drive Huawei walk should be imported with CSV title');
+  assert.equal(walkImported.source, 'huawei');
+  assert.equal(walkImported.extras?.steps, 4320);
+
+  const afterGdDisconnect = disconnectGoogleDrive();
+  assert.equal(afterGdDisconnect.googleConnected, false);
+  assert.ok(getHuaweiStatus().importedCount >= 2);
 });

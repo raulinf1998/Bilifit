@@ -96,7 +96,7 @@ export default function ActivitiesPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Historial de Actividades</h1>
           <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
-            Unifica sesiones de Strava, MyWhoosh, rutas GPS de montaña y entrenos de fuerza en casa.
+            Unifica sesiones de MyWhoosh, reloj Huawei, rutas GPS de montaña y entrenos de fuerza en casa.
           </p>
         </div>
 

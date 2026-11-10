@@ -95,6 +95,10 @@ export function inferSportFromText(
     return { sport: 'mountain', subSport: combined.includes('trail') ? 'Trail Running' : 'Senderismo / Montaña' };
   }
 
+  if (combined.includes('walk') || combined.includes('caminat')) {
+    return { sport: 'mountain', subSport: 'Caminata' };
+  }
+
   if (combined.includes('strength') || combined.includes('fuerza') || combined.includes('weight') || combined.includes('gym')) {
     return { sport: 'strength', subSport: 'Fuerza' };
   }
@@ -121,6 +125,7 @@ export function inferSportFromText(
 }
 
 export function parseGpxString(xmlText: string, fileName = 'actividad.gpx'): ParsedActivityData {
+  const cleanXml = xmlText.replace(/^\uFEFF/, '');
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_',
@@ -128,7 +133,7 @@ export function parseGpxString(xmlText: string, fileName = 'actividad.gpx'): Par
     parseTagValue: true,
   });
 
-  const parsed = parser.parse(xmlText);
+  const parsed = parser.parse(cleanXml);
   const gpx = parsed?.gpx;
   if (!gpx) {
     throw new Error(`El archivo ${fileName} no contiene una etiqueta <gpx> válida.`);

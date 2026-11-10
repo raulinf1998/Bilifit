@@ -268,7 +268,12 @@ export default function ActivityDetailPage() {
             </span>
           )}
           <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            {new Date(activity.startedAt).toLocaleString('es-ES')} · Origen: {activity.source.toUpperCase()}
+            {new Date(activity.startedAt).toLocaleString('es-ES')} · Origen:{' '}
+            {activity.source === 'huawei'
+              ? 'HUAWEI HEALTH'
+              : activity.source === 'mywhoosh'
+                ? 'MYWHOOSH DIRECTO'
+                : activity.source.toUpperCase()}
           </span>
         </div>
 
@@ -458,6 +463,12 @@ export default function ActivityDetailPage() {
               <div className="text-lg font-bold tabular-nums">
                 {activity.calories} kcal{extras.workKj ? ` · ${extras.workKj} kJ` : ''}
               </div>
+            </div>
+          )}
+          {typeof extras.steps === 'number' && extras.steps > 0 && (
+            <div className="card-elevated p-3">
+              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Pasos</div>
+              <div className="text-lg font-bold tabular-nums">{extras.steps.toLocaleString('es-ES')}</div>
             </div>
           )}
           {typeof activity.totalVolumeKg === 'number' && activity.totalVolumeKg > 0 && (
