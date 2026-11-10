@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 869" width="1200" height="869">
+  <defs>
+    <linearGradient id="bgGrad-bled" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#c5d4d2" />
+      <stop offset="55%" stop-color="#b8cac8" />
+      <stop offset="100%" stop-color="#a9bfbd" />
+    </linearGradient>
+    <pattern id="grid-bled" width="72" height="72" patternUnits="userSpaceOnUse">
+      <path d="M 72 0 L 0 0 0 72" fill="none" stroke="rgba(15,23,42,0.055)" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="869" fill="url(#bgGrad-bled)" />
+  <rect width="1200" height="869" fill="url(#grid-bled)" />
+  <ellipse cx="648" cy="339" rx="521" ry="417" fill="#7d9b99" fill-opacity="0.13" stroke="#4f6e6c" stroke-opacity="0.18" stroke-width="1.4" />
+  <ellipse cx="480" cy="435" rx="440" ry="352" fill="#7d9b99" fill-opacity="0.13" stroke="#4f6e6c" stroke-opacity="0.18" stroke-width="1.4" />
+  <ellipse cx="648" cy="339" rx="359" ry="287" fill="#7d9b99" fill-opacity="0.13" stroke="#4f6e6c" stroke-opacity="0.18" stroke-width="1.4" />
+  <ellipse cx="480" cy="435" rx="278" ry="222" fill="#7d9b99" fill-opacity="0.13" stroke="#4f6e6c" stroke-opacity="0.18" stroke-width="1.4" />
+  <ellipse cx="648" cy="339" rx="195" ry="156" fill="#7d9b99" fill-opacity="0.13" stroke="#4f6e6c" stroke-opacity="0.18" stroke-width="1.4" />
+  <polygon points="210,695.2 210,260.7 930,217.3 930,738.7" fill="#6fa9c9" fill-opacity="0.72" stroke="#3b7799" stroke-opacity="0.55" stroke-width="2" />
+  <g stroke="rgba(15,23,42,0.22)" stroke-width="10.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 264.0 469.3 L 960.0 434.5" />
+  </g>
+  <g stroke="#334155" stroke-width="7.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 264.0 469.3 L 960.0 434.5" />
+  </g>
+  <g stroke="#f8fafc" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M 264.0 469.3 L 960.0 434.5" />
+  </g>
+  <g stroke="#ef4444" stroke-opacity="0.45" stroke-width="1.2" stroke-dasharray="6 6" stroke-linecap="round" fill="none">
+    <path d="M 264.0 469.3 L 960.0 434.5" />
+  </g>
+  <circle cx="576" cy="451.9" r="5.5" fill="#ef4444" stroke="#0f172a" stroke-width="2" />
+  <rect x="586.0" y="440.9" width="99.6" height="22" rx="6" fill="rgba(15,23,42,0.82)" stroke="rgba(255,255,255,0.16)" stroke-width="1" />
+  <text x="595.0" y="455.9" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" font-weight="700" fill="#f8fafc">Isla de Bled</text>
+  <g transform="translate(1152, 821)" opacity="0.92">
+    <circle cx="0" cy="0" r="24" fill="rgba(15,23,42,0.82)" stroke="rgba(255,255,255,0.24)" stroke-width="1.5"/>
+    <polygon points="0,-16 4.5,0 0,-3 -4.5,0" fill="#f97316"/>
+    <polygon points="0,16 4.5,0 0,3 -4.5,0" fill="#cbd5e1"/>
+    <text x="0" y="2" text-anchor="middle" font-family="system-ui,sans-serif" font-size="9" font-weight="800" fill="#ffffff" stroke="rgba(15,23,42,0.9)" stroke-width="2.4" paint-order="stroke">N</text>
+  </g>
+  <rect x="22" y="793" width="359.5" height="54" rx="12" fill="rgba(15,23,42,0.84)" stroke="rgba(255,255,255,0.18)" />
+  <circle cx="46" cy="820" r="8" fill="#ef4444" />
+  <text x="64" y="817" font-family="system-ui,-apple-system,sans-serif" font-size="16" font-weight="800" letter-spacing="1.1" fill="#ffffff">BLED</text>
+  <text x="64" y="835" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" font-weight="500" fill="#cbd5e1">Lago Bled · Eslovenia · Circuito Remo 10 km</text>
+</svg>

@@ -1,7 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import { computeSessionExtras, enrichPointsTelemetry } from '@/lib/analytics';
 import { calculateNormalizedPower } from '@/lib/metrics';
-import { resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
+import { isMyWhooshContext, MYWHOOSH_WORLDS, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
 import { computeElevationGainLoss, downsamplePoints, encodePolyline, haversineMeters } from '@/lib/polyline';
 import type { ActivityExtras, ActivityLap, ActivityPoint, SportType } from '@/types';
 
@@ -48,9 +48,15 @@ function toNum(val: unknown): number | undefined {
 }
 
 export function detectMyWhooshWorld(text: string): string | undefined {
-  const worlds = ['Arabia', 'Hudayriyat', 'Belgium', 'Colombia', 'AlUla', 'Australia', 'California', 'Japan', 'Switzerland', 'Bhutan', 'MyWhoosh World'];
   const lower = text.toLowerCase();
-  return worlds.find((w) => lower.includes(w.toLowerCase()));
+  const matched = MYWHOOSH_WORLDS.find((w) => {
+    const wl = w.name.toLowerCase();
+    if (wl.length <= 5) {
+      return new RegExp(`\\b${wl}\\b`, 'i').test(lower);
+    }
+    return lower.includes(wl);
+  });
+  return matched?.name;
 }
 
 export function inferSportFromText(
@@ -63,14 +69,7 @@ export function inferSportFromText(
   coords: Array<[number, number]> = []
 ): { sport: SportType; subSport?: string; worldName?: string } {
   const combined = `${rawType} ${title} ${creator}`.toLowerCase();
-  const resolvedWorld = resolveMyWhooshWorldForActivity({
-    worldName: detectMyWhooshWorld(combined),
-    title: combined,
-    coords,
-  });
-  const worldName = resolvedWorld?.world.name ?? detectMyWhooshWorld(combined);
-
-  if (
+  const hasExplicitVirtualMarker =
     combined.includes('mywhoosh') ||
     combined.includes('virtualride') ||
     combined.includes('virtual_activity') ||
@@ -78,9 +77,21 @@ export function inferSportFromText(
     combined.includes('indoor_cycling') ||
     combined.includes('rodillo') ||
     combined.includes('zwift') ||
+    isMyWhooshContext({ title: combined, deviceName: creator });
+
+  const resolvedWorld = resolveMyWhooshWorldForActivity({
+    worldName: hasExplicitVirtualMarker ? detectMyWhooshWorld(combined) : undefined,
+    title: combined,
+    subSport: hasExplicitVirtualMarker ? 'virtual_activity' : rawType,
+    deviceName: creator,
+    coords,
+  });
+
+  if (
+    hasExplicitVirtualMarker ||
     (resolvedWorld && (hasPower || combined.includes('ride') || combined.includes('cycl')))
   ) {
-    return { sport: 'mywhoosh', subSport: 'MyWhoosh Indoor', worldName };
+    return { sport: 'mywhoosh', subSport: 'MyWhoosh Indoor', worldName: resolvedWorld?.world.name };
   }
 
   if (

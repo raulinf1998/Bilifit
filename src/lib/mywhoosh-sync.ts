@@ -908,6 +908,9 @@ export async function syncMyWhooshActivities(
             const worldMatch = resolveMyWhooshWorldForActivity({
               worldName: parsed.worldName ?? remote.worldHint,
               title: `${remote.title} ${parsed.title} ${remote.worldHint ?? ''}`,
+              sport: 'mywhoosh',
+              subSport: 'virtual_activity',
+              deviceName: 'MyWhoosh',
               coords,
             });
             const worldName =

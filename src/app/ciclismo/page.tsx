@@ -2,13 +2,19 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Award, Bike, Flame, Gauge, Globe, Zap } from 'lucide-react';
+import { Award, Bike, ExternalLink, Flame, Gauge, Globe, Zap } from 'lucide-react';
 import ActivityImporter from '@/components/ActivityImporter';
 import ActivityMap from '@/components/ActivityMap';
 import MyWhooshConnectorCard from '@/components/MyWhooshConnectorCard';
 import { SportBadge } from '@/components/SportBadge';
 import { formatDistanceKm, formatDuration, getCogganPowerZones } from '@/lib/metrics';
-import { MYWHOOSH_WORLDS, getMyWhooshWorldByIdOrName } from '@/lib/mywhoosh-maps';
+import {
+  MYWHOOSH_WORLDS,
+  getMyWhooshWorldByIdOrName,
+  isMyWhooshContext,
+  resolveMyWhooshWorldForActivity,
+} from '@/lib/mywhoosh-maps';
+import { decodePolyline } from '@/lib/polyline';
 import type { Activity, AthleteProfile } from '@/types';
 
 export default function CyclingMyWhooshPage() {
@@ -53,7 +59,18 @@ export default function CyclingMyWhooshPage() {
     }
   }
 
-  const myWhooshActs = activities.filter((a) => a.sport === 'mywhoosh');
+  const myWhooshActs = useMemo(
+    () =>
+      activities.filter((a) =>
+        isMyWhooshContext({
+          sport: a.sport,
+          subSport: a.subSport,
+          worldName: a.worldName,
+          title: a.title,
+        })
+      ),
+    [activities]
+  );
   const totalKm = Math.round(activities.reduce((s, a) => s + a.distanceMeters, 0) / 1000);
   const totalHours = (activities.reduce((s, a) => s + a.durationSec, 0) / 3600).toFixed(1);
   const totalTss = activities.reduce((s, a) => s + a.tss, 0);
@@ -63,22 +80,31 @@ export default function CyclingMyWhooshPage() {
   const wKg = (ftp / weightKg).toFixed(2);
   const zones = getCogganPowerZones(ftp);
 
-  const worldStats = useMemo(() => {
+  const { worldStats, resolvedWorldByActivityId } = useMemo(() => {
     const map = new Map<string, { count: number; km: number; latestActivity: Activity | null }>();
+    const byId = new Map<string, string>();
     for (const w of MYWHOOSH_WORLDS) {
       map.set(w.id, { count: 0, km: 0, latestActivity: null });
     }
     for (const act of myWhooshActs) {
-      const w = getMyWhooshWorldByIdOrName(act.worldName) ?? getMyWhooshWorldByIdOrName(act.title);
-      if (!w) continue;
-      const entry = map.get(w.id);
+      const coords = act.polyline ? decodePolyline(act.polyline) : undefined;
+      const resolved = resolveMyWhooshWorldForActivity({
+        worldName: act.worldName,
+        title: act.title,
+        sport: act.sport,
+        subSport: act.subSport,
+        coords,
+      });
+      if (!resolved) continue;
+      byId.set(act.id, resolved.world.name);
+      const entry = map.get(resolved.world.id);
       if (entry) {
         entry.count += 1;
         entry.km += act.distanceMeters / 1000;
         if (!entry.latestActivity) entry.latestActivity = act;
       }
     }
-    return map;
+    return { worldStats: map, resolvedWorldByActivityId: byId };
   }, [myWhooshActs]);
 
   const selectedWorld = getMyWhooshWorldByIdOrName(selectedWorldId) ?? MYWHOOSH_WORLDS[0];
@@ -167,12 +193,21 @@ export default function CyclingMyWhooshPage() {
           <div>
             <h2 className="text-base font-bold flex items-center gap-2">
               <Globe className="h-4 w-4 text-cyan-400" />
-              Atlas de Mundos Virtuales de MyWhoosh
+              Atlas de Mundos Virtuales de MyWhoosh ({MYWHOOSH_WORLDS.length} mundos oficiales)
             </h2>
             <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-              Selecciona cualquier mundo para explorar su cartografía virtual en Leaflet junto con tu última ruta grabada.
+              Selecciona cualquier mundo para explorar su cartografía Mercator calibrada (mywhooshinfo) junto con tu última ruta o Free Ride grabada.
             </p>
           </div>
+          <a
+            href={selectedWorld.mywhooshInfoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs text-cyan-400 hover:underline font-medium shrink-0"
+          >
+            Ver rutas de {selectedWorld.name} en mywhooshinfo.com
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
@@ -199,7 +234,7 @@ export default function CyclingMyWhooshPage() {
                     )}
                   </div>
                   <div className="text-[10px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                    {w.regionLabel} · {st && st.km > 0 ? `${Math.round(st.km)} km` : 'Sin rutas'}
+                    {w.regionLabel} · {st && st.km > 0 ? `${Math.round(st.km)} km` : `${w.routesCount} rutas`}
                   </div>
                 </button>
               );
@@ -208,12 +243,15 @@ export default function CyclingMyWhooshPage() {
 
           <div className="lg:col-span-7 space-y-2.5">
             <ActivityMap
-              sport="mywhoosh"
+              sport={selectedWorldLatest?.sport ?? 'mywhoosh'}
+              subSport={selectedWorldLatest?.subSport ?? 'virtual_activity'}
               worldName={selectedWorld.name}
+              title={selectedWorldLatest?.title ?? selectedWorld.name}
               polyline={selectedWorldLatest?.polyline ?? null}
+              defaultLayer="virtual"
               heightClass="h-80"
             />
-            <div className="flex flex-wrap items-center justify-between text-xs px-1" style={{ color: 'var(--text-secondary)' }}>
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs px-1" style={{ color: 'var(--text-secondary)' }}>
               <span>
                 <strong>{selectedWorld.name}</strong> ({selectedWorld.regionLabel}) — {selectedWorld.subtitle}
               </span>
@@ -274,7 +312,9 @@ export default function CyclingMyWhooshPage() {
       <div className="card-surface p-5 space-y-4">
         <h2 className="text-base font-bold">Sesiones de MyWhoosh y Ciclismo</h2>
         <div className="space-y-2.5">
-          {activities.map((act) => (
+          {activities.map((act) => {
+            const worldLabel = resolvedWorldByActivityId.get(act.id) ?? act.worldName;
+            return (
             <Link
               key={act.id}
               href={`/actividades/${act.id}`}
@@ -284,9 +324,9 @@ export default function CyclingMyWhooshPage() {
               <div className="space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <SportBadge sport={act.sport} subSport={act.subSport} />
-                  {act.worldName && (
+                  {worldLabel && (
                     <span className="text-[11px] px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300">
-                      Mundo: {act.worldName}
+                      Mundo: {worldLabel}
                     </span>
                   )}
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -325,7 +365,8 @@ export default function CyclingMyWhooshPage() {
                 </div>
               </div>
             </Link>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

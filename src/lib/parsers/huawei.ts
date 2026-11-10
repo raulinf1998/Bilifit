@@ -1,4 +1,5 @@
 import { computeSessionExtras, enrichPointsTelemetry } from '@/lib/analytics';
+import { isMyWhooshContext, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
 import { computeElevationGainLoss, downsamplePoints, encodePolyline, haversineMeters } from '@/lib/polyline';
 import type { ParsedActivityData } from '@/lib/parsers/gpx';
 import type { ActivityExtras, ActivityPoint, SportType } from '@/types';
@@ -683,8 +684,40 @@ export function applyHealthSyncMetadata(parsed: ParsedActivityData, meta: Health
           : parsed.extras?.deviceName ?? 'Health Sync',
   };
 
+  const csvSignal = /virtual|mywhoosh|zwift|indoor_cycling|spinning/i.test(
+    `${meta.activityType ?? ''} ${meta.activityName ?? ''}`
+  );
+  const coords = parsed.points
+    .filter((p): p is ActivityPoint & { lat: number; lon: number } => typeof p.lat === 'number' && typeof p.lon === 'number')
+    .map((p): [number, number] => [p.lat, p.lon]);
+
+  const virtualCtx =
+    csvSignal ||
+    isMyWhooshContext({
+      sport: parsed.sport,
+      subSport: parsed.subSport,
+      worldName: parsed.worldName,
+      title: nextTitle,
+      deviceName: nextExtras.deviceName,
+    });
+
+  const nextSport: SportType = virtualCtx ? 'mywhoosh' : parsed.sport;
+  const nextSubSport = virtualCtx ? 'MyWhoosh Indoor' : parsed.subSport;
+
+  const resolvedWorld = resolveMyWhooshWorldForActivity({
+    worldName: parsed.worldName,
+    title: nextTitle,
+    sport: nextSport,
+    subSport: csvSignal ? 'virtual_activity' : nextSubSport,
+    deviceName: nextExtras.deviceName,
+    coords,
+  });
+
   return {
     ...parsed,
+    sport: nextSport,
+    subSport: nextSubSport,
+    worldName: resolvedWorld?.world.name ?? parsed.worldName,
     title: nextTitle,
     calories: nextCalories,
     avgHr: nextAvgHr,
