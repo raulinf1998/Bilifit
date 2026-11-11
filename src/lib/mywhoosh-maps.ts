@@ -109,9 +109,10 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'Hudayriyat',
     subtitle: 'Isla, Velódromo y Hudayriyat Arcade Mode',
     regionLabel: 'Abu Dabi · EAU',
-    ...metaFor('hudayriyat', [[23.33, 54.952], [23.416, 55.056]]),
+    ...metaFor('hudayriyat', [[23.325271, 54.929529], [23.39734, 55.008034]]),
     altBounds: [[[24.395, 54.315], [24.445, 54.37]]],
     imageUrl: '/maps/mywhoosh/hudayriyat.webp',
+    mapRotationDeg: 90,
     backgroundColor: '#0b2638',
     accentColor: '#06b6d4',
     routesCount: 8,
@@ -132,7 +133,6 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
       { name: 'Hudayriyat Summit', lat: 23.35686, lon: 54.97611, eleM: 134 },
       { name: 'Velodrome', lat: 23.36374, lon: 54.98306, eleM: 41 },
       { name: 'Hudayriyat Bridge', lat: 23.37323, lon: 54.97396 },
-      { name: 'Arcade Mode Bay', lat: 23.404, lon: 55.036 },
     ],
     keywords: ['hudayriyat', 'zombie escape', 'arcade mode', 'octopus loop', 'dust trail', 'hudayriyat ascend'],
   },
@@ -141,8 +141,9 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'AlUla',
     subtitle: 'Cañones de Arenisca, Hegra y Roca del Elefante',
     regionLabel: 'AlUla · Arabia Saudí',
-    ...metaFor('alula', [[26.543, 37.721], [26.648, 37.807]]),
+    ...metaFor('alula', [[26.548323, 37.708967], [26.647319, 37.819679]]),
     imageUrl: '/maps/mywhoosh/alula.webp',
+    mapRotationDeg: 90,
     backgroundColor: '#987c55',
     accentColor: '#f97316',
     routesCount: 16,
@@ -187,8 +188,9 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'Arabia',
     subtitle: 'Desierto de Liwa, Jebel Jais y Jebel Hafeet',
     regionLabel: 'EAU y Baréin',
-    ...metaFor('arabia', [[23.334, 52.162], [23.52, 52.277]]),
+    ...metaFor('arabia', [[23.34164, 52.124948], [23.512932, 52.311629]]),
     imageUrl: '/maps/mywhoosh/arabia.webp',
+    mapRotationDeg: 90,
     backgroundColor: '#0b2638',
     accentColor: '#f59e0b',
     routesCount: 30,
@@ -236,8 +238,9 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'Belgium',
     subtitle: 'Flandes, Ardenas, Muur y Koppenberg',
     regionLabel: 'Flandes · Bélgica',
-    ...metaFor('belgium', [[50.748, 3.455], [50.867, 3.608]]),
+    ...metaFor('belgium', [[50.753966, 3.446443], [50.861819, 3.617117]]),
     imageUrl: '/maps/mywhoosh/belgium.webp',
+    mapRotationDeg: 90,
     backgroundColor: '#465c2a',
     accentColor: '#10b981',
     routesCount: 10,
@@ -287,8 +290,9 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'Colombia',
     subtitle: 'Cordillera Andina, Alto Limonar y Cristo Rey',
     regionLabel: 'Cordillera de los Andes · Colombia',
-    ...metaFor('colombia', [[4.563, -72.87], [4.671, -72.752]]),
+    ...metaFor('colombia', [[4.561822, -72.863024], [4.670068, -72.754426]]),
     imageUrl: '/maps/mywhoosh/colombia.webp',
+    mapRotationDeg: 90,
     backgroundColor: '#335323',
     accentColor: '#eab308',
     routesCount: 13,
@@ -328,8 +332,9 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'Australia',
     subtitle: 'Costa de Queensland, Cities Loop y Harbour Bridge',
     regionLabel: 'Queensland · Australia',
-    ...metaFor('australia', [[-21.031, 148.717], [-20.975, 148.809]]),
+    ...metaFor('australia', [[-21.042896, 148.72102], [-20.961948, 148.807728]]),
     imageUrl: '/maps/mywhoosh/australia.webp',
+    mapRotationDeg: 90,
     backgroundColor: '#0b2638',
     accentColor: '#22c55e',
     routesCount: 14,
@@ -370,8 +375,9 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'California',
     subtitle: 'Golden Gate, Alcatraz, Hollywood Hills y Sierra',
     regionLabel: 'California · EE. UU.',
-    ...metaFor('california', [[38.38, -120.422], [38.457, -120.326]]),
+    ...metaFor('california', [[38.38227, -120.418085], [38.454391, -120.326036]]),
     imageUrl: '/maps/mywhoosh/california.webp',
+    mapRotationDeg: 90,
     backgroundColor: '#0b2638',
     accentColor: '#ec4899',
     routesCount: 13,
@@ -411,8 +417,9 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'Japan',
     subtitle: 'Monte Fuji, Tokio Dome y Kioto',
     regionLabel: 'Honshu · Japón',
-    ...metaFor('japan', [[35.403, 135.097], [35.482, 135.187]]),
+    ...metaFor('japan', [[35.361732, 135.061468], [35.489064, 135.217728]]),
     imageUrl: '/maps/mywhoosh/japan.webp',
+    mapRotationDeg: 90,
     backgroundColor: '#0b2638',
     accentColor: '#f43f5e',
     routesCount: 15,
@@ -454,8 +461,9 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'MyWhoosh World',
     subtitle: 'Isla Central, Hyperion City y Snowfall Mountain',
     regionLabel: 'Isla Virtual · MyWhoosh',
-    ...metaFor('mywhoosh-world', [[24.967, -71.036], [25.019, -70.972]]),
+    ...metaFor('mywhoosh-world', [[24.965331, -71.0383], [25.028525, -70.968575]]),
     imageUrl: '/maps/mywhoosh/mywhoosh-world.webp',
+    mapRotationDeg: 90,
     backgroundColor: '#0b2638',
     accentColor: '#38bdf8',
     routesCount: 10,
@@ -495,8 +503,9 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'Switzerland',
     subtitle: 'Zúrich, Limmat Loop, Seeblick Spin y Zürichbergstrasse',
     regionLabel: 'Zúrich · Suiza',
-    ...metaFor('switzerland', [[47.314, 8.492], [47.405, 8.618]]),
+    ...metaFor('switzerland', [[47.308, 8.49], [47.41, 8.63982]]),
     imageUrl: '/maps/mywhoosh/switzerland.webp',
+    mapRotationDeg: 90,
     backgroundColor: '#40572d',
     accentColor: '#ef4444',
     routesCount: 10,
@@ -506,12 +515,13 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     routes: [
       'Limmat Loop',
       'Seeblick Spin',
+      'Zurich',
       'Zürichbergstrasse',
-      'Lake Zurich Loop',
-      'Alpine Valley',
+      'Lake Lucerne Loop',
+      'Capital Circuit',
     ],
     landmarks: [
-      { name: 'Zürichbergstrasse', lat: 47.39444, lon: 8.52905, eleM: 466 },
+      { name: 'Zürichbergstrasse', lat: 47.376, lon: 8.556, eleM: 466 },
       { name: 'Limmat Loop', lat: 47.345, lon: 8.548 },
       { name: 'Seeblick Spin', lat: 47.362, lon: 8.601 },
     ],
@@ -531,7 +541,7 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'France',
     subtitle: 'Morvan, Cobbled Classic, París y Col du Galibier',
     regionLabel: 'Morvan y Alpes · Francia',
-    ...metaFor('france', [[47.24881, 3.85573], [47.35581, 4.00736]]),
+    ...metaFor('france', [[47.244922, 3.831979], [47.375206, 4.024131]]),
     imageUrl: '/maps/mywhoosh/france.webp',
     mapRotationDeg: 90,
     backgroundColor: '#0b2638',
@@ -569,9 +579,9 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
   {
     id: 'bhutan',
     name: 'Bhutan',
-    subtitle: 'Himalaya, Timbu, Dragon Rae y Pele La',
+    subtitle: 'Himalaya, Timbu, Paro, Dragon Fury y Pele La',
     regionLabel: 'Bután · Himalaya',
-    ...metaFor('bhutan', [[27.44, 89.6], [27.52, 89.7]]),
+    ...metaFor('bhutan', [[27.442377, 89.607599], [27.517611, 89.692401]]),
     imageUrl: '/maps/mywhoosh/bhutan.webp',
     backgroundColor: '#2e4723',
     accentColor: '#a855f7',
@@ -579,39 +589,42 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     maxElevationM: 1018,
     mywhooshInfoId: 17,
     mywhooshInfoUrl: 'https://mywhooshinfo.com/routes/world/17',
-    routes: ['Dragon Rae', 'Pele La', 'Thimphu City', 'Paro Valley', 'Dochula Pass'],
+    routes: ['Thimphu City', 'Paro City', 'Dragon Fury', 'Pele La', 'Trongsa', 'Bhutan Outer Loop'],
     landmarks: [
-      { name: 'Dragon Rae Climb', lat: 27.5, lon: 89.656, eleM: 370 },
-      { name: 'Pele La Pass', lat: 27.493, lon: 89.678, eleM: 300 },
+      { name: 'Paro City', lat: 27.474, lon: 89.6263, eleM: 69 },
+      { name: 'Thimphu City', lat: 27.474, lon: 89.6458, eleM: 19 },
+      { name: 'Dragon Rae Climb', lat: 27.4687, lon: 89.672, eleM: 254 },
+      { name: 'Trongsa Pele Climb', lat: 27.4815, lon: 89.6644, eleM: 262 },
     ],
-    keywords: ['bhutan', 'bután', 'butan', 'dochula', 'thimphu', 'dragon rae', 'pele la'],
+    keywords: ['bhutan', 'bután', 'butan', 'thimphu', 'paro city', 'dragon fury', 'dragon rae', 'pele la', 'trongsa'],
   },
   {
     id: 'canada',
     name: 'Canada',
     subtitle: 'Montreal, Mount Royal y Camillien Houde',
     regionLabel: 'Quebec · Canadá',
-    ...metaFor('canada', [[45.492, -73.618], [45.524, -73.574]]),
+    ...metaFor('canada', [[45.483573, -73.621595], [45.528418, -73.570405]]),
     imageUrl: '/maps/mywhoosh/canada.webp',
-    backgroundColor: '#0b2638',
+    backgroundColor: '#294022',
     accentColor: '#ef4444',
     routesCount: 3,
     maxElevationM: 984,
     mywhooshInfoId: 16,
     mywhooshInfoUrl: 'https://mywhooshinfo.com/routes/world/16',
-    routes: ['Mount Royal Loop', 'Camillien Houde', 'Montreal Grand Prix'],
+    routes: ['Montreal', 'SRC women Montreal', 'SRC men Montreal', 'Mount Royal Loop', 'Camillien Houde'],
     landmarks: [
-      { name: 'Camillien Houde', lat: 45.512, lon: -73.592, eleM: 247 },
-      { name: 'Avenue Pagnuelo', lat: 45.505, lon: -73.605, eleM: 60 },
+      { name: 'Avenue du Parc', lat: 45.5219, lon: -73.5852, eleM: 60 },
+      { name: 'Camillien Houde', lat: 45.5154, lon: -73.5919, eleM: 247 },
+      { name: 'Avenue Pagnuelo', lat: 45.4908, lon: -73.6016, eleM: 95 },
     ],
-    keywords: ['canada', 'canadá', 'camillien houde', 'mount royal', 'mont-royal', 'pagnuelo'],
+    keywords: ['canada', 'canadá', 'montreal', 'camillien houde', 'mount royal', 'mont-royal', 'pagnuelo'],
   },
   {
     id: 'endurance-climb',
     name: 'Endurance Climb',
     subtitle: 'Ascenso Maratón de 9 Secciones (2642m D+)',
     regionLabel: 'Alta Montaña · MyWhoosh',
-    ...metaFor('endurance-climb', [[25.002, -71.042], [25.062, -70.962]]),
+    ...metaFor('endurance-climb', [[24.99595, -71.041781], [25.068039, -70.962219]]),
     imageUrl: '/maps/mywhoosh/endurance-climb.webp',
     backgroundColor: '#5b6b56',
     accentColor: '#a855f7',
@@ -619,8 +632,11 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     maxElevationM: 2642,
     mywhooshInfoId: 7,
     mywhooshInfoUrl: 'https://mywhooshinfo.com/routes/world/7',
-    routes: ['Endurance Climb', 'Endurance 15', 'Endurance 30'],
-    landmarks: [{ name: 'Cima Section 9/9', lat: 25.051, lon: -70.978, eleM: 2642 }],
+    routes: ['Endurance Climb', 'SRC women Endurance Climb', 'SRC men'],
+    landmarks: [
+      { name: 'Inicio Base Costera', lat: 25.0594, lon: -71.0187 },
+      { name: 'Cima Section 9/9', lat: 25.0075, lon: -70.9757, eleM: 2642 },
+    ],
     keywords: ['endurance climb', 'endurance 15', 'endurance 30'],
   },
   {
@@ -628,16 +644,19 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'Supertri',
     subtitle: 'Circuito Urbano de Triatlón e Indoor Racing',
     regionLabel: 'Supertri E · MyWhoosh',
-    ...metaFor('supertri', [[24.398, 54.328], [24.432, 54.372]]),
+    ...metaFor('supertri', [[24.407701, 54.341984], [24.422299, 54.358016]]),
     imageUrl: '/maps/mywhoosh/supertri.webp',
     backgroundColor: '#0b2638',
     accentColor: '#06b6d4',
     routesCount: 2,
-    maxElevationM: 57,
+    maxElevationM: 20,
     mywhooshInfoId: 14,
     mywhooshInfoUrl: 'https://mywhooshinfo.com/routes/world/14',
-    routes: ['Supertri E Lap', 'Supertri Bike Course'],
-    landmarks: [{ name: 'Supertri E Lap', lat: 24.421, lon: 54.351, eleM: 20 }],
+    routes: ['Ride', 'Run', 'Supertri E Lap'],
+    landmarks: [
+      { name: 'Supertri E Lap', lat: 24.4144, lon: 54.35, eleM: 20 },
+      { name: 'Run Hairpin', lat: 24.417, lon: 54.3514 },
+    ],
     keywords: ['supertri', 'supertri e'],
   },
   {
@@ -645,16 +664,20 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'UCI 2024',
     subtitle: 'Campeonato Mundial UCI Cycling Esports 2024',
     regionLabel: 'UCI Esports 2024 · Abu Dabi',
-    ...metaFor('uci-2024', [[24.44, 54.35], [24.49, 54.42]]),
+    ...metaFor('uci-2024', [[24.428837, 54.345276], [24.501152, 54.424724]]),
     imageUrl: '/maps/mywhoosh/uci-2024.webp',
-    backgroundColor: '#0b2638',
+    backgroundColor: '#364d24',
     accentColor: '#38bdf8',
     routesCount: 3,
-    maxElevationM: 432,
-    mywhooshInfoId: 8,
-    mywhooshInfoUrl: 'https://mywhooshinfo.com/routes/world/8',
-    routes: ['UCI 2024 Stage 1', 'UCI 2024 Stage 2', 'UCI 2024 Stage 3'],
-    landmarks: [{ name: 'Stage 2 Climb', lat: 24.476, lon: 54.376, eleM: 203 }],
+    maxElevationM: 203,
+    mywhooshInfoId: 15,
+    mywhooshInfoUrl: 'https://mywhooshinfo.com/routes/world/15',
+    routes: ['Stage 1', 'Stage 2', 'Stage 3', 'UCI 2024 Stage 1', 'UCI 2024 Stage 2', 'UCI 2024 Stage 3'],
+    landmarks: [
+      { name: 'Stage 1', lat: 24.4737, lon: 54.3516, eleM: 7 },
+      { name: 'Stage 3', lat: 24.4679, lon: 54.3834, eleM: 68 },
+      { name: 'Stage 2', lat: 24.4679, lon: 54.4104, eleM: 203 },
+    ],
     keywords: ['uci 2024', 'uci cycling esports 2024', 'uci esports 2024'],
   },
   {
@@ -662,33 +685,40 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'UCI 2025',
     subtitle: 'Campeonato Mundial UCI Cycling Esports 2025',
     regionLabel: 'UCI Esports 2025 · Abu Dabi',
-    ...metaFor('uci-2025', [[24.5, 54.4], [24.55, 54.47]]),
+    ...metaFor('uci-2025', [[24.477212, 54.382483], [24.57277, 54.487517]]),
     imageUrl: '/maps/mywhoosh/uci-2025.webp',
     backgroundColor: '#566733',
     accentColor: '#38bdf8',
     routesCount: 3,
     maxElevationM: 751,
-    mywhooshInfoId: 15,
-    mywhooshInfoUrl: 'https://mywhooshinfo.com/routes/world/15',
-    routes: ["The Mountain's Verdict", "Sprinter's Paradise", 'UCI 2025 Stage 1'],
-    landmarks: [{ name: "The Mountain's Verdict", lat: 24.536, lon: 54.454, eleM: 751 }],
-    keywords: ['uci 2025', 'uci esports 2025', "mountain's verdict", "sprinter's paradise"],
+    mywhooshInfoId: 8,
+    mywhooshInfoUrl: 'https://mywhooshinfo.com/routes/world/8',
+    routes: ["The Sprinter's Paradise", "The Mountain's Verdict", "The Puncher's Playground"],
+    landmarks: [
+      { name: "The Puncher's Playground", lat: 24.546, lon: 54.4171, eleM: 299 },
+      { name: "The Sprinter's Paradise", lat: 24.5532, lon: 54.4564, eleM: 26 },
+      { name: "The Mountain's Verdict", lat: 24.504, lon: 54.435, eleM: 751 },
+    ],
+    keywords: ['uci 2025', 'uci esports 2025', "mountain's verdict", "sprinter's paradise", "puncher's playground"],
   },
   {
     id: 'uci-2026',
     name: 'UCI 2026',
     subtitle: 'Pearl District & Horizon District (UCI 2026)',
     regionLabel: 'UCI Esports 2026 · MyWhoosh',
-    ...metaFor('uci-2026', [[24.56, 54.45], [24.61, 54.52]]),
+    ...metaFor('uci-2026', [[24.555184, 54.452215], [24.614809, 54.517785]]),
     imageUrl: '/maps/mywhoosh/uci-2026.webp',
-    backgroundColor: '#0b2638',
+    backgroundColor: '#0f3d47',
     accentColor: '#38bdf8',
     routesCount: 3,
-    maxElevationM: 142,
+    maxElevationM: 98,
     mywhooshInfoId: 21,
     mywhooshInfoUrl: 'https://mywhooshinfo.com/routes/world/21',
-    routes: ['Pearl District', 'Horizon District', 'UCI 2026 Stage 3'],
-    landmarks: [{ name: 'Pearl District', lat: 24.596, lon: 54.473, eleM: 98 }],
+    routes: ['Stage 1', 'Stage 2', 'Stage 2 - Climb', 'Pearl District', 'Horizon District'],
+    landmarks: [
+      { name: 'Stage 1 · Pearl District', lat: 24.5969, lon: 54.4693, eleM: 98 },
+      { name: 'Stage 2 · Horizon District', lat: 24.5802, lon: 54.4922, eleM: 44 },
+    ],
     keywords: ['uci 2026', 'uci esports 2026', 'pearl district', 'horizon district'],
   },
   {
@@ -946,7 +976,7 @@ function evalPointQuantilesM(
   const sin = Math.sin(sol.thetaRad);
   const dists: number[] = [];
   for (const [la, lo] of sampleCoords) {
-    const p = toLocalXY(la, lo, net.refLat, net.refLon);
+    const p = toLocalXY(la, lo, sol.srcLat, sol.srcLon);
     const px = (p.x - sol.cX) * cos - (p.y - sol.cY) * sin + sol.dx;
     const py = (p.x - sol.cX) * sin + (p.y - sol.cY) * cos + sol.dy;
     let bestD2 = Infinity;
@@ -974,6 +1004,8 @@ interface RigidSolution {
   dy: number;
   cX: number;
   cY: number;
+  srcLat: number;
+  srcLon: number;
 }
 
 function solveRigidForNetwork(
@@ -984,8 +1016,17 @@ function solveRigidForNetwork(
 ): RigidSolution | null {
   if (sampleCoords.length < 3 || net.segs.length === 0) return null;
 
-  // Convert sample points into local meter frame around their own centroid
-  const rawPts = sampleCoords.map(([la, lo]) => toLocalXY(la, lo, net.refLat, net.refLon));
+  // Convert sample points into true local meters around their own centroid latitude so cross-latitude
+  // virtual GPS coordinates (e.g. Abu Qrayn 24.5°N -> Montreal 45.5°N) preserve true 1:1 isometric shape
+  let srcLat = 0;
+  let srcLon = 0;
+  for (const [la, lo] of sampleCoords) {
+    srcLat += la;
+    srcLon += lo;
+  }
+  srcLat /= sampleCoords.length;
+  srcLon /= sampleCoords.length;
+  const rawPts = sampleCoords.map(([la, lo]) => toLocalXY(la, lo, srcLat, srcLon));
   let cX = 0;
   let cY = 0;
   for (const p of rawPts) {
@@ -1008,8 +1049,10 @@ function solveRigidForNetwork(
     if (s.maxY > tMaxY) tMaxY = s.maxY;
   }
 
-  let best: RigidSolution = { rmsM: Infinity, thetaRad: 0, dx: 0, dy: 0, cX, cY };
-  const anglesDeg = testRotations ? [0, 90, -90, 180, -30, 30, -45, 45] : [0];
+  let best: RigidSolution = { rmsM: Infinity, thetaRad: 0, dx: 0, dy: 0, cX, cY, srcLat, srcLon };
+  const anglesDeg = testRotations
+    ? Array.from({ length: 24 }, (_, idx) => idx * 15)
+    : [0];
 
   for (const deg of anglesDeg) {
     const rad = (deg * Math.PI) / 180;
@@ -1110,9 +1153,38 @@ function solveRigidForNetwork(
 
     const rmsM = Math.sqrt(bestMeanSq);
     if (rmsM < best.rmsM) {
-      best = { rmsM, thetaRad: rad, dx: bestDx, dy: bestDy, cX, cY };
+      best = { rmsM, thetaRad: rad, dx: bestDx, dy: bestDy, cX, cY, srcLat, srcLon };
       if (rmsM <= 18) break;
     }
+  }
+
+  // Local angle + translation refinement when rotations are enabled (e.g. -32° Canada or arbitrary offsets)
+  if (testRotations && Number.isFinite(best.rmsM) && best.rmsM > 6) {
+    let bestTheta = best.thetaRad;
+    let bestDx = best.dx;
+    let bestDy = best.dy;
+    let bestMeanSq = best.rmsM * best.rmsM;
+    for (const dDeg of [5, 2, 0.7]) {
+      const dRad = (dDeg * Math.PI) / 180;
+      for (const sgn of [-1, 1]) {
+        const candTheta = bestTheta + sgn * dRad;
+        const c = Math.cos(candTheta);
+        const s = Math.sin(candTheta);
+        const rot = centered.map((p) => ({ x: p.x * c - p.y * s, y: p.x * s + p.y * c }));
+        for (const step of [25, 8, 2]) {
+          for (const [ox, oy] of [[0, 0], [step, 0], [-step, 0], [0, step], [0, -step]]) {
+            const m2 = evalRmsSq(rot, net.segs, bestDx + ox, bestDy + oy, bestMeanSq, clipDistSq);
+            if (m2 < bestMeanSq) {
+              bestMeanSq = m2;
+              bestTheta = candTheta;
+              bestDx += ox;
+              bestDy += oy;
+            }
+          }
+        }
+      }
+    }
+    best = { rmsM: Math.sqrt(bestMeanSq), thetaRad: bestTheta, dx: bestDx, dy: bestDy, cX, cY, srcLat, srcLon };
   }
 
   return Number.isFinite(best.rmsM) ? best : null;
@@ -1126,7 +1198,7 @@ function applyRigidSolution(
   const cos = Math.cos(sol.thetaRad);
   const sin = Math.sin(sol.thetaRad);
   return coords.map(([la, lo]) => {
-    const p = toLocalXY(la, lo, net.refLat, net.refLon);
+    const p = toLocalXY(la, lo, sol.srcLat, sol.srcLon);
     const rx = (p.x - sol.cX) * cos - (p.y - sol.cY) * sin + sol.dx;
     const ry = (p.x - sol.cX) * sin + (p.y - sol.cY) * cos + sol.dy;
     const [outLat, outLon] = fromLocalXY(rx, ry, net.refLat, net.refLon);
@@ -1217,17 +1289,17 @@ export function alignCoordsToMyWhooshWorld(
         dy: 0,
         cX: 0,
         cY: 0,
+        srcLat: net.refLat,
+        srcLon: net.refLon,
       });
-      if (nativeRms <= 34 || nativeQuantiles.p70M <= 28 || world.id === 'hudayriyat') {
+      if (nativeRms <= 34 || nativeQuantiles.p70M <= 28) {
         const res: AlignedMyWhooshTrace = {
           mode: 'native',
           alignedCoords: coords,
           rmsErrorM:
             nativeRms <= 34
               ? Math.round(nativeRms)
-              : nativeQuantiles.p70M <= 28
-                ? Math.round(nativeQuantiles.medianM)
-                : null,
+              : Math.round(nativeQuantiles.medianM),
           rotationDeg: 0,
           isApproximate: false,
         };
@@ -1235,39 +1307,47 @@ export function alignCoordsToMyWhooshWorld(
         return res;
       }
 
-      // If an activity fell inside world.bounds by coincidence yet has shifted geometry (e.g. Free Ride offset), snap cleanly if RMS <= 25m
-      const shiftSol = solveRigidForNetwork(net, sample, false);
-      if (shiftSol && shiftSol.rmsM <= 25 && shiftSol.rmsM < nativeRms * 0.4) {
-        const aligned = applyRigidSolution(coords, net, shiftSol);
-        if (aligned.some((p) => pointInBounds(p[0], p[1], world.bounds, 0.02))) {
-          const res: AlignedMyWhooshTrace = {
-            mode: 'rigid-road-lock',
-            alignedCoords: aligned,
-            rmsErrorM: Number(shiftSol.rmsM.toFixed(1)),
-            rotationDeg: Math.round((shiftSol.thetaRad * 180) / Math.PI),
-            isApproximate: false,
-          };
-          ALIGNMENT_CACHE.set(cacheKey, res);
-          return res;
+      // If an activity fell inside world.bounds by coincidence yet has shifted/rotated geometry, snap cleanly if RMS <= 28m
+      if (sample.length >= 6) {
+        let shiftSol = solveRigidForNetwork(net, sample, false);
+        if (!shiftSol || shiftSol.rmsM > 28) {
+          const rotInBounds = solveRigidForNetwork(net, sample, true);
+          if (rotInBounds && (!shiftSol || rotInBounds.rmsM < shiftSol.rmsM)) {
+            shiftSol = rotInBounds;
+          }
         }
-      }
-
-      // Robust Free Ride pass even when points happen to fall inside world.bounds
-      const robustInBounds = solveRigidForNetwork(net, sample, false, 95 * 95);
-      if (robustInBounds) {
-        const { medianM, p70M } = evalPointQuantilesM(sample, net, robustInBounds);
-        if (medianM <= 16 && p70M <= 28 && medianM < nativeQuantiles.medianM * 0.4) {
-          const aligned = applyRigidSolution(coords, net, robustInBounds);
+        if (shiftSol && shiftSol.rmsM <= 28 && shiftSol.rmsM < nativeRms * 0.45) {
+          const aligned = applyRigidSolution(coords, net, shiftSol);
           if (aligned.some((p) => pointInBounds(p[0], p[1], world.bounds, 0.02))) {
             const res: AlignedMyWhooshTrace = {
               mode: 'rigid-road-lock',
               alignedCoords: aligned,
-              rmsErrorM: Number(medianM.toFixed(1)),
-              rotationDeg: Math.round((robustInBounds.thetaRad * 180) / Math.PI),
+              rmsErrorM: Number(shiftSol.rmsM.toFixed(1)),
+              rotationDeg: Math.round((shiftSol.thetaRad * 180) / Math.PI),
               isApproximate: false,
             };
             ALIGNMENT_CACHE.set(cacheKey, res);
             return res;
+          }
+        }
+
+        // Robust Free Ride pass even when points happen to fall inside world.bounds
+        const robustInBounds = solveRigidForNetwork(net, sample, false, 95 * 95);
+        if (robustInBounds) {
+          const { medianM, p70M } = evalPointQuantilesM(sample, net, robustInBounds);
+          if (medianM <= 16 && p70M <= 28 && medianM < nativeQuantiles.medianM * 0.4) {
+            const aligned = applyRigidSolution(coords, net, robustInBounds);
+            if (aligned.some((p) => pointInBounds(p[0], p[1], world.bounds, 0.02))) {
+              const res: AlignedMyWhooshTrace = {
+                mode: 'rigid-road-lock',
+                alignedCoords: aligned,
+                rmsErrorM: Number(medianM.toFixed(1)),
+                rotationDeg: Math.round((robustInBounds.thetaRad * 180) / Math.PI),
+                isApproximate: false,
+              };
+              ALIGNMENT_CACHE.set(cacheKey, res);
+              return res;
+            }
           }
         }
       }
@@ -1283,8 +1363,8 @@ export function alignCoordsToMyWhooshWorld(
     return res;
   }
 
-  // Track is outside canonical world.bounds: try rigid 2D road-lock alignment if road network exists
-  if (net) {
+  // Track is outside canonical world.bounds: try rigid 2D road-lock alignment if road network exists (>= 6 sample points avoids degenerate 3-pt false locks)
+  if (net && sample.length >= 6) {
     let sol = solveRigidForNetwork(net, sample, false);
     if (!sol || sol.rmsM > 28) {
       const rotSol = solveRigidForNetwork(net, sample, true);
