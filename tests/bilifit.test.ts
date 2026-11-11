@@ -407,10 +407,34 @@ test('MyWhoosh virtual worlds resolve, align (including Free Rides), avoid outdo
     const expectedRatio = ((east - west) * (Math.PI / 180)) / (mercatorY(n) - mercatorY(s));
     const actualRatio = meta.width / meta.height;
     assert.ok(
-      Math.abs(actualRatio - expectedRatio) < 0.03,
+      Math.abs(actualRatio - expectedRatio) < 0.006,
       `Mercator aspect ratio mismatch for ${w.id}: webp=${actualRatio.toFixed(3)} vs displayBounds=${expectedRatio.toFixed(3)}`
     );
+    for (const lm of w.landmarks) {
+      const [dl, dlo] = toWorldDisplayCoord(w, lm.lat, lm.lon);
+      assert.ok(
+        dl >= s && dl <= n && dlo >= west && dlo <= east,
+        `Landmark ${w.id}/${lm.name} out of displayBounds`
+      );
+    }
   }
+
+  // Verificar asignaciones oficiales Grupo A (rotación 90° CW), Grupo B (sin rotación) y corrección swap UCI 2024/2025
+  for (const id of [
+    'hudayriyat', 'alula', 'arabia', 'belgium', 'colombia',
+    'australia', 'california', 'japan', 'mywhoosh-world', 'switzerland', 'france',
+  ]) {
+    assert.equal(getMyWhooshWorldByIdOrName(id)?.mapRotationDeg, 90, `Group A ${id} must use 90° display rotation`);
+  }
+  for (const id of ['bhutan', 'canada', 'endurance-climb', 'supertri', 'uci-2024', 'uci-2025', 'uci-2026', 'bled']) {
+    assert.equal(getMyWhooshWorldByIdOrName(id)?.mapRotationDeg ?? 0, 0, `Group B/schematic ${id} must stay 0°`);
+  }
+  const uci24 = getMyWhooshWorldByIdOrName('uci-2024')!;
+  const uci25 = getMyWhooshWorldByIdOrName('uci-2025')!;
+  assert.equal(uci24.mywhooshInfoId, 15);
+  assert.equal(uci24.maxElevationM, 203);
+  assert.equal(uci25.mywhooshInfoId, 8);
+  assert.equal(uci25.maxElevationM, 751);
 
   // Verificar rotación cartográfica 90° CW de France para coincidir con mywhooshinfo.com
   const franceWorld = getMyWhooshWorldByIdOrName('france')!;
@@ -540,7 +564,7 @@ test('MyWhoosh virtual worlds resolve, align (including Free Rides), avoid outdo
   assert.equal(freeRideAligned.mode, 'rigid-road-lock');
   assert.equal(freeRideAligned.alignedCoords.length, freeRideTrack.length);
 
-  // 5d. Mundo esquemático -> centered dentro de los bounds
+  // 5d. Mundo esquemático / traza degenerada -> centered dentro de los bounds
   const bhutanWorld = getMyWhooshWorldByIdOrName('bhutan')!;
   const centeredAligned = alignCoordsToMyWhooshWorld(bhutanWorld, [
     [43.36, -5.85],
@@ -553,6 +577,31 @@ test('MyWhoosh virtual worlds resolve, align (including Free Rides), avoid outdo
   for (const [lat, lon] of centeredAligned.alignedCoords) {
     assert.ok(lat >= bS && lat <= bN && lon >= bW && lon <= bE, 'Centered track must fit inside Bhutan bounds');
   }
+
+  // 5e. Mundo esquemático sin red viaria (Bled) y alineación cross-latitude + rotación arbitraria en Grupo B (Canada -32°)
+  const bledWorld = getMyWhooshWorldByIdOrName('bled')!;
+  const bledCentered = alignCoordsToMyWhooshWorld(
+    bledWorld,
+    Array.from({ length: 12 }, (_, i) => [43.36 + i * 0.002, -5.85 - i * 0.002] as [number, number])
+  );
+  assert.equal(bledCentered.mode, 'centered');
+
+  const canadaWorld = getMyWhooshWorldByIdOrName('canada')!;
+  const canadaNet = (roadsDataset.worlds as unknown as Record<string, { tracks?: Array<Array<[number, number]>> }>).canada;
+  const canadaTrack = canadaNet.tracks![0];
+  const cOrigin = canadaTrack[0];
+  const cosCan = Math.cos((cOrigin[0] * Math.PI) / 180);
+  const rad32 = (32 * Math.PI) / 180;
+  const canadaAbuQraynShifted = canadaTrack.map(([la, lo]): [number, number] => {
+    const x = (lo - cOrigin[1]) * cosCan;
+    const y = la - cOrigin[0];
+    const rx = x * Math.cos(rad32) - y * Math.sin(rad32);
+    const ry = x * Math.sin(rad32) + y * Math.cos(rad32);
+    return [24.55 + ry, 54.45 + rx / Math.cos((24.55 * Math.PI) / 180)];
+  });
+  const canadaAligned = alignCoordsToMyWhooshWorld(canadaWorld, canadaAbuQraynShifted);
+  assert.equal(canadaAligned.mode, 'rigid-road-lock');
+  assert.ok((canadaAligned.rmsErrorM ?? 99) < 8, `Expected crisp cross-latitude lock for Canada, got RMS ${canadaAligned.rmsErrorM}`);
 
   // 6. FIT virtual MyWhoosh con nombre de archivo genérico + Health Sync CSV con título virtual
   const mwEncoder = new FitEncoder();
