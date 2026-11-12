@@ -16,18 +16,23 @@ export async function register() {
   }
 
   const runCheck = async () => {
-    try {
-      const { runScheduledMyWhooshSyncIfDue } = await import('@/lib/mywhoosh-sync');
-      await runScheduledMyWhooshSyncIfDue();
-    } catch {
-      // Silenciar fallos de red puntuales en el cron en segundo plano
-    }
+    const { ACCOUNT_IDS } = await import('@/lib/accounts');
+    const { runWithAccount } = await import('@/lib/account-context');
 
-    try {
-      const { runScheduledHuaweiSyncIfDue } = await import('@/lib/huawei-sync');
-      await runScheduledHuaweiSyncIfDue();
-    } catch {
-      // Silenciar fallos puntuales de carpeta/Drive en segundo plano
+    for (const account of ACCOUNT_IDS) {
+      try {
+        const { runScheduledMyWhooshSyncIfDue } = await import('@/lib/mywhoosh-sync');
+        await runWithAccount(account, () => runScheduledMyWhooshSyncIfDue());
+      } catch {
+        // Silenciar fallos de red puntuales en el cron en segundo plano
+      }
+
+      try {
+        const { runScheduledHuaweiSyncIfDue } = await import('@/lib/huawei-sync');
+        await runWithAccount(account, () => runScheduledHuaweiSyncIfDue());
+      } catch {
+        // Silenciar fallos puntuales de carpeta/Drive en segundo plano
+      }
     }
   };
 

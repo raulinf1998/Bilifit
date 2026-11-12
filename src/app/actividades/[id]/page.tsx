@@ -26,6 +26,7 @@ import {
 import ActivityMap from '@/components/ActivityMap';
 import { PowerZonesChart, TelemetryChart, ZoneBarsChart } from '@/components/Charts';
 import { SportBadge } from '@/components/SportBadge';
+import { TogetherBadge, TogetherToggleButton } from '@/components/TogetherControl';
 import {
   defaultSubSportForSport,
   formatDistanceKm,
@@ -59,6 +60,8 @@ export default function ActivityDetailPage() {
   const [worldName, setWorldName] = useState('');
   const [gearId, setGearId] = useState('');
   const [rpe, setRpe] = useState(6);
+  const [doneTogether, setDoneTogether] = useState(false);
+  const [togglingTogether, setTogglingTogether] = useState(false);
   const [description, setDescription] = useState('');
 
   // Tabs análisis profundo
@@ -87,6 +90,7 @@ export default function ActivityDetailPage() {
       setWorldName(actRes.activity.worldName ?? '');
       setGearId(actRes.activity.gearId ?? '');
       setRpe(actRes.activity.rpe ?? 6);
+      setDoneTogether(Boolean(actRes.activity.doneTogether));
       setDescription(actRes.activity.description ?? '');
       const distKm = Number(((actRes.activity.distanceMeters || 1000) / 1000).toFixed(2));
       setSegStartKm(0);
@@ -118,6 +122,7 @@ export default function ActivityDetailPage() {
           worldName: sport === 'mywhoosh' || worldName ? worldName || null : null,
           gearId: gearId || null,
           rpe,
+          doneTogether,
           description,
         }),
       });
@@ -132,6 +137,26 @@ export default function ActivityDetailPage() {
       setSaveError('Error de conexión al guardar los cambios');
     } finally {
       setSavingEdit(false);
+    }
+  }
+
+  async function handleToggleTogether() {
+    if (!activity) return;
+    const nextVal = !Boolean(activity.doneTogether);
+    setTogglingTogether(true);
+    setActivity((prev) => (prev ? { ...prev, doneTogether: nextVal } : prev));
+    setDoneTogether(nextVal);
+    try {
+      const res = await fetch(`/api/activities/${params.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ doneTogether: nextVal }),
+      });
+      if (!res.ok) {
+        await loadAll();
+      }
+    } finally {
+      setTogglingTogether(false);
     }
   }
 
@@ -230,7 +255,7 @@ export default function ActivityDetailPage() {
   if (!activity) {
     return (
       <div className="space-y-4">
-        <Link href="/actividades" className="inline-flex items-center gap-2 text-sm text-[#fc4c02]">
+        <Link href="/actividades" className="inline-flex items-center gap-2 text-sm text-primary">
           <ArrowLeft className="h-4 w-4" /> Volver al historial
         </Link>
         <div className="card-surface p-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
@@ -269,19 +294,24 @@ export default function ActivityDetailPage() {
         </Link>
 
         <div className="flex flex-wrap items-center gap-2">
+          <TogetherToggleButton
+            active={Boolean(activity.doneTogether)}
+            busy={togglingTogether}
+            onClick={handleToggleTogether}
+          />
           {hasGps && (
             <a
               href={`/api/activities/${activity.id}?format=gpx`}
-              className="inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold hover:bg-slate-500/10"
+              className="inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold hover:bg-sunken"
               style={{ borderColor: 'var(--border-subtle)' }}
             >
-              <Download className="h-3.5 w-3.5 text-emerald-400" /> Descargar GPX
+              <Download className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" /> Descargar GPX
             </a>
           )}
           <button
             type="button"
             onClick={() => setEditing((v) => !v)}
-            className="rounded-xl border px-3.5 py-2 text-xs font-semibold hover:bg-slate-500/10"
+            className="rounded-xl border px-3.5 py-2 text-xs font-semibold hover:bg-sunken"
             style={{ borderColor: 'var(--border-subtle)' }}
           >
             {editing ? 'Cerrar edición' : 'Editar'}
@@ -289,7 +319,7 @@ export default function ActivityDetailPage() {
           <button
             type="button"
             onClick={handleDelete}
-            className="inline-flex items-center gap-1 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3.5 py-2 text-xs font-semibold text-rose-400 hover:bg-rose-500/20"
+            className="inline-flex items-center gap-1 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3.5 py-2 text-xs font-semibold text-rose-700 dark:text-rose-400 hover:bg-rose-500/20"
           >
             <Trash2 className="h-3.5 w-3.5" /> Eliminar
           </button>
@@ -300,14 +330,15 @@ export default function ActivityDetailPage() {
       <div className="card-surface p-6 space-y-4">
         <div className="flex flex-wrap items-center gap-2">
           <SportBadge sport={activity.sport} subSport={activity.subSport} />
+          {activity.doneTogether && <TogetherBadge />}
           {(activity.worldName || worldInfo) && (
-            <span className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+            <span className="inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/30">
               <Globe className="h-3 w-3" />
               Mundo Virtual: {worldInfo?.world.name ?? activity.worldName}
             </span>
           )}
           {extras.deviceName && (
-            <span className="text-xs px-2.5 py-0.5 rounded-full bg-slate-500/15 text-slate-300 border border-slate-500/30">
+            <span className="text-xs px-2.5 py-0.5 rounded-full bg-sunken text-ink2 border border-line">
               {extras.deviceName}
             </span>
           )}
@@ -396,7 +427,14 @@ export default function ActivityDetailPage() {
                 max={10}
                 value={rpe}
                 onChange={(e) => setRpe(Number(e.target.value))}
-                className="w-full accent-[#fc4c02] mt-2"
+                className="w-full accent-primary mt-2"
+              />
+            </div>
+            <div className="flex items-end pb-1">
+              <TogetherToggleButton
+                compact
+                active={doneTogether}
+                onClick={() => setDoneTogether((v) => !v)}
               />
             </div>
             <div className="sm:col-span-2">
@@ -438,7 +476,7 @@ export default function ActivityDetailPage() {
               <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 {isPaceSport ? 'Ritmo medio' : 'Vel. media'}
               </div>
-              <div className="text-lg font-bold tabular-nums text-[#fc4c02]">
+              <div className="text-lg font-bold tabular-nums text-primary">
                 {isPaceSport ? formatPaceMinKm(activity.avgSpeedMs) : formatSpeedKmh(activity.avgSpeedMs)}
               </div>
             </div>
@@ -514,14 +552,14 @@ export default function ActivityDetailPage() {
           {typeof extras.avgTemp === 'number' && (
             <div className="card-elevated p-3">
               <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Temperatura</div>
-              <div className="text-lg font-bold tabular-nums text-amber-300">
+              <div className="text-lg font-bold tabular-nums text-amber-700 dark:text-amber-300">
                 {extras.avgTemp} °C
               </div>
             </div>
           )}
           <div className="card-elevated p-3">
             <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Carga (TSS)</div>
-            <div className="text-lg font-bold tabular-nums text-[#fc4c02]">{activity.tss}</div>
+            <div className="text-lg font-bold tabular-nums text-primary">{activity.tss}</div>
           </div>
           {typeof activity.calories === 'number' && activity.calories > 0 && (
             <div className="card-elevated p-3">
@@ -558,7 +596,7 @@ export default function ActivityDetailPage() {
               <button
                 type="button"
                 onClick={() => setHighlightPolyline(null)}
-                className="text-xs px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                className="text-xs px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
               >
                 Limpiar resaltado de segmento
               </button>
@@ -609,14 +647,14 @@ export default function ActivityDetailPage() {
                 type="button"
                 disabled={segBusy}
                 onClick={handleAutoDetectClimbs}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 px-3 py-1.5 text-xs font-semibold hover:bg-emerald-500/25 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 px-3 py-1.5 text-xs font-semibold hover:bg-emerald-500/25 disabled:opacity-50"
               >
                 <Sparkles className="h-3.5 w-3.5" /> Auto-detectar subidas
               </button>
               <button
                 type="button"
                 onClick={() => setShowSegmentCreator((v) => !v)}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-[#fc4c02]/15 text-[#fc4c02] border border-[#fc4c02]/30 px-3 py-1.5 text-xs font-semibold hover:bg-[#fc4c02]/25"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-primary/15 text-primary border border-primary/30 px-3 py-1.5 text-xs font-semibold hover:bg-primary/25"
               >
                 <Plus className="h-3.5 w-3.5" /> Crear segmento
               </button>
@@ -624,7 +662,7 @@ export default function ActivityDetailPage() {
           </div>
 
           {segStatus && (
-            <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3.5 py-2 text-xs text-cyan-300">
+            <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3.5 py-2 text-xs text-cyan-700 dark:text-cyan-300">
               {segStatus}
             </div>
           )}
@@ -664,7 +702,7 @@ export default function ActivityDetailPage() {
                 <button
                   type="submit"
                   disabled={segBusy}
-                  className="w-full rounded-lg bg-[#fc4c02] hover:bg-[#e04300] px-3 py-1.5 text-xs font-semibold text-white"
+                  className="w-full rounded-lg bg-primary hover:bg-primaryhover px-3 py-1.5 text-xs font-semibold text-onprimary"
                 >
                   Guardar y buscar pasadas
                 </button>
@@ -684,7 +722,7 @@ export default function ActivityDetailPage() {
                     setSegStartKm(v);
                     if (segEndKm <= v + 0.1) setSegEndKm(Math.min(maxKm, Number((v + 0.2).toFixed(2))));
                   }}
-                  className="w-full accent-[#fc4c02]"
+                  className="w-full accent-primary"
                 />
               </div>
               <div className="sm:col-span-2">
@@ -719,16 +757,16 @@ export default function ActivityDetailPage() {
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       {ef.prRank === 1 && (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/40">
                           <Award className="h-3 w-3" /> PR #1
                         </span>
                       )}
                       {ef.prRank && ef.prRank > 1 && (
-                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-300">
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-sunken text-ink2">
                           #{ef.prRank} tiempo histórico{ef.prDeltaSec ? ` (+${ef.prDeltaSec}s)` : ''}
                         </span>
                       )}
-                      <Link href={`/segmentos?id=${ef.segmentId}`} className="font-semibold text-sm hover:text-amber-300 underline-offset-2 hover:underline">
+                      <Link href={`/segmentos?id=${ef.segmentId}`} className="font-semibold text-sm hover:text-amber-700 dark:hover:text-amber-300 underline-offset-2 hover:underline">
                         {ef.segmentName ?? 'Segmento'}
                       </Link>
                     </div>
@@ -743,7 +781,7 @@ export default function ActivityDetailPage() {
                   <div className="flex flex-wrap items-center gap-4 text-xs tabular-nums">
                     <div>
                       <div style={{ color: 'var(--text-muted)' }}>Tiempo</div>
-                      <div className="font-bold text-amber-300">{formatDurationClock(ef.durationSec)}</div>
+                      <div className="font-bold text-amber-700 dark:text-amber-300">{formatDurationClock(ef.durationSec)}</div>
                     </div>
                     <div>
                       <div style={{ color: 'var(--text-muted)' }}>{isPaceSport ? 'Ritmo' : 'Velocidad'}</div>
@@ -799,7 +837,7 @@ export default function ActivityDetailPage() {
                   type="button"
                   onClick={() => setActiveTab(t.id as AnalysisTab)}
                   className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors ${
-                    active ? 'bg-[#fc4c02] text-white' : 'hover:bg-slate-500/10'
+                    active ? 'bg-primary text-onprimary' : 'hover:bg-sunken'
                   }`}
                 >
                   <Icon className="h-3.5 w-3.5" />
@@ -821,14 +859,14 @@ export default function ActivityDetailPage() {
                     <button
                       type="button"
                       onClick={() => setSplitView('km')}
-                      className={`px-3 py-1 ${splitView === 'km' ? 'bg-[#fc4c02] text-white' : ''}`}
+                      className={`px-3 py-1 ${splitView === 'km' ? 'bg-primary text-onprimary' : ''}`}
                     >
                       Splits 1 km ({activity.kmSplits?.length ?? 0})
                     </button>
                     <button
                       type="button"
                       onClick={() => setSplitView('laps')}
-                      className={`px-3 py-1 ${splitView === 'laps' ? 'bg-[#fc4c02] text-white' : ''}`}
+                      className={`px-3 py-1 ${splitView === 'laps' ? 'bg-primary text-onprimary' : ''}`}
                     >
                       Vueltas / Laps ({activity.laps.length})
                     </button>
@@ -857,11 +895,11 @@ export default function ActivityDetailPage() {
                         const spSpeed = sp.avgSpeedMs ?? 0;
                         const barPct = Math.min(100, Math.max(18, Math.round((spSpeed / bestSplitSpeed) * 100)));
                         return (
-                          <tr key={sp.lapNumber} className="tabular-nums hover:bg-slate-500/5">
+                          <tr key={sp.lapNumber} className="tabular-nums hover:bg-sunken/50">
                             <td className="py-2 px-2 font-bold">
                               {sp.distanceMeters >= 950 ? `Km ${sp.lapNumber}` : `${(sp.distanceMeters / 1000).toFixed(2)} km`}
                             </td>
-                            <td className="py-2 px-2 font-semibold text-[#fc4c02]">
+                            <td className="py-2 px-2 font-semibold text-primary">
                               {sp.avgSpeedMs
                                 ? isPaceSport
                                   ? formatPaceMinKm(sp.avgSpeedMs)
@@ -869,13 +907,13 @@ export default function ActivityDetailPage() {
                                 : '--'}
                             </td>
                             {isPaceSport && (
-                              <td className="py-2 px-2 text-amber-300">
+                              <td className="py-2 px-2 text-amber-700 dark:text-amber-300">
                                 {sp.gapSpeedMs ? formatPaceMinKm(sp.gapSpeedMs) : '--'}
                               </td>
                             )}
                             <td className="py-2 px-2">
                               <div className="h-2 rounded-full overflow-hidden" style={{ background: 'var(--bg-muted)' }}>
-                                <div className="h-full rounded-full bg-[#fc4c02]" style={{ width: `${barPct}%` }} />
+                                <div className="h-full rounded-full bg-primary" style={{ width: `${barPct}%` }} />
                               </div>
                             </td>
                             <td className="py-2 px-2">
@@ -914,11 +952,11 @@ export default function ActivityDetailPage() {
                     </thead>
                     <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
                       {activity.laps.map((lap) => (
-                        <tr key={lap.lapNumber} className="tabular-nums hover:bg-slate-500/5">
+                        <tr key={lap.lapNumber} className="tabular-nums hover:bg-sunken/50">
                           <td className="py-2 px-2 font-bold">{lap.name ?? `Lap ${lap.lapNumber}`}</td>
                           <td className="py-2 px-2">{(lap.distanceMeters / 1000).toFixed(2)} km</td>
                           <td className="py-2 px-2">{formatDurationClock(lap.durationSec)}</td>
-                          <td className="py-2 px-2 font-semibold text-[#fc4c02]">
+                          <td className="py-2 px-2 font-semibold text-primary">
                             {lap.avgSpeedMs
                               ? isPaceSport
                                 ? formatPaceMinKm(lap.avgSpeedMs)
@@ -948,14 +986,14 @@ export default function ActivityDetailPage() {
               {activity.bestEfforts && activity.bestEfforts.length > 0 && (
                 <div className="space-y-3">
                   <h3 className="text-sm font-bold flex items-center gap-2">
-                    <Flame className="h-4 w-4 text-[#fc4c02]" />
+                    <Flame className="h-4 w-4 text-primary" />
                     Mejores Esfuerzos en Distancia y Escalada
                   </h3>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     {activity.bestEfforts.map((be) => (
                       <div key={be.label} className="card-elevated p-3 space-y-1">
                         <div className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>{be.label}</div>
-                        <div className="text-base font-bold text-[#fc4c02] tabular-nums">
+                        <div className="text-base font-bold text-primary tabular-nums">
                           {formatDurationClock(be.durationSec)}
                         </div>
                         <div className="text-[11px] tabular-nums" style={{ color: 'var(--text-secondary)' }}>
@@ -1007,7 +1045,7 @@ export default function ActivityDetailPage() {
               {activity.paceZones && activity.paceZones.length > 0 && (
                 <div className="space-y-3">
                   <h3 className="text-sm font-bold flex items-center gap-2">
-                    <ActivityIcon className="h-4 w-4 text-[#fc4c02]" />
+                    <ActivityIcon className="h-4 w-4 text-primary" />
                     Zonas de Ritmo (Carrera / Trail)
                   </h3>
                   <ZoneBarsChart zones={activity.paceZones} />
@@ -1040,7 +1078,7 @@ export default function ActivityDetailPage() {
                       <div key={tb.type} className="card-elevated p-4 space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-sm">{tb.label}</span>
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-slate-500/15">
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-sunken">
                             {(tb.distanceMeters / 1000).toFixed(2)} km
                           </span>
                         </div>
@@ -1051,7 +1089,7 @@ export default function ActivityDetailPage() {
                           </div>
                           <div>
                             <div style={{ color: 'var(--text-muted)' }}>{isPaceSport ? 'Ritmo' : 'Vel.'}</div>
-                            <div className="font-semibold text-[#fc4c02]">
+                            <div className="font-semibold text-primary">
                               {tb.avgSpeedMs
                                 ? isPaceSport
                                   ? formatPaceMinKm(tb.avgSpeedMs)
@@ -1089,7 +1127,7 @@ export default function ActivityDetailPage() {
                 {typeof extras.avgTemp === 'number' && (
                   <div className="card-elevated p-3.5">
                     <div className="text-[11px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
-                      <Thermometer className="h-3.5 w-3.5 text-amber-300" /> Temperatura
+                      <Thermometer className="h-3.5 w-3.5 text-amber-700 dark:text-amber-300" /> Temperatura
                     </div>
                     <div className="text-lg font-bold tabular-nums mt-1">
                       {extras.avgTemp}°C ({extras.minTemp ?? '--'}° / {extras.maxTemp ?? '--'}°)

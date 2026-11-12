@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getAccountFromRequest, runWithAccount } from '@/lib/account-context';
+import { ACCOUNT_COOKIE_NAME, normalizeAccountId } from '@/lib/accounts';
 import { exchangeGoogleDriveCode } from '@/lib/huawei-sync';
 
 function baseUrlFromReq(req: NextRequest): string {
@@ -22,10 +24,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${base}/strava?huawei_error=${encodeURIComponent('invalid_oauth_state')}`);
   }
 
+  const statePrefix = state.includes('.') ? state.split('.')[0] : null;
+  const targetAccount = normalizeAccountId(statePrefix) ?? getAccountFromRequest(req);
+
   try {
-    await exchangeGoogleDriveCode(code, base);
+    await runWithAccount(targetAccount, () => exchangeGoogleDriveCode(code, base));
     const res = NextResponse.redirect(`${base}/strava?huawei_connected=1`);
     res.cookies.delete('bilifit_google_oauth_state');
+    res.cookies.set(ACCOUNT_COOKIE_NAME, targetAccount, {
+      path: '/',
+      maxAge: 31536000,
+      sameSite: 'lax',
+    });
     return res;
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'google_oauth_failed';

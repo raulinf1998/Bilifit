@@ -96,7 +96,7 @@ function SegmentsContent() {
               type="button"
               onClick={() => setSportFilter(f.id as 'all' | SportType)}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors ${
-                sportFilter === f.id ? 'bg-[#fc4c02] text-white' : 'border hover:bg-slate-500/10'
+                sportFilter === f.id ? 'bg-primary text-onprimary' : 'border hover:bg-sunken'
               }`}
               style={sportFilter !== f.id ? { borderColor: 'var(--border-subtle)' } : undefined}
             >
@@ -123,12 +123,12 @@ function SegmentsContent() {
                   type="button"
                   onClick={() => setSelectedId(seg.id)}
                   className={`w-full text-left card-surface p-4 space-y-2 transition-all ${
-                    active ? 'border-amber-400 ring-1 ring-amber-400/40' : 'hover:border-slate-600'
+                    active ? 'border-amber-500 ring-1 ring-amber-500/40' : 'hover:border-line2'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <SportBadge sport={seg.sport} />
-                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300">
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300">
                       {CATEGORY_LABELS[seg.category]}
                     </span>
                   </div>
@@ -137,7 +137,7 @@ function SegmentsContent() {
                     <span>
                       {(seg.distanceMeters / 1000).toFixed(2)} km · +{seg.elevationGain} m ({seg.avgGradePct}%)
                     </span>
-                    <span className="font-semibold text-amber-300">
+                    <span className="font-semibold text-amber-700 dark:text-amber-300">
                       {seg.effortCount ?? 0} pasadas · PR {seg.bestTimeSec ? formatDurationClock(seg.bestTimeSec) : '--'}
                     </span>
                   </div>
@@ -156,7 +156,7 @@ function SegmentsContent() {
                   <div>
                     <div className="flex flex-wrap items-center gap-2 mb-1">
                       <SportBadge sport={selectedSegment.sport} />
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300">
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300">
                         {CATEGORY_LABELS[selectedSegment.category]}
                       </span>
                     </div>
@@ -165,7 +165,7 @@ function SegmentsContent() {
                   <button
                     type="button"
                     onClick={() => handleDeleteSegment(selectedSegment.id)}
-                    className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20"
+                    className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-400 hover:bg-rose-500/20"
                   >
                     <Trash2 className="h-3.5 w-3.5" /> Eliminar
                   </button>
@@ -178,7 +178,7 @@ function SegmentsContent() {
                   </div>
                   <div className="card-elevated p-3">
                     <div style={{ color: 'var(--text-muted)' }}>Desnivel +</div>
-                    <div className="text-base font-bold text-emerald-400 mt-0.5">+{selectedSegment.elevationGain} m</div>
+                    <div className="text-base font-bold text-emerald-700 dark:text-emerald-400 mt-0.5">+{selectedSegment.elevationGain} m</div>
                   </div>
                   <div className="card-elevated p-3">
                     <div style={{ color: 'var(--text-muted)' }}>Pendiente media</div>
@@ -186,7 +186,7 @@ function SegmentsContent() {
                   </div>
                   <div className="card-elevated p-3">
                     <div style={{ color: 'var(--text-muted)' }}>Mejor marca (PR)</div>
-                    <div className="text-base font-bold text-amber-300 mt-0.5">
+                    <div className="text-base font-bold text-amber-700 dark:text-amber-300 mt-0.5">
                       {efforts[0] ? formatDurationClock(efforts[0].durationSec) : '--'}
                     </div>
                   </div>
@@ -229,10 +229,10 @@ function SegmentsContent() {
                       </thead>
                       <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
                         {efforts.map((ef, idx) => (
-                          <tr key={ef.id} className="tabular-nums hover:bg-slate-500/5">
+                          <tr key={ef.id} className="tabular-nums hover:bg-sunken/50">
                             <td className="py-2.5 px-2 font-bold">
                               {idx === 0 ? (
-                                <span className="inline-flex items-center gap-1 text-amber-300">
+                                <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
                                   <Award className="h-3.5 w-3.5" /> 1
                                 </span>
                               ) : (
@@ -240,7 +240,7 @@ function SegmentsContent() {
                               )}
                             </td>
                             <td className="py-2.5 px-2">
-                              <Link href={`/actividades/${ef.activityId}`} className="font-medium hover:text-[#fc4c02] hover:underline">
+                              <Link href={`/actividades/${ef.activityId}`} className="font-medium hover:text-primary hover:underline">
                                 {ef.activityTitle ?? 'Actividad'}
                               </Link>
                               <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -253,7 +253,7 @@ function SegmentsContent() {
                                   : '--'}
                               </div>
                             </td>
-                            <td className="py-2.5 px-2 font-bold text-amber-300">
+                            <td className="py-2.5 px-2 font-bold text-amber-700 dark:text-amber-300">
                               {formatDurationClock(ef.durationSec)}
                             </td>
                             <td className="py-2.5 px-2 font-semibold">

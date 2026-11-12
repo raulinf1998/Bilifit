@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 import net from 'node:net';
+import { currentAccountId } from '@/lib/account-context';
+import type { AccountId } from '@/lib/accounts';
 import { decryptSecret, encryptSecret } from '@/lib/crypto';
 import {
   createActivity,
@@ -58,7 +60,7 @@ export interface MyWhooshRemoteActivity {
   durationSec: number | null;
 }
 
-let inFlightSync: Promise<MyWhooshSyncResult> | null = null;
+const inFlightSyncByAccount = new Map<AccountId, Promise<MyWhooshSyncResult>>();
 
 function ensureMyWhooshConfigRow(): MyWhooshDbRow {
   const db = getDb();
@@ -95,6 +97,9 @@ export function getMyWhooshEnvCredentials(): {
   autoSync: boolean;
   intervalMin: number | null;
 } {
+  if (currentAccountId() !== 'raul') {
+    return { email: null, password: null, autoSync: false, intervalMin: null };
+  }
   const email = process.env.MYWHOOSH_EMAIL?.trim() || process.env.MYWHOOSH_USERNAME?.trim() || null;
   const password = process.env.MYWHOOSH_PASSWORD?.trim() || null;
   const autoSyncRaw = process.env.MYWHOOSH_AUTO_SYNC?.trim().toLowerCase();
@@ -785,8 +790,10 @@ export async function syncMyWhooshActivities(
     fetchImpl?: FetchLike;
   } = {}
 ): Promise<MyWhooshSyncResult> {
-  if (inFlightSync) {
-    return inFlightSync;
+  const account = currentAccountId();
+  const existingFlight = inFlightSyncByAccount.get(account);
+  if (existingFlight) {
+    return existingFlight;
   }
 
   const run = async (): Promise<MyWhooshSyncResult> => {
@@ -1043,14 +1050,16 @@ export async function syncMyWhooshActivities(
     }
   };
 
-  inFlightSync = run().finally(() => {
-    inFlightSync = null;
+  const promise = run().finally(() => {
+    inFlightSyncByAccount.delete(account);
   });
-  return inFlightSync;
+  inFlightSyncByAccount.set(account, promise);
+  return promise;
 }
 
 export async function runScheduledMyWhooshSyncIfDue(): Promise<boolean> {
-  if (inFlightSync) return false;
+  const account = currentAccountId();
+  if (inFlightSyncByAccount.has(account)) return false;
   try {
     const status = getMyWhooshStatus();
     if (!status.connected || !status.autoSyncEnabled || status.syncInProgress) return false;

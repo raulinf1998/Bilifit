@@ -48,7 +48,7 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2.5">
-          <Settings className="h-6 w-6 text-[#fc4c02]" />
+          <Settings className="h-6 w-6 text-primary" />
           Ajustes Fisiológicos del Atleta
         </h1>
         <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
@@ -57,7 +57,7 @@ export default function SettingsPage() {
       </div>
 
       {saved && (
-        <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3.5 text-sm text-emerald-300 flex items-center gap-2">
+        <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3.5 text-sm text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
           <CheckCircle2 className="h-4 w-4" /> Perfil fisiológico guardado correctamente.
         </div>
       )}
@@ -162,7 +162,7 @@ export default function SettingsPage() {
           <div className="flex justify-end pt-2">
             <button
               type="submit"
-              className="inline-flex items-center gap-2 rounded-xl bg-[#fc4c02] hover:bg-[#e54400] px-5 py-2.5 text-sm font-semibold text-white"
+              className="inline-flex items-center gap-2 rounded-xl bg-primary hover:bg-primaryhover px-5 py-2.5 text-sm font-semibold text-onprimary"
             >
               <Save className="h-4 w-4" /> Guardar Perfil
             </button>

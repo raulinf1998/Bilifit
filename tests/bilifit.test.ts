@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { NextRequest } from 'next/server';
 import JSZip from 'jszip';
 import sharp from 'sharp';
 import { FitBaseType, FitEncoder } from 'fit-file-parser/encoder';
@@ -57,16 +58,34 @@ import {
   createActivity,
   createCustomEquipment,
   createSegmentAndMatch,
+  deleteCustomPalette,
   getActivityById,
+  getAppSettings,
   getAthleteProfile,
   getDb,
+  getDbPath,
   getSegmentWithEfforts,
   listActivities,
   listHomeEquipment,
   listSegments,
   toggleHomeEquipment,
   updateActivity,
+  updateAppSettings,
 } from '../src/lib/db';
+import { runWithAccount } from '../src/lib/account-context';
+import { ACCOUNT_COOKIE_NAME, normalizeAccountId } from '../src/lib/accounts';
+import { generateDarkPaletteColors } from '../src/lib/theme-palettes';
+import { SETTINGS_SYNC_PROTOCOL, THEMES } from '../src/lib/themes';
+import { GET as getSettingsRoute, PUT as putSettingsRoute } from '../src/app/api/settings/route';
+import {
+  DELETE as deletePaletteRoute,
+  PUT as putPaletteRoute,
+} from '../src/app/api/settings/custom-palettes/[id]/route';
+import { GET as getActivitiesRoute, POST as postActivitiesRoute } from '../src/app/api/activities/route';
+import { PATCH as patchActivityRoute } from '../src/app/api/activities/[id]/route';
+import { GET as getProfileRoute } from '../src/app/api/profile/route';
+import { GET as getHuaweiGoogleAuthRoute } from '../src/app/api/huawei/google/auth/route';
+import { GET as getStravaAuthRoute } from '../src/app/api/strava/auth/route';
 import {
   calculateMinettiGapFactor,
   computeBestEfforts,
@@ -107,9 +126,12 @@ import { mapStravaSport } from '../src/lib/strava';
 import { DARK_MAP_ATTRIBUTION, DARK_MAP_BACKGROUND, DARK_MAP_STYLE } from '../src/lib/dark-map-style';
 
 test.after(() => {
-  for (const suffix of ['', '-wal', '-shm']) {
-    const f = `${tmpDb}${suffix}`;
-    if (fs.existsSync(f)) fs.unlinkSync(f);
+  const peqDb = getDbPath('pequenaja');
+  for (const base of [tmpDb, peqDb]) {
+    for (const suffix of ['', '-wal', '-shm']) {
+      const f = `${base}${suffix}`;
+      if (fs.existsSync(f)) fs.unlinkSync(f);
+    }
   }
 });
 
@@ -1751,3 +1773,273 @@ test('Caminar (walking) sport classification, analytics, DB backfill, and Oscuro
   backfillMismatchedSubSports(db);
   assert.equal(getActivityById(legacyAsfaltoId)?.subSport, 'Correr');
 });
+
+test('Multi-account profiles, server themes/palettes, doneTogether, and OAuth isolation work end-to-end', async () => {
+  // 1. Account resolution & DB separation
+  assert.equal(normalizeAccountId('raul'), 'raul');
+  assert.equal(normalizeAccountId('pequenaja'), 'pequenaja');
+  assert.equal(normalizeAccountId('unknown'), null);
+  assert.notEqual(getDbPath('raul'), getDbPath('pequenaja'));
+
+  const raulProfile = runWithAccount('raul', () => getAthleteProfile());
+  const peqProfile = runWithAccount('pequenaja', () => getAthleteProfile());
+  assert.equal(raulProfile.name, 'Raúl');
+  assert.equal(peqProfile.name, 'Pequeñaja');
+
+  // Pequeñaja starts clean (no demo activities from Raúl) while still having home equipment catalog
+  const raulActsInitial = runWithAccount('raul', () => listActivities());
+  const peqActsInitial = runWithAccount('pequenaja', () => listActivities());
+  assert.ok(raulActsInitial.length >= 10);
+  assert.equal(peqActsInitial.length, 0);
+  const peqEquipment = runWithAccount('pequenaja', () => listHomeEquipment());
+  assert.ok(peqEquipment.length >= 10);
+
+  // Separate Huawei watch dirs per account
+  const raulHuawei = runWithAccount('raul', () => getHuaweiStatus());
+  const peqHuawei = runWithAccount('pequenaja', () => getHuaweiStatus());
+  assert.equal(raulHuawei.accountId, 'raul');
+  assert.equal(peqHuawei.accountId, 'pequenaja');
+  assert.notEqual(raulHuawei.watchDir, peqHuawei.watchDir);
+
+  // 2. Shared Google OAuth App credentials vs per-account tokens & auto-sync activation
+  // 2a. Credentials entered on Raúl's profile are shared with Pequeñaja automatically
+  runWithAccount('raul', () =>
+    updateHuaweiPreferences({
+      googleClientId: 'raul-shared-client-id',
+      googleClientSecret: 'raul-shared-client-secret',
+    })
+  );
+  const peqInherited = runWithAccount('pequenaja', () => getHuaweiStatus());
+  assert.equal(peqInherited.googleConfigured, true);
+  assert.equal(peqInherited.sharedOAuthAppConfigured, true);
+  assert.equal(peqInherited.googleConnected, false);
+
+  // 2b. Env Google OAuth App credentials work for both accounts with separate tokens
+  process.env.GOOGLE_CLIENT_ID = 'shared-google-client-id';
+  process.env.GOOGLE_CLIENT_SECRET = 'shared-google-client-secret';
+  try {
+    const raulSharedStatus = runWithAccount('raul', () => getHuaweiStatus());
+    const peqSharedStatus = runWithAccount('pequenaja', () => getHuaweiStatus());
+    assert.equal(raulSharedStatus.googleConfigured, true);
+    assert.equal(peqSharedStatus.googleConfigured, true);
+    assert.equal(peqSharedStatus.hasGoogleEnvCredentials, true);
+    assert.equal(peqSharedStatus.sharedOAuthAppConfigured, true);
+
+    // OAuth /auth redirect binds the initiating account inside state (<account>.<hex>)
+    const peqAuthReq = new NextRequest('http://localhost:3000/api/huawei/google/auth', {
+      headers: { cookie: `${ACCOUNT_COOKIE_NAME}=pequenaja` },
+    });
+    const peqAuthRes = await getHuaweiGoogleAuthRoute(peqAuthReq);
+    assert.equal(peqAuthRes.status, 307);
+    const redirectLocation = new URL(peqAuthRes.headers.get('location')!);
+    const oauthState = redirectLocation.searchParams.get('state') || '';
+    assert.ok(oauthState.startsWith('pequenaja.'), `Expected state to carry pequenaja account prefix, got ${oauthState}`);
+
+    // Exchange Google code exclusively on pequenaja -> autoSyncEnabled activates automatically & raul stays disconnected
+    const fakeDriveFetch: FetchLike = async (url) => {
+      const target = typeof url === 'string' ? url : url.toString();
+      if (target.includes('oauth2.googleapis.com/token')) {
+        return new Response(
+          JSON.stringify({
+            access_token: 'peq-access',
+            refresh_token: 'peq-refresh',
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (target.includes('googleapis.com/drive/v3/about')) {
+        return new Response(JSON.stringify({ user: { emailAddress: 'pequenaja@example.com' } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ files: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+
+    const connectedPeq = await runWithAccount('pequenaja', () =>
+      exchangeGoogleDriveCode('dummy-code', 'http://localhost:3000/api/huawei/google/callback', fakeDriveFetch)
+    );
+    assert.equal(connectedPeq.googleConnected, true);
+    assert.equal(connectedPeq.googleAccountEmail, 'pequenaja@example.com');
+    assert.equal(connectedPeq.autoSyncEnabled, true);
+    assert.equal(runWithAccount('raul', () => getHuaweiStatus()).googleConnected, false);
+
+    runWithAccount('pequenaja', () => disconnectGoogleDrive());
+  } finally {
+    delete process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_SECRET;
+  }
+
+  // Strava auth state also carries account prefix when configured
+  process.env.STRAVA_CLIENT_ID = 'strava-shared-id';
+  process.env.STRAVA_CLIENT_SECRET = 'strava-shared-secret';
+  try {
+    const stravaReq = new NextRequest('http://localhost:3000/api/strava/auth', {
+      headers: { cookie: `${ACCOUNT_COOKIE_NAME}=pequenaja` },
+    });
+    const stravaRes = await getStravaAuthRoute(stravaReq);
+    assert.equal(stravaRes.status, 307);
+    const stravaLoc = new URL(stravaRes.headers.get('location')!);
+    assert.ok((stravaLoc.searchParams.get('state') || '').startsWith('pequenaja.'));
+  } finally {
+    delete process.env.STRAVA_CLIENT_ID;
+    delete process.env.STRAVA_CLIENT_SECRET;
+  }
+
+  // 3. Themes, custom palettes & /api/settings* isolation
+  assert.equal(THEMES.length, 8);
+  assert.equal(SETTINGS_SYNC_PROTOCOL, 2);
+
+  const peqHeaders = { cookie: `${ACCOUNT_COOKIE_NAME}=pequenaja` };
+  const raulHeaders = { cookie: `${ACCOUNT_COOKIE_NAME}=raul` };
+
+  const putSettingsReq = new NextRequest('http://localhost:3000/api/settings', {
+    method: 'PUT',
+    headers: { ...peqHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify({ theme: 'lavanda', dark: false }),
+  });
+  const putSettingsRes = await putSettingsRoute(putSettingsReq);
+  assert.equal(putSettingsRes.status, 200);
+  assert.equal(putSettingsRes.headers.get('cache-control')?.includes('no-store'), true);
+  const peqSettingsAfterTheme = (await putSettingsRes.json()) as { theme: string; dark: boolean; settingsVersion: number };
+  assert.equal(peqSettingsAfterTheme.theme, 'lavanda');
+  assert.equal(peqSettingsAfterTheme.dark, false);
+  assert.ok(peqSettingsAfterTheme.settingsVersion >= 1);
+
+  // Raúl's theme remains unaffected & direct updateAppSettings increments version
+  const getRaulSettingsRes = await getSettingsRoute(
+    new NextRequest('http://localhost:3000/api/settings', { headers: raulHeaders })
+  );
+  const raulSettings = (await getRaulSettingsRes.json()) as { theme: string; dark: boolean };
+  assert.equal(raulSettings.theme, 'calido');
+  const raulUpdated = runWithAccount('raul', () => updateAppSettings({ dark: true }));
+  assert.equal(raulUpdated.dark, true);
+  runWithAccount('raul', () => updateAppSettings({ dark: false }));
+
+  // Custom palette upsert + activate + delete via API routes
+  const customLight = {
+    bg: '#FAF6EF',
+    surface: '#FFFFFF',
+    ink: '#1E242B',
+    primary: '#B84A24',
+    accent: '#2D6A4F',
+    accent2: '#D97706',
+  };
+  const customPalette = {
+    id: 'pal-test-peq',
+    name: 'Bosque Asturias',
+    baseTheme: 'bosque' as const,
+    light: customLight,
+    dark: generateDarkPaletteColors(customLight),
+    createdAt: Date.now(),
+  };
+
+  const putPalRes = await putPaletteRoute(
+    new NextRequest('http://localhost:3000/api/settings/custom-palettes/pal-test-peq', {
+      method: 'PUT',
+      headers: { ...peqHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify({ palette: customPalette, activate: true }),
+    }),
+    { params: Promise.resolve({ id: 'pal-test-peq' }) }
+  );
+  assert.equal(putPalRes.status, 200);
+  const withCustom = (await putPalRes.json()) as { customPaletteId: string | null; customPalettes: Array<{ id: string }> };
+  assert.equal(withCustom.customPaletteId, 'pal-test-peq');
+  assert.equal(withCustom.customPalettes.some((p) => p.id === 'pal-test-peq'), true);
+
+  const missingPalRes = await putSettingsRoute(
+    new NextRequest('http://localhost:3000/api/settings', {
+      method: 'PUT',
+      headers: { ...peqHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify({ customPaletteId: 'missing-id' }),
+    })
+  );
+  assert.equal(missingPalRes.status, 409);
+
+  const delPalRes = await deletePaletteRoute(
+    new NextRequest('http://localhost:3000/api/settings/custom-palettes/pal-test-peq', {
+      method: 'DELETE',
+      headers: peqHeaders,
+    }),
+    { params: Promise.resolve({ id: 'pal-test-peq' }) }
+  );
+  assert.equal(delPalRes.status, 200);
+  const afterDelPal = (await delPalRes.json()) as { customPaletteId: string | null; customPalettes: Array<{ id: string }> };
+  assert.equal(afterDelPal.customPaletteId, null);
+  assert.equal(afterDelPal.customPalettes.length, 0);
+
+  // Profile route respects cookie
+  const peqProfileRes = await getProfileRoute(new NextRequest('http://localhost:3000/api/profile', { headers: peqHeaders }));
+  const peqProfilePayload = (await peqProfileRes.json()) as { profile: { name: string } };
+  assert.equal(peqProfilePayload.profile.name, 'Pequeñaja');
+
+  // 4. doneTogether API creation, filtering (?together=1), toggling (PATCH), and isolation
+  const createTogetherRes = await postActivitiesRoute(
+    new NextRequest('http://localhost:3000/api/activities', {
+      method: 'POST',
+      headers: { ...peqHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Paseo juntos por Oviedo',
+        sport: 'walking',
+        durationMin: 50,
+        distanceKm: 4.5,
+        doneTogether: true,
+      }),
+    })
+  );
+  assert.equal(createTogetherRes.status, 201);
+  const createdTogetherJson = (await createTogetherRes.json()) as { activity: { id: string; doneTogether?: boolean } };
+  assert.equal(createdTogetherJson.activity.doneTogether, true);
+
+  const createSoloRes = await postActivitiesRoute(
+    new NextRequest('http://localhost:3000/api/activities', {
+      method: 'POST',
+      headers: { ...peqHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Entreno en casa solo',
+        sport: 'strength',
+        durationMin: 30,
+        doneTogether: false,
+      }),
+    })
+  );
+  assert.equal(createSoloRes.status, 201);
+  const createdSoloJson = (await createSoloRes.json()) as { activity: { id: string; doneTogether?: boolean } };
+  assert.equal(createdSoloJson.activity.doneTogether, false);
+
+  // Filter ?together=1 only returns activities with doneTogether=true
+  const filteredRes = await getActivitiesRoute(
+    new NextRequest('http://localhost:3000/api/activities?together=1', { headers: peqHeaders })
+  );
+  const filteredJson = (await filteredRes.json()) as { activities: Array<{ id: string; doneTogether?: boolean }> };
+  assert.equal(filteredJson.activities.length, 1);
+  assert.equal(filteredJson.activities[0].id, createdTogetherJson.activity.id);
+
+  // PATCH toggles doneTogether on an activity
+  const toggledRes = await patchActivityRoute(
+    new NextRequest(`http://localhost:3000/api/activities/${createdSoloJson.activity.id}`, {
+      method: 'PATCH',
+      headers: { ...peqHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify({ doneTogether: true }),
+    }),
+    { params: Promise.resolve({ id: createdSoloJson.activity.id }) }
+  );
+  assert.equal(toggledRes.status, 200);
+  const toggledJson = (await toggledRes.json()) as { activity: { doneTogether?: boolean } };
+  assert.equal(toggledJson.activity.doneTogether, true);
+
+  // Raúl's activities do NOT include Pequeñaja's entries
+  const raulActsAfter = runWithAccount('raul', () => listActivities());
+  assert.equal(raulActsAfter.some((a) => a.id === createdTogetherJson.activity.id), false);
+
+  // Clean up test account settings
+  runWithAccount('pequenaja', () => {
+    const s = getAppSettings();
+    for (const p of s.customPalettes) deleteCustomPalette(p.id);
+  });
+});
+

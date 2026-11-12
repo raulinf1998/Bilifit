@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { withAccount } from '@/lib/account-context';
 import { getGoogleDriveAuthUrl } from '@/lib/huawei-sync';
 
 function baseUrlFromReq(req: NextRequest): string {
@@ -9,27 +10,29 @@ function baseUrlFromReq(req: NextRequest): string {
 }
 
 export async function GET(req: NextRequest) {
-  try {
-    const origin = baseUrlFromReq(req);
-    const state = crypto.randomBytes(16).toString('hex');
-    const url = getGoogleDriveAuthUrl(origin, state);
+  return withAccount(req, (account) => {
+    try {
+      const origin = baseUrlFromReq(req);
+      const state = `${account}.${crypto.randomBytes(16).toString('hex')}`;
+      const url = getGoogleDriveAuthUrl(origin, state);
 
-    const res =
-      req.nextUrl.searchParams.get('format') === 'json'
-        ? NextResponse.json({ url })
-        : NextResponse.redirect(url);
+      const res =
+        req.nextUrl.searchParams.get('format') === 'json'
+          ? NextResponse.json({ url })
+          : NextResponse.redirect(url);
 
-    res.cookies.set('bilifit_google_oauth_state', state, {
-      httpOnly: true,
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 600,
-    });
-    return res;
-  } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Credenciales de Google Drive no configuradas.' },
-      { status: 400 }
-    );
-  }
+      res.cookies.set('bilifit_google_oauth_state', state, {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 600,
+      });
+      return res;
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : 'Credenciales de Google Drive no configuradas.' },
+        { status: 400 }
+      );
+    }
+  });
 }

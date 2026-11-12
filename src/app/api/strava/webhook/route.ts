@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withAccount } from '@/lib/account-context';
 import { syncStravaActivities } from '@/lib/strava';
 
 export async function GET(req: NextRequest) {
@@ -14,14 +15,15 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  try {
-    const payload = (await req.json()) as { object_type?: string; aspect_type?: string };
-    if (payload.object_type === 'activity' && (payload.aspect_type === 'create' || payload.aspect_type === 'update')) {
-      // Sincroniza las últimas actividades en segundo plano sin bloquear el ACK de Strava
-      syncStravaActivities(5, true).catch(() => undefined);
+  return withAccount(req, async () => {
+    try {
+      const payload = (await req.json()) as { object_type?: string; aspect_type?: string };
+      if (payload.object_type === 'activity' && (payload.aspect_type === 'create' || payload.aspect_type === 'update')) {
+        syncStravaActivities(5, true).catch(() => undefined);
+      }
+      return NextResponse.json({ received: true });
+    } catch {
+      return NextResponse.json({ received: true });
     }
-    return NextResponse.json({ received: true });
-  } catch {
-    return NextResponse.json({ received: true });
-  }
+  });
 }

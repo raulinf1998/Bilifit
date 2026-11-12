@@ -105,7 +105,7 @@ export default function StravaAndImportPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2.5">
-          <RefreshCw className="h-6 w-6 text-[#fc4c02]" />
+          <RefreshCw className="h-6 w-6 text-primary" />
           Conexiones Directas e Importación (Sin Strava)
         </h1>
         <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
@@ -118,8 +118,8 @@ export default function StravaAndImportPage() {
         <div
           className={`rounded-xl border p-4 text-sm flex items-start gap-2.5 ${
             notice.type === 'ok'
-              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-              : 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+              : 'border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300'
           }`}
         >
           {notice.type === 'ok' ? <CheckCircle2 className="h-5 w-5 shrink-0" /> : <AlertTriangle className="h-5 w-5 shrink-0" />}
@@ -163,8 +163,8 @@ export default function StravaAndImportPage() {
           <span
             className={`text-xs font-semibold px-3 py-1 rounded-full border ${
               status?.connected
-                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                : 'bg-slate-500/15 text-slate-400 border-slate-500/30'
+                ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30'
+                : 'bg-sunken text-ink3 border-line'
             }`}
           >
             {status?.connected ? `Conectado (${status.athleteName ?? 'Atleta'})` : 'Opcional · No vinculado'}
@@ -173,7 +173,7 @@ export default function StravaAndImportPage() {
 
         <div className="pt-3 space-y-4 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
           <div className="rounded-xl border p-3.5 text-xs space-y-2" style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}>
-            <div className="font-semibold flex items-center gap-1.5 text-amber-300">
+            <div className="font-semibold flex items-center gap-1.5 text-amber-700 dark:text-amber-300">
               <ShieldAlert className="h-4 w-4" />
               Solo si quieres conectar tu propia app de Strava:
             </div>
@@ -184,7 +184,7 @@ export default function StravaAndImportPage() {
                   href="https://www.strava.com/settings/api"
                   target="_blank"
                   rel="noreferrer"
-                  className="text-[#fc4c02] underline inline-flex items-center gap-0.5"
+                  className="text-primary underline inline-flex items-center gap-0.5"
                 >
                   strava.com/settings/api <ExternalLink className="h-3 w-3" />
                 </a>{' '}
@@ -192,7 +192,7 @@ export default function StravaAndImportPage() {
               </li>
               <li>
                 Authorization Callback Domain:{' '}
-                <code className="px-1 py-0.5 rounded bg-slate-800 text-cyan-300">
+                <code className="px-1 py-0.5 rounded bg-sunken text-cyan-700 dark:text-cyan-300">
                   {status?.redirectUriHint ? new URL(status.redirectUriHint).hostname : '192.168.1.47'}
                 </code>
               </li>
@@ -233,7 +233,7 @@ export default function StravaAndImportPage() {
               <button
                 type="submit"
                 disabled={savingCreds}
-                className="rounded-xl border px-4 py-2 text-xs font-semibold hover:bg-slate-500/10"
+                className="rounded-xl border px-4 py-2 text-xs font-semibold hover:bg-sunken"
                 style={{ borderColor: 'var(--border-subtle)' }}
               >
                 {savingCreds ? 'Guardando...' : 'Guardar Credenciales API'}
@@ -245,7 +245,7 @@ export default function StravaAndImportPage() {
             {status?.configured && !status?.connected && (
               <a
                 href="/api/strava/auth"
-                className="inline-flex items-center gap-2 rounded-xl bg-[#fc4c02] hover:bg-[#e54400] px-5 py-2.5 text-sm font-bold text-white"
+                className="inline-flex items-center gap-2 rounded-xl bg-primary hover:bg-primaryhover px-5 py-2.5 text-sm font-bold text-onprimary"
               >
                 <Link2 className="h-4 w-4" /> Conectar con Strava
               </a>
@@ -257,7 +257,7 @@ export default function StravaAndImportPage() {
                   type="button"
                   disabled={syncing}
                   onClick={handleSync}
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#fc4c02] hover:bg-[#e54400] px-5 py-2.5 text-sm font-bold text-white"
+                  className="inline-flex items-center gap-2 rounded-xl bg-primary hover:bg-primaryhover px-5 py-2.5 text-sm font-bold text-onprimary"
                 >
                   {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                   {syncing ? 'Sincronizando...' : 'Sincronizar Strava'}

@@ -311,10 +311,10 @@ export default function MountainRoutesPage() {
                   <button
                     type="button"
                     onClick={() => toggleStatus(route)}
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border hover:bg-slate-500/10"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border hover:bg-sunken"
                     style={{ borderColor: 'var(--border-subtle)' }}
                   >
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                     {route.status === 'pending' ? 'Marcar hecha' : 'Reabrir'}
                   </button>
 
@@ -322,7 +322,7 @@ export default function MountainRoutesPage() {
                     {route.points.length > 1 && (
                       <a
                         href={`/api/routes/${route.id}?format=gpx`}
-                        className="p-2 rounded-lg border hover:bg-slate-500/10 text-emerald-400"
+                        className="p-2 rounded-lg border hover:bg-sunken text-emerald-600 dark:text-emerald-400"
                         style={{ borderColor: 'var(--border-subtle)' }}
                         title="Descargar GPX"
                       >

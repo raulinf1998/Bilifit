@@ -569,7 +569,7 @@ export default function ActivityMap({
               type="button"
               onClick={() => setLayer(key)}
               className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                layer === key ? 'bg-[#fc4c02] text-white' : 'text-slate-300 hover:bg-slate-800'
+                layer === key ? 'bg-primary text-onprimary' : 'text-slate-300 hover:bg-slate-800'
               }`}
             >
               {TILE_LAYERS[key].label}

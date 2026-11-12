@@ -117,7 +117,7 @@ export default function GearManagementPage() {
               </div>
 
               {g.defaultForSport && (
-                <div className="text-[11px] px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-300 w-fit">
+                <div className="text-[11px] px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 w-fit">
                   Por defecto para: {sportLabel(g.defaultForSport)}
                 </div>
               )}
@@ -210,7 +210,7 @@ export default function GearManagementPage() {
         <div className="flex justify-end">
           <button
             type="submit"
-            className="inline-flex items-center gap-2 rounded-xl bg-[#fc4c02] hover:bg-[#e54400] px-5 py-2 text-sm font-semibold text-white"
+            className="inline-flex items-center gap-2 rounded-xl bg-primary hover:bg-primaryhover px-5 py-2 text-sm font-semibold text-onprimary"
           >
             <Plus className="h-4 w-4" /> Guardar Material
           </button>

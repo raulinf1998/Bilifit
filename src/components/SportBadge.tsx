@@ -68,13 +68,13 @@ export function SportIcon({ sport, className = 'h-4 w-4' }: { sport: SportType; 
 
 export function SportBadge({ sport, subSport }: { sport: SportType; subSport?: string | null }) {
   const styles: Record<SportType, string> = {
-    running: 'bg-[#fc4c02]/15 text-[#fc4c02] border-[#fc4c02]/30',
-    trail: 'bg-lime-500/15 text-lime-400 border-lime-500/30',
-    mywhoosh: 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30',
-    cycling: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
-    mountain: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-    walking: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
-    strength: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
+    running: 'bg-primary/15 text-primary border-primary/30',
+    trail: 'bg-lime-500/15 text-lime-700 dark:text-lime-300 border-lime-500/30',
+    mywhoosh: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-500/30',
+    cycling: 'bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30',
+    mountain: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30',
+    walking: 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30',
+    strength: 'bg-purple-500/15 text-purple-700 dark:text-purple-300 border-purple-500/30',
   };
 
   const labels: Record<SportType, string> = {

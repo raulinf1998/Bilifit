@@ -170,10 +170,10 @@ export default function MyWhooshConnectorCard({ onSynced }: { onSynced?: () => v
         <span
           className={`text-xs font-semibold px-3 py-1 rounded-full border ${
             needsReconnect
-              ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+              ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30'
               : status?.connected
-                ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30'
-                : 'bg-slate-500/15 text-slate-400 border-slate-500/30'
+                ? 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-500/30'
+                : 'bg-sunken text-ink3 border-line'
           }`}
         >
           {needsReconnect
@@ -188,10 +188,10 @@ export default function MyWhooshConnectorCard({ onSynced }: { onSynced?: () => v
         <div
           className={`rounded-xl border p-3.5 text-xs flex items-start gap-2.5 ${
             notice.type === 'ok'
-              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
               : notice.type === 'warn'
-                ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
-                : 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+                ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                : 'border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300'
           }`}
         >
           {notice.type === 'ok' ? (
@@ -209,7 +209,7 @@ export default function MyWhooshConnectorCard({ onSynced }: { onSynced?: () => v
             className="rounded-xl border p-3.5 text-xs space-y-1.5"
             style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
           >
-            <div className="font-semibold text-cyan-300 flex items-center gap-1.5">
+            <div className="font-semibold text-cyan-700 dark:text-cyan-300 flex items-center gap-1.5">
               <Info className="h-4 w-4 shrink-0" />
               Acceso directo y gratuito (100% independiente de Strava)
             </div>
@@ -262,7 +262,7 @@ export default function MyWhooshConnectorCard({ onSynced }: { onSynced?: () => v
                 className="mt-0.5 rounded accent-cyan-400"
               />
               <span style={{ color: 'var(--text-secondary)' }}>
-                <strong className="block text-slate-200">Recordar contraseña cifrada (AES-256)</strong>
+                <strong className="block text-ink">Recordar contraseña cifrada (AES-256)</strong>
                 Opcional. Sin marcarla, los tokens ya se renuevan solos hasta 60 días tras cada uso.
               </span>
             </label>
@@ -370,7 +370,7 @@ export default function MyWhooshConnectorCard({ onSynced }: { onSynced?: () => v
           </div>
 
           {status.lastError && status.lastSyncStatus === 'error' && (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
               Último aviso: {status.lastError}
             </div>
           )}
@@ -423,7 +423,7 @@ export default function MyWhooshConnectorCard({ onSynced }: { onSynced?: () => v
               type="button"
               disabled={syncing}
               onClick={() => handleSync(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 disabled:opacity-50 px-4 py-2.5 text-xs font-semibold text-cyan-300 transition-colors"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 disabled:opacity-50 px-4 py-2.5 text-xs font-semibold text-cyan-700 dark:text-cyan-300 transition-colors"
             >
               <History className="h-3.5 w-3.5" /> Importar todo el historial
             </button>
@@ -466,10 +466,10 @@ export default function MyWhooshConnectorCard({ onSynced }: { onSynced?: () => v
                     <span
                       className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                         item.status === 'imported'
-                          ? 'bg-emerald-500/15 text-emerald-300'
+                          ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
                           : item.status === 'skipped'
-                            ? 'bg-slate-500/20 text-slate-300'
-                            : 'bg-rose-500/15 text-rose-300'
+                            ? 'bg-sunken text-ink2'
+                            : 'bg-rose-500/15 text-rose-700 dark:text-rose-300'
                       }`}
                     >
                       {item.status === 'imported' ? 'Importada' : item.status === 'skipped' ? 'Omitida' : 'Error'}

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Check, CheckCircle2, Clock, Pause, Play, Plus, SkipForward, Volume2, X } from 'lucide-react';
+import { TogetherToggleButton } from '@/components/TogetherControl';
 import { formatDurationClock } from '@/lib/metrics';
 import type { RoutineExerciseItem, StrengthSetLog } from '@/types';
 
@@ -49,6 +50,7 @@ export default function WorkoutPlayer({
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [rpe, setRpe] = useState(7);
   const [notes, setNotes] = useState('');
+  const [doneTogether, setDoneTogether] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [logs, setLogs] = useState<StrengthSetLog[]>(() =>
@@ -145,6 +147,7 @@ export default function WorkoutPlayer({
           durationSec: Math.max(300, elapsedSec),
           rpe,
           notes,
+          doneTogether,
           strengthLogs: logs,
         }),
       });
@@ -176,22 +179,22 @@ export default function WorkoutPlayer({
 
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-2 rounded-xl px-3 py-1.5 border text-sm font-mono font-bold tabular-nums" style={{ borderColor: 'var(--border-subtle)' }}>
-              <Clock className="h-4 w-4 text-[#fc4c02]" />
+              <Clock className="h-4 w-4 text-primary" />
               {formatDurationClock(elapsedSec)}
             </div>
             <button
               type="button"
               onClick={() => setPaused((p) => !p)}
-              className="p-2 rounded-xl border hover:bg-slate-500/10"
+              className="p-2 rounded-xl border hover:bg-sunken"
               style={{ borderColor: 'var(--border-subtle)' }}
               title={paused ? 'Reanudar' : 'Pausar'}
             >
-              {paused ? <Play className="h-4 w-4 text-emerald-400" /> : <Pause className="h-4 w-4" />}
+              {paused ? <Play className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> : <Pause className="h-4 w-4" />}
             </button>
             <button
               type="button"
               onClick={() => setSoundEnabled((s) => !s)}
-              className={`p-2 rounded-xl border ${soundEnabled ? 'text-cyan-400' : 'opacity-40'}`}
+              className={`p-2 rounded-xl border ${soundEnabled ? 'text-cyan-600 dark:text-cyan-400' : 'opacity-40'}`}
               style={{ borderColor: 'var(--border-subtle)' }}
               title="Sonido fin de descanso"
             >
@@ -200,7 +203,7 @@ export default function WorkoutPlayer({
             <button
               type="button"
               onClick={onClose}
-              className="p-2 rounded-xl border hover:bg-rose-500/20 text-rose-400"
+              className="p-2 rounded-xl border hover:bg-rose-500/20 text-rose-600 dark:text-rose-400"
               style={{ borderColor: 'var(--border-subtle)' }}
               title="Cerrar"
             >
@@ -213,21 +216,21 @@ export default function WorkoutPlayer({
         {restLeft > 0 && (
           <div className="px-5 py-3 bg-cyan-500/15 border-b border-cyan-500/30 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <span className="text-xs font-semibold uppercase tracking-wider text-cyan-300">Descanso entre series</span>
-              <span className="text-xl font-mono font-bold text-cyan-400 tabular-nums">{restLeft}s</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-cyan-700 dark:text-cyan-300">Descanso entre series</span>
+              <span className="text-xl font-mono font-bold text-cyan-600 dark:text-cyan-400 tabular-nums">{restLeft}s</span>
             </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => setRestLeft((r) => r + 15)}
-                className="px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 text-xs font-medium hover:bg-cyan-500/30"
+                className="px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 text-xs font-medium hover:bg-cyan-500/30"
               >
                 +15s
               </button>
               <button
                 type="button"
                 onClick={() => setRestLeft(0)}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 text-slate-200 text-xs font-medium"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sunken text-ink text-xs font-medium border border-line"
               >
                 <SkipForward className="h-3.5 w-3.5" /> Saltar
               </button>
@@ -255,7 +258,7 @@ export default function WorkoutPlayer({
                   <button
                     type="button"
                     onClick={() => addExtraSet(exIdx)}
-                    className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg border hover:bg-slate-500/10"
+                    className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg border hover:bg-sunken"
                     style={{ borderColor: 'var(--border-subtle)' }}
                   >
                     <Plus className="h-3.5 w-3.5" /> Serie
@@ -329,11 +332,18 @@ export default function WorkoutPlayer({
             );
           })}
 
-          {/* RPE y notas al finalizar */}
+          {/* RPE, compañera/o y notas al finalizar */}
           <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: 'var(--border-subtle)' }}>
-            <div className="flex items-center justify-between text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
               <span className="font-medium">Esfuerzo percibido (RPE 1–10)</span>
-              <span className="font-bold text-[#fc4c02] tabular-nums">{rpe} / 10</span>
+              <div className="flex items-center gap-3">
+                <TogetherToggleButton
+                  compact
+                  active={doneTogether}
+                  onClick={() => setDoneTogether((v) => !v)}
+                />
+                <span className="font-bold text-primary tabular-nums">{rpe} / 10</span>
+              </div>
             </div>
             <input
               type="range"
@@ -341,7 +351,7 @@ export default function WorkoutPlayer({
               max={10}
               value={rpe}
               onChange={(e) => setRpe(Number(e.target.value))}
-              className="w-full accent-[#fc4c02]"
+              className="w-full accent-primary"
             />
             <textarea
               rows={2}

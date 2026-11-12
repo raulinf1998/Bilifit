@@ -176,7 +176,7 @@ function buildMyWhooshTelemetry(
 }
 
 export const SEED_PROFILE: AthleteProfile = {
-  name: 'Atleta Bilifit',
+  name: 'Raúl',
   weightKg: 72,
   ftpWatts: 245,
   maxHr: 190,
