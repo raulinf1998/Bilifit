@@ -503,7 +503,7 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
     name: 'Switzerland',
     subtitle: 'Zúrich, Limmat Loop, Seeblick Spin y Zürichbergstrasse',
     regionLabel: 'Zúrich · Suiza',
-    ...metaFor('switzerland', [[47.308, 8.49], [47.41, 8.63982]]),
+    ...metaFor('switzerland', [[47.317097, 8.483225], [47.44086, 8.665046]]),
     imageUrl: '/maps/mywhoosh/switzerland.webp',
     mapRotationDeg: 90,
     backgroundColor: '#40572d',
@@ -521,9 +521,10 @@ export const MYWHOOSH_WORLDS: MyWhooshWorldDefinition[] = [
       'Capital Circuit',
     ],
     landmarks: [
-      { name: 'Zürichbergstrasse', lat: 47.376, lon: 8.556, eleM: 466 },
-      { name: 'Limmat Loop', lat: 47.345, lon: 8.548 },
-      { name: 'Seeblick Spin', lat: 47.362, lon: 8.601 },
+      { name: 'Limmat Loop', lat: 47.33715, lon: 8.55263 },
+      { name: 'Seeblick Spin', lat: 47.34101, lon: 8.58209 },
+      { name: 'Zürichbergstrasse', lat: 47.39234, lon: 8.56505, eleM: 466 },
+      { name: 'Alps Summit', lat: 47.34383, lon: 8.50587, eleM: 932 },
     ],
     keywords: [
       'switzerland',

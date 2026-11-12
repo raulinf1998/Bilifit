@@ -436,6 +436,19 @@ test('MyWhoosh virtual worlds resolve, align (including Free Rides), avoid outdo
   assert.equal(uci25.mywhooshInfoId, 8);
   assert.equal(uci25.maxElevationM, 751);
 
+  // Verificar calibración real y rotación 90° CW de Switzerland (5000x4974 + red viaria vectorizada + snap in-bounds)
+  const swiWorld = getMyWhooshWorldByIdOrName('switzerland')!;
+  assert.equal(swiWorld.mapRotationDeg, 90);
+  assert.deepEqual(swiWorld.svgSize, [5000, 4974]);
+  const swiNet = (roadsDataset.worlds as unknown as Record<string, { tracks?: Array<Array<[number, number]>> }>).switzerland;
+  assert.ok((swiNet.tracks?.length ?? 0) >= 50, 'Switzerland should carry full vectorized road network');
+  const swiBaseTrack = swiNet.tracks![0];
+  assert.equal(alignCoordsToMyWhooshWorld(swiWorld, swiBaseTrack).mode, 'native');
+  const swiShifted = swiBaseTrack.map(([la, lo]): [number, number] => [la + 0.012, lo + 0.015]);
+  const swiLocked = alignCoordsToMyWhooshWorld(swiWorld, swiShifted);
+  assert.equal(swiLocked.mode, 'rigid-road-lock');
+  assert.ok((swiLocked.rmsErrorM ?? 99) < 8, `Expected crisp Switzerland rigid lock, got RMS ${swiLocked.rmsErrorM}`);
+
   // Verificar rotación cartográfica 90° CW de France para coincidir con mywhooshinfo.com
   const franceWorld = getMyWhooshWorldByIdOrName('france')!;
   assert.equal(franceWorld.mapRotationDeg, 90);
