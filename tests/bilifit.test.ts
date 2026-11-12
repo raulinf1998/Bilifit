@@ -1571,6 +1571,10 @@ test('Caminar (walking) sport classification, analytics, DB backfill, and Oscuro
   assert.ok(cssSource.includes('grayscale(100%)'), 'Fallback raster dark filter must be fully desaturated monochrome');
   assert.ok(cssSource.includes('.bilifit-map-dark'));
   assert.ok(fs.existsSync(path.join(process.cwd(), 'public', 'vendor', 'maplibre-gl-worker.mjs')));
+  const pkgJson = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8')) as {
+    scripts?: Record<string, string>;
+  };
+  assert.equal(pkgJson.scripts?.postinstall, undefined, 'postinstall must not reference scripts/ before Docker builder stage COPY . .');
 
   assert.equal(DARK_MAP_STYLE.version, 8);
   assert.equal(DARK_MAP_BACKGROUND, '#212121');
