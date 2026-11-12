@@ -122,7 +122,7 @@ export function inferSportFromText(
     if (km >= 4 && elevationGain / km > 35 && elevationGain >= 300) {
       return { sport: 'trail', subSport: 'Trail Running' };
     }
-    return { sport: 'running', subSport: 'Asfalto' };
+    return { sport: 'running', subSport: 'Correr' };
   }
 
   if (combined.includes('cycl') || combined.includes('bike') || combined.includes('bici') || combined.includes('ride') || combined.includes('mtb') || combined.includes('gravel')) {

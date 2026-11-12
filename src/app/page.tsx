@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { FitnessPMCChart, WeeklyVolumeChart, type WeeklyBucket } from '@/components/Charts';
 import { SportBadge } from '@/components/SportBadge';
+import { TogetherBadge } from '@/components/TogetherControl';
 import { formatDistanceKm, formatDuration, formatPaceMinKm } from '@/lib/metrics';
 import type {
   Activity,
@@ -68,13 +69,13 @@ export default function DashboardPage() {
   if (loading || !data) {
     return (
       <div className="space-y-6 animate-pulse">
-        <div className="h-10 w-64 rounded-xl bg-slate-800/50" />
+        <div className="h-10 w-64 rounded-xl bg-sunken" />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-28 rounded-2xl bg-slate-800/40" />
+            <div key={i} className="h-28 rounded-2xl bg-sunken" />
           ))}
         </div>
-        <div className="h-72 rounded-2xl bg-slate-800/40" />
+        <div className="h-72 rounded-2xl bg-sunken" />
       </div>
     );
   }
@@ -85,10 +86,10 @@ export default function DashboardPage() {
 
   const formStatus =
     summary.formTsb >= 5
-      ? { label: 'Fresco / Listo para rendir', color: 'text-emerald-400' }
+      ? { label: 'Fresco / Listo para rendir', color: 'text-emerald-700 dark:text-emerald-400' }
       : summary.formTsb >= -15
-        ? { label: 'Zona óptima de carga', color: 'text-cyan-400' }
-        : { label: 'Fatiga alta · Recupera', color: 'text-amber-400' };
+        ? { label: 'Zona óptima de carga', color: 'text-cyan-700 dark:text-cyan-400' }
+        : { label: 'Fatiga alta · Recupera', color: 'text-amber-700 dark:text-amber-400' };
 
   return (
     <div className="space-y-6">
@@ -111,10 +112,10 @@ export default function DashboardPage() {
           </Link>
           <Link
             href="/strava"
-            className="inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold hover:bg-slate-500/10 transition-colors"
+            className="inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold hover:bg-sunken transition-colors"
             style={{ borderColor: 'var(--border-subtle)' }}
           >
-            <Upload className="h-4 w-4 text-[#fc4c02]" />
+            <Upload className="h-4 w-4 text-primary" />
             {mywhoosh?.connected || huawei?.googleConnected
               ? 'MyWhoosh / Huawei'
               : strava.connected
@@ -129,7 +130,7 @@ export default function DashboardPage() {
         <div className="card-surface p-5 space-y-2">
           <div className="flex items-center justify-between text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
             <span>ESTA SEMANA (7 DÍAS)</span>
-            <Flame className="h-4 w-4 text-[#fc4c02]" />
+            <Flame className="h-4 w-4 text-primary" />
           </div>
           <div className="text-2xl font-bold tabular-nums">
             {summary.weekDurationHours} h{' '}
@@ -138,7 +139,7 @@ export default function DashboardPage() {
             </span>
           </div>
           <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-muted)' }}>
-            <div className="h-full bg-[#fc4c02] rounded-full" style={{ width: `${targetPct}%` }} />
+            <div className="h-full bg-primary rounded-full" style={{ width: `${targetPct}%` }} />
           </div>
           <div className="text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>
             {summary.weekDistanceKm} km · +{summary.weekElevationM} m · {summary.weekSessions} sesiones
@@ -250,9 +251,9 @@ export default function DashboardPage() {
           </div>
         </Link>
 
-        <Link href="/strava" className="card-surface p-4 hover:border-[#fc4c02]/50 transition-colors group">
+        <Link href="/strava" className="card-surface p-4 hover:border-primary/50 transition-colors group">
           <div className="flex items-center justify-between">
-            <div className="h-10 w-10 rounded-xl bg-[#fc4c02]/15 text-[#fc4c02] flex items-center justify-center">
+            <div className="h-10 w-10 rounded-xl bg-primary/15 text-primary flex items-center justify-center">
               <RefreshCw className="h-5 w-5" />
             </div>
             <ArrowRight className="h-4 w-4 opacity-50 group-hover:translate-x-1 transition-transform" />
@@ -275,10 +276,10 @@ export default function DashboardPage() {
         <div className="lg:col-span-8 card-surface p-5 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-bold flex items-center gap-2">
-              <ActivityIcon className="h-4 w-4 text-[#fc4c02]" />
+              <ActivityIcon className="h-4 w-4 text-primary" />
               Últimas Actividades
             </h2>
-            <Link href="/actividades" className="text-xs font-semibold text-[#fc4c02] hover:underline">
+            <Link href="/actividades" className="text-xs font-semibold text-primary hover:underline">
               Ver todas →
             </Link>
           </div>
@@ -288,14 +289,15 @@ export default function DashboardPage() {
               <Link
                 key={act.id}
                 href={`/actividades/${act.id}`}
-                className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border p-3.5 hover:border-[#fc4c02]/50 transition-colors"
+                className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border p-3.5 hover:border-primary/50 transition-colors"
                 style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
               >
                 <div className="space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <SportBadge sport={act.sport} subSport={act.subSport} />
+                    {act.doneTogether && <TogetherBadge />}
                     {act.worldName && (
-                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 border border-cyan-500/20">
                         {act.worldName}
                       </span>
                     )}
@@ -364,7 +366,7 @@ export default function DashboardPage() {
         <div className="lg:col-span-4 card-surface p-5 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-bold">Desgaste de Material</h2>
-            <Link href="/material" className="text-xs font-semibold text-[#fc4c02] hover:underline">
+            <Link href="/material" className="text-xs font-semibold text-primary hover:underline">
               Gestionar →
             </Link>
           </div>

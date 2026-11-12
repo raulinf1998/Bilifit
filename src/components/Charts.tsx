@@ -95,7 +95,7 @@ export function FitnessPMCChart({ data }: { data: FitnessDayPoint[] }) {
                 width={4}
                 height={barH}
                 rx={1.5}
-                fill="rgba(252, 76, 2, 0.35)"
+                fill="rgb(var(--primary) / 0.35)"
               />
             );
           })}
@@ -111,7 +111,7 @@ export function FitnessPMCChart({ data }: { data: FitnessDayPoint[] }) {
                 y1={padT}
                 x2={toX(hoverIdx)}
                 y2={h - padB}
-                stroke="rgba(248,250,252,0.3)"
+                stroke="rgb(var(--ink) / 0.3)"
                 strokeDasharray="2 2"
               />
               <circle cx={toX(hoverIdx)} cy={toY(hovered.ctl)} r={4} fill="#06b6d4" />
@@ -189,7 +189,7 @@ export function WeeklyVolumeChart({ buckets }: { buckets: WeeklyBucket[] }) {
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
         <div className="flex flex-wrap items-center gap-3">
           <span className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-sm bg-[#fc4c02]" /> Correr
+            <span className="h-2.5 w-2.5 rounded-sm bg-primary" /> Correr
           </span>
           <span className="flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-sm bg-lime-400" /> Trail
@@ -235,7 +235,7 @@ export function WeeklyVolumeChart({ buckets }: { buckets: WeeklyBucket[] }) {
                 className="w-full max-w-[38px] flex flex-col-reverse rounded-t-md overflow-hidden transition-transform group-hover:scale-105"
                 style={{ height: '130px', background: 'rgba(148,163,184,0.08)' }}
               >
-                {b.runningHours > 0 && <div style={{ height: pct(b.runningHours), background: '#fc4c02' }} />}
+                {b.runningHours > 0 && <div style={{ height: pct(b.runningHours), background: 'rgb(var(--primary))' }} />}
                 {trailH > 0 && <div style={{ height: pct(trailH), background: '#84cc16' }} />}
                 {b.mywhooshHours > 0 && <div style={{ height: pct(b.mywhooshHours), background: '#06b6d4' }} />}
                 {b.cyclingHours > 0 && <div style={{ height: pct(b.cyclingHours), background: '#3b82f6' }} />}
@@ -351,10 +351,10 @@ export function TelemetryChart({
               type="button"
               onClick={() => setShowEle((v) => !v)}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-opacity ${
-                showEle ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400' : 'opacity-45 border-slate-700'
+                showEle ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'opacity-45 border-line'
               }`}
             >
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              <span className="h-2 w-2 rounded-full bg-emerald-500" />
               Altitud {hovered?.ele !== undefined ? `${hovered.ele} m` : `${Math.round(minEle)}-${Math.round(maxEle)}m`}
             </button>
           )}
@@ -363,10 +363,10 @@ export function TelemetryChart({
               type="button"
               onClick={() => setShowPace((v) => !v)}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-opacity ${
-                showPace ? 'border-[#fc4c02]/40 bg-[#fc4c02]/10 text-[#fc4c02]' : 'opacity-45 border-slate-700'
+                showPace ? 'border-primary/40 bg-primary/10 text-primary' : 'opacity-45 border-line'
               }`}
             >
-              <span className="h-2 w-2 rounded-full bg-[#fc4c02]" />
+              <span className="h-2 w-2 rounded-full bg-primary" />
               {isPaceSport ? 'Ritmo' : 'Vel.'}{' '}
               {hovered?.speed !== undefined
                 ? isPaceSport
@@ -380,10 +380,10 @@ export function TelemetryChart({
               type="button"
               onClick={() => setShowHr((v) => !v)}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-opacity ${
-                showHr ? 'border-rose-500/40 bg-rose-500/10 text-rose-400' : 'opacity-45 border-slate-700'
+                showHr ? 'border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400' : 'opacity-45 border-line'
               }`}
             >
-              <span className="h-2 w-2 rounded-full bg-rose-400" />
+              <span className="h-2 w-2 rounded-full bg-rose-500" />
               Pulso {hovered?.hr !== undefined ? `${hovered.hr} ppm` : ''}
             </button>
           )}
@@ -392,10 +392,10 @@ export function TelemetryChart({
               type="button"
               onClick={() => setShowWatts((v) => !v)}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-opacity ${
-                showWatts ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-400' : 'opacity-45 border-slate-700'
+                showWatts ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-700 dark:text-cyan-400' : 'opacity-45 border-line'
               }`}
             >
-              <span className="h-2 w-2 rounded-full bg-cyan-400" />
+              <span className="h-2 w-2 rounded-full bg-cyan-500" />
               Potencia {hovered?.watts !== undefined ? `${hovered.watts} W` : ''}
             </button>
           )}
@@ -404,10 +404,10 @@ export function TelemetryChart({
               type="button"
               onClick={() => setShowCad((v) => !v)}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-opacity ${
-                showCad ? 'border-purple-500/40 bg-purple-500/10 text-purple-400' : 'opacity-45 border-slate-700'
+                showCad ? 'border-purple-500/40 bg-purple-500/10 text-purple-700 dark:text-purple-400' : 'opacity-45 border-line'
               }`}
             >
-              <span className="h-2 w-2 rounded-full bg-purple-400" />
+              <span className="h-2 w-2 rounded-full bg-purple-500" />
               Cadencia {hovered?.cad !== undefined ? `${hovered.cad}` : ''}
             </button>
           )}
@@ -419,14 +419,14 @@ export function TelemetryChart({
               <button
                 type="button"
                 onClick={() => setXAxisMode('dist')}
-                className={`px-2 py-0.5 ${xAxisMode === 'dist' ? 'bg-[#fc4c02] text-white' : ''}`}
+                className={`px-2 py-0.5 ${xAxisMode === 'dist' ? 'bg-primary text-onprimary' : ''}`}
               >
                 Km
               </button>
               <button
                 type="button"
                 onClick={() => setXAxisMode('time')}
-                className={`px-2 py-0.5 ${xAxisMode === 'time' ? 'bg-[#fc4c02] text-white' : ''}`}
+                className={`px-2 py-0.5 ${xAxisMode === 'time' ? 'bg-primary text-onprimary' : ''}`}
               >
                 Tiempo
               </button>
@@ -443,7 +443,7 @@ export function TelemetryChart({
           <span><strong>Tiempo:</strong> {formatDurationClock(hovered.t)}</span>
           {typeof hovered.dist === 'number' && <span><strong>Dist:</strong> {(hovered.dist / 1000).toFixed(2)} km</span>}
           {typeof hovered.speed === 'number' && hovered.speed > 0.3 && (
-            <span className="text-[#fc4c02]">
+            <span className="text-primary">
               <strong>{isPaceSport ? 'Ritmo:' : 'Vel:'}</strong>{' '}
               {isPaceSport ? formatPaceMinKm(hovered.speed) : formatSpeedKmh(hovered.speed)}
             </span>
@@ -487,7 +487,7 @@ export function TelemetryChart({
           </>
         )}
 
-        {hasSpeed && showPace && <path d={speedLine} fill="none" stroke="#fc4c02" strokeWidth={1.8} strokeOpacity={0.92} />}
+        {hasSpeed && showPace && <path d={speedLine} fill="none" stroke="rgb(var(--primary))" strokeWidth={1.8} strokeOpacity={0.92} />}
         {hasWatts && showWatts && <path d={wattsLine} fill="none" stroke="#06b6d4" strokeWidth={1.9} />}
         {hasHr && showHr && <path d={hrLine} fill="none" stroke="#f43f5e" strokeWidth={1.6} strokeOpacity={0.85} />}
         {hasCad && showCad && <path d={cadLine} fill="none" stroke="#a855f7" strokeWidth={1.5} strokeOpacity={0.8} />}
@@ -498,7 +498,7 @@ export function TelemetryChart({
             y1={padT}
             x2={toX(hoverIdx)}
             y2={padT + innerH}
-            stroke="rgba(248,250,252,0.45)"
+            stroke="rgb(var(--ink) / 0.45)"
             strokeDasharray="3 3"
           />
         )}

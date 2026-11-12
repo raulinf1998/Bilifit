@@ -43,10 +43,10 @@ export default function ActivityImporter({ onImported }: { onImported?: () => vo
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <label
-        className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-6 text-center cursor-pointer hover:border-[#fc4c02] transition-colors"
+        className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-6 text-center cursor-pointer hover:border-primary transition-colors"
         style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card-elevated)' }}
       >
-        <FileUp className="h-8 w-8 text-[#fc4c02] mb-2" />
+        <FileUp className="h-8 w-8 text-primary mb-2" />
         <div className="text-sm font-semibold">
           {files.length > 0
             ? `${files.length} archivo(s) seleccionado(s): ${files.map((f) => f.name).join(', ')}`
@@ -89,7 +89,7 @@ export default function ActivityImporter({ onImported }: { onImported?: () => vo
         <button
           type="submit"
           disabled={files.length === 0 || loading}
-          className="mt-4 sm:mt-5 inline-flex items-center gap-2 rounded-xl bg-[#fc4c02] hover:bg-[#e54400] disabled:opacity-50 px-5 py-2.5 text-sm font-semibold text-white transition-colors"
+          className="mt-4 sm:mt-5 inline-flex items-center gap-2 rounded-xl bg-primary hover:bg-primaryhover disabled:opacity-50 px-5 py-2.5 text-sm font-semibold text-onprimary transition-colors"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
           {loading ? 'Procesando...' : 'Importar archivos'}
@@ -97,14 +97,14 @@ export default function ActivityImporter({ onImported }: { onImported?: () => vo
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-300">
+        <div className="flex items-start gap-2 rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300">
           <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
           <span>{error}</span>
         </div>
       )}
 
       {result && (
-        <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs space-y-1 text-emerald-300">
+        <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs space-y-1 text-emerald-700 dark:text-emerald-300">
           <div className="flex items-center gap-2 font-semibold">
             <CheckCircle2 className="h-4 w-4" />
             <span>
@@ -112,7 +112,7 @@ export default function ActivityImporter({ onImported }: { onImported?: () => vo
             </span>
           </div>
           {result.errors.length > 0 && (
-            <div className="text-amber-300 pl-6">Avisos: {result.errors.join(' | ')}</div>
+            <div className="text-amber-700 dark:text-amber-300 pl-6">Avisos: {result.errors.join(' | ')}</div>
           )}
         </div>
       )}

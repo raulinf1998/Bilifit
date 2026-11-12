@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { currentAccountId } from '@/lib/account-context';
+import type { AccountId } from '@/lib/accounts';
 import {
   computeBestEfforts,
   computeHeartRateZones,
@@ -16,6 +18,20 @@ import { isMyWhooshContext, resolveMyWhooshWorldForActivity } from '@/lib/mywhoo
 import { decodePolyline } from '@/lib/polyline';
 import { buildSeedActivityRows, SEED_GEAR, SEED_PROFILE, SEED_ROUTES, SEED_ROUTINES } from '@/lib/seed';
 import { buildSegmentFromRange, matchPointsToSegment } from '@/lib/segments';
+import { emitSettingsEvent } from '@/lib/settings-events';
+import {
+  paletteColorsFromTheme,
+  sanitizeCustomPalettes,
+  sanitizePaletteColors,
+} from '@/lib/theme-palettes';
+import {
+  DEFAULT_APP_SETTINGS,
+  SETTINGS_SYNC_PROTOCOL,
+  VALID_THEMES,
+  type AppSettings,
+  type CustomPalette,
+  type ThemeId,
+} from '@/lib/themes';
 import type {
   Activity,
   ActivityDetail,
@@ -34,9 +50,9 @@ import type {
   StrengthSetLog,
 } from '@/types';
 
-let dbInstance: Database.Database | null = null;
+const dbInstances = new Map<string, Database.Database>();
 
-export function getDbPath(): string {
+export function getBaseDbPath(): string {
   const configured = process.env.BILIFIT_DB_PATH;
   if (configured) {
     return path.isAbsolute(configured)
@@ -46,10 +62,27 @@ export function getDbPath(): string {
   return path.join(process.cwd(), 'data', 'bilifit.db');
 }
 
-export function getDb(): Database.Database {
-  if (dbInstance) return dbInstance;
+export function getDbPath(account: AccountId = currentAccountId()): string {
+  const base = getBaseDbPath();
+  if (account === 'raul') return base;
+  const ext = path.extname(base);
+  const stem = ext ? base.slice(0, -ext.length) : base;
+  return `${stem}-${account}${ext || '.db'}`;
+}
 
-  const dbPath = getDbPath();
+export function getDb(account: AccountId = currentAccountId()): Database.Database {
+  const dbPath = getDbPath(account);
+  const cached = dbInstances.get(dbPath);
+  if (cached && fs.existsSync(/*turbopackIgnore: true*/ dbPath)) return cached;
+  if (cached) {
+    try {
+      cached.close();
+    } catch {
+      // ignore close errors
+    }
+    dbInstances.delete(dbPath);
+  }
+
   const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -60,14 +93,14 @@ export function getDb(): Database.Database {
   db.pragma('foreign_keys = ON');
 
   initSchema(db);
-  seedIfEmpty(db);
+  seedIfEmpty(db, account);
   backfillMyWhooshWorlds(db);
   backfillWalkingActivities(db);
   backfillSplitTrailActivities(db);
   backfillMismatchedSubSports(db);
 
-  dbInstance = db;
-  return dbInstance;
+  dbInstances.set(dbPath, db);
+  return db;
 }
 
 export function backfillWalkingActivities(db: Database.Database = getDb()): number {
@@ -146,6 +179,9 @@ export function backfillMismatchedSubSports(db: Database.Database = getDb()): nu
       const sport = row.sport as SportType;
       if (isMismatchedSubSport(sport, row.sub_sport)) {
         updateStmt.run(defaultSubSportForSport(sport), row.id);
+        updated++;
+      } else if (sport === 'running' && row.sub_sport.trim().toLowerCase() === 'asfalto') {
+        updateStmt.run('Correr', row.id);
         updated++;
       }
     }
@@ -473,11 +509,22 @@ function initSchema(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_seg_efforts_segment ON segment_efforts(segment_id, duration_sec ASC);
     CREATE INDEX IF NOT EXISTS idx_seg_efforts_activity ON segment_efforts(activity_id);
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      theme TEXT NOT NULL DEFAULT 'calido',
+      dark INTEGER NOT NULL DEFAULT 0,
+      custom_palettes_json TEXT NOT NULL DEFAULT '[]',
+      custom_palette_id TEXT,
+      settings_version INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   // Migración segura para bases de datos existentes
   ensureColumn(db, 'activities', 'laps_json', 'TEXT');
   ensureColumn(db, 'activities', 'extras_json', 'TEXT');
+  ensureColumn(db, 'activities', 'done_together', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, colType: string) {
@@ -487,21 +534,47 @@ function ensureColumn(db: Database.Database, table: string, column: string, colT
   }
 }
 
-function seedIfEmpty(db: Database.Database) {
+function seedIfEmpty(db: Database.Database, account: AccountId = 'raul') {
   const profileCount = db.prepare('SELECT COUNT(*) as c FROM athlete_profile').get() as { c: number };
   if (profileCount.c === 0) {
+    const profileSeed: AthleteProfile =
+      account === 'pequenaja'
+        ? {
+            name: 'Pequeñaja',
+            weightKg: 58,
+            ftpWatts: 175,
+            maxHr: 192,
+            restingHr: 55,
+            lthr: 172,
+            weeklyTargetHours: 5,
+            weeklyTargetKm: 35,
+          }
+        : SEED_PROFILE;
+
     db.prepare(`
       INSERT INTO athlete_profile (id, name, weight_kg, ftp_watts, max_hr, resting_hr, lthr, weekly_target_hours, weekly_target_km)
       VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      SEED_PROFILE.name,
-      SEED_PROFILE.weightKg,
-      SEED_PROFILE.ftpWatts,
-      SEED_PROFILE.maxHr,
-      SEED_PROFILE.restingHr,
-      SEED_PROFILE.lthr,
-      SEED_PROFILE.weeklyTargetHours,
-      SEED_PROFILE.weeklyTargetKm
+      profileSeed.name,
+      profileSeed.weightKg,
+      profileSeed.ftpWatts,
+      profileSeed.maxHr,
+      profileSeed.restingHr,
+      profileSeed.lthr,
+      profileSeed.weeklyTargetHours,
+      profileSeed.weeklyTargetKm
+    );
+  }
+
+  const settingsCount = db.prepare('SELECT COUNT(*) as c FROM app_settings').get() as { c: number };
+  if (settingsCount.c === 0) {
+    db.prepare(`
+      INSERT INTO app_settings (id, theme, dark, custom_palettes_json, custom_palette_id, settings_version, updated_at)
+      VALUES (1, ?, ?, '[]', NULL, 0, ?)
+    `).run(
+      DEFAULT_APP_SETTINGS.theme,
+      DEFAULT_APP_SETTINGS.dark ? 1 : 0,
+      new Date().toISOString()
     );
   }
 
@@ -528,10 +601,22 @@ function seedIfEmpty(db: Database.Database) {
     `);
     const insertMany = db.transaction(() => {
       for (const eq of DEFAULT_HOME_EQUIPMENT) {
-        stmt.run(eq.id, eq.name, eq.category, eq.description, eq.owned ? 1 : 0, eq.details ?? null);
+        stmt.run(
+          eq.id,
+          eq.name,
+          eq.category,
+          eq.description,
+          account === 'pequenaja' ? 0 : eq.owned ? 1 : 0,
+          eq.details ?? null
+        );
       }
     });
     insertMany();
+  }
+
+  // El perfil de Pequeñaja comienza limpio (sin actividades ni rutas/material de Raúl).
+  if (account === 'pequenaja') {
+    return;
   }
 
   const actCount = db.prepare('SELECT COUNT(*) as c FROM activities').get() as { c: number };
@@ -802,13 +887,14 @@ function mapActivityRow(row: Record<string, unknown>): Activity {
     startLat: row.start_lat != null ? Number(row.start_lat) : null,
     startLon: row.start_lon != null ? Number(row.start_lon) : null,
     totalVolumeKg: row.total_volume_kg != null ? Number(row.total_volume_kg) : null,
+    doneTogether: Boolean(row.done_together),
     laps,
     extras,
     createdAt: String(row.created_at),
   };
 }
 
-export function listActivities(filters?: { sport?: string; q?: string; limit?: number }): Activity[] {
+export function listActivities(filters?: { sport?: string; q?: string; doneTogether?: boolean; limit?: number }): Activity[] {
   const db = getDb();
   const clauses: string[] = [];
   const params: unknown[] = [];
@@ -816,6 +902,9 @@ export function listActivities(filters?: { sport?: string; q?: string; limit?: n
   if (filters?.sport && filters.sport !== 'all') {
     clauses.push('a.sport = ?');
     params.push(filters.sport);
+  }
+  if (filters?.doneTogether) {
+    clauses.push('a.done_together = 1');
   }
   if (filters?.q && filters.q.trim()) {
     clauses.push('(LOWER(a.title) LIKE ? OR LOWER(COALESCE(a.description, \'\')) LIKE ?)');
@@ -906,7 +995,9 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
   const normalizedSubSport =
     input.subSport && isMismatchedSubSport(input.sport, input.subSport)
       ? defaultSubSportForSport(input.sport)
-      : input.subSport ?? null;
+      : input.sport === 'running' && input.subSport?.trim().toLowerCase() === 'asfalto'
+        ? 'Correr'
+        : input.subSport ?? null;
 
   db.prepare(`
     INSERT INTO activities (
@@ -914,8 +1005,8 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
       duration_sec, moving_time_sec, distance_meters, elevation_gain, elevation_loss,
       avg_speed_ms, max_speed_ms, avg_hr, max_hr, avg_watts, normalized_power, max_watts,
       avg_cadence, calories, tss, rpe, gear_id, world_name, polyline, start_lat, start_lon,
-      points_json, strength_logs_json, total_volume_kg, laps_json, extras_json, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      points_json, strength_logs_json, total_volume_kg, done_together, laps_json, extras_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.id,
     input.externalId ?? null,
@@ -949,6 +1040,7 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
     JSON.stringify(enrichedPoints),
     JSON.stringify(input.strengthLogs ?? []),
     input.totalVolumeKg ?? null,
+    input.doneTogether ? 1 : 0,
     JSON.stringify(input.laps ?? []),
     JSON.stringify(extras),
     input.createdAt
@@ -997,7 +1089,16 @@ export function findDuplicateActivity(startedAt: string, sport: SportType, dista
 
 export function updateActivity(
   id: string,
-  patch: Partial<{ title: string; sport: SportType; subSport: string | null; description: string | null; rpe: number | null; gearId: string | null; worldName: string | null }>
+  patch: Partial<{
+    title: string;
+    sport: SportType;
+    subSport: string | null;
+    description: string | null;
+    rpe: number | null;
+    gearId: string | null;
+    worldName: string | null;
+    doneTogether: boolean;
+  }>
 ): ActivityDetail | null {
   const existing = getActivityById(id);
   if (!existing) return null;
@@ -1006,6 +1107,7 @@ export function updateActivity(
   const nextSport = patch.sport ?? existing.sport;
   const sportChanged = Boolean(patch.sport && patch.sport !== existing.sport);
   const nextRpe = patch.rpe !== undefined ? patch.rpe : existing.rpe ?? null;
+  const nextDoneTogether = patch.doneTogether !== undefined ? Boolean(patch.doneTogether) : Boolean(existing.doneTogether);
   const nextSubSport =
     patch.subSport !== undefined
       ? patch.subSport && isMismatchedSubSport(nextSport, patch.subSport)
@@ -1036,7 +1138,7 @@ export function updateActivity(
 
   db.prepare(`
       UPDATE activities
-      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?, tss = ?
+      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?, tss = ?, done_together = ?
       WHERE id = ?
     `).run(
     patch.title ?? existing.title,
@@ -1047,6 +1149,7 @@ export function updateActivity(
     patch.gearId !== undefined ? patch.gearId : existing.gearId ?? null,
     patch.worldName !== undefined ? patch.worldName : existing.worldName ?? null,
     nextTss,
+    nextDoneTogether ? 1 : 0,
     id
   );
 
@@ -1650,3 +1753,193 @@ export function deleteSegment(id: string): boolean {
   const res = getDb().prepare('DELETE FROM segments WHERE id = ?').run(id);
   return res.changes > 0;
 }
+
+// ===== APP SETTINGS & CUSTOM PALETTES (POR PERFIL) =====
+
+function normalizeAppSettingsRow(row: Record<string, unknown> | undefined): AppSettings {
+  if (!row) {
+    return { ...DEFAULT_APP_SETTINGS };
+  }
+  const rawTheme = typeof row.theme === 'string' && VALID_THEMES.includes(row.theme as ThemeId)
+    ? (row.theme as ThemeId)
+    : DEFAULT_APP_SETTINGS.theme;
+
+  let customPalettes: CustomPalette[] = [];
+  if (typeof row.custom_palettes_json === 'string') {
+    try {
+      customPalettes = sanitizeCustomPalettes(JSON.parse(row.custom_palettes_json));
+    } catch {
+      customPalettes = [];
+    }
+  }
+
+  const rawPaletteId = typeof row.custom_palette_id === 'string' ? row.custom_palette_id.trim() : '';
+  const customPaletteId = rawPaletteId && customPalettes.some((p) => p.id === rawPaletteId) ? rawPaletteId : null;
+  const dark = rawTheme === 'nocturno' && !customPaletteId ? true : Boolean(row.dark);
+  const settingsVersion = typeof row.settings_version === 'number' && Number.isFinite(row.settings_version)
+    ? Math.max(0, Math.floor(row.settings_version))
+    : Number(row.settings_version ?? 0) || 0;
+
+  return {
+    theme: rawTheme,
+    dark,
+    customPalettes,
+    customPaletteId,
+    settingsVersion,
+    settingsSyncProtocol: SETTINGS_SYNC_PROTOCOL,
+  };
+}
+
+function writeAppSettings(db: Database.Database, account: AccountId, next: AppSettings): AppSettings {
+  const enforced: AppSettings = {
+    ...next,
+    dark: next.theme === 'nocturno' && !next.customPaletteId ? true : Boolean(next.dark),
+    customPaletteId:
+      next.customPaletteId && next.customPalettes.some((p) => p.id === next.customPaletteId)
+        ? next.customPaletteId
+        : null,
+    settingsSyncProtocol: SETTINGS_SYNC_PROTOCOL,
+  };
+
+  db.prepare(`
+    UPDATE app_settings
+    SET theme = ?, dark = ?, custom_palettes_json = ?, custom_palette_id = ?, settings_version = ?, updated_at = ?
+    WHERE id = 1
+  `).run(
+    enforced.theme,
+    enforced.dark ? 1 : 0,
+    JSON.stringify(enforced.customPalettes),
+    enforced.customPaletteId,
+    enforced.settingsVersion,
+    new Date().toISOString()
+  );
+
+  emitSettingsEvent(account, enforced);
+  return enforced;
+}
+
+export function getAppSettings(account: AccountId = currentAccountId()): AppSettings {
+  const db = getDb(account);
+  const row = db.prepare('SELECT * FROM app_settings WHERE id = 1').get() as Record<string, unknown> | undefined;
+  return normalizeAppSettingsRow(row);
+}
+
+export function updateAppSettings(
+  patch: {
+    theme?: unknown;
+    dark?: unknown;
+    customPalettes?: unknown;
+    customPaletteId?: unknown;
+  },
+  account: AccountId = currentAccountId()
+): AppSettings {
+  const db = getDb(account);
+  const current = getAppSettings(account);
+  const next: AppSettings = {
+    ...current,
+    customPalettes: [...current.customPalettes],
+  };
+
+  if (typeof patch.theme === 'string' && VALID_THEMES.includes(patch.theme as ThemeId)) {
+    next.theme = patch.theme as ThemeId;
+  }
+  if (typeof patch.dark === 'boolean') {
+    next.dark = patch.dark;
+  }
+  if (patch.customPalettes !== undefined) {
+    next.customPalettes = sanitizeCustomPalettes(patch.customPalettes);
+  }
+  if (patch.customPaletteId === null || patch.customPaletteId === '') {
+    next.customPaletteId = null;
+  } else if (typeof patch.customPaletteId === 'string') {
+    const cleanId = patch.customPaletteId.trim();
+    if (next.customPalettes.some((p) => p.id === cleanId)) {
+      next.customPaletteId = cleanId;
+    }
+  }
+
+  next.settingsVersion = current.settingsVersion + 1;
+  return writeAppSettings(db, account, next);
+}
+
+export function upsertCustomPalette(
+  paletteId: string,
+  body: Record<string, unknown>,
+  account: AccountId = currentAccountId()
+): { settings: AppSettings; palette: CustomPalette } {
+  const cleanId = paletteId.trim();
+  if (!/^[a-zA-Z0-9_-]{1,90}$/.test(cleanId)) {
+    throw new Error('Identificador de paleta inválido.');
+  }
+
+  const candidate =
+    body.palette && typeof body.palette === 'object' && !Array.isArray(body.palette)
+      ? (body.palette as Record<string, unknown>)
+      : body;
+
+  const db = getDb(account);
+  const current = getAppSettings(account);
+  const existing = current.customPalettes.find((p) => p.id === cleanId);
+  const rawBase = typeof candidate.baseTheme === 'string' && VALID_THEMES.includes(candidate.baseTheme as ThemeId)
+    ? (candidate.baseTheme as ThemeId)
+    : existing?.baseTheme ?? current.theme ?? 'calido';
+  const fallback = paletteColorsFromTheme(rawBase);
+  const name = typeof candidate.name === 'string' && candidate.name.trim()
+    ? candidate.name.trim().slice(0, 40)
+    : existing?.name ?? 'Mi paleta';
+  const createdAt = typeof candidate.createdAt === 'number' && Number.isFinite(candidate.createdAt)
+    ? candidate.createdAt
+    : existing?.createdAt ?? Date.now();
+
+  const palette: CustomPalette = {
+    id: cleanId,
+    name,
+    baseTheme: rawBase,
+    light: sanitizePaletteColors(candidate.light, existing?.light ?? fallback.light),
+    dark: sanitizePaletteColors(candidate.dark, existing?.dark ?? fallback.dark),
+    createdAt,
+  };
+
+  if (!existing && current.customPalettes.length >= 24) {
+    throw new Error('Ya hay 24 paletas personalizadas guardadas.');
+  }
+
+  const nextPalettes = existing
+    ? current.customPalettes.map((p) => (p.id === cleanId ? palette : p))
+    : [palette, ...current.customPalettes];
+
+  const activate = body.activate !== false;
+  const next = writeAppSettings(db, account, {
+    ...current,
+    theme: activate ? palette.baseTheme : current.theme,
+    customPalettes: nextPalettes,
+    customPaletteId: activate ? palette.id : current.customPaletteId,
+    settingsVersion: current.settingsVersion + 1,
+  });
+
+  return { settings: next, palette };
+}
+
+export function deleteCustomPalette(
+  paletteId: string,
+  account: AccountId = currentAccountId()
+): { settings: AppSettings; deleted: boolean } {
+  const db = getDb(account);
+  const current = getAppSettings(account);
+  const nextPalettes = current.customPalettes.filter((p) => p.id !== paletteId);
+  const deleted = nextPalettes.length !== current.customPalettes.length;
+
+  if (!deleted) {
+    return { settings: current, deleted: false };
+  }
+
+  const next = writeAppSettings(db, account, {
+    ...current,
+    customPalettes: nextPalettes,
+    customPaletteId: current.customPaletteId === paletteId ? null : current.customPaletteId,
+    settingsVersion: current.settingsVersion + 1,
+  });
+
+  return { settings: next, deleted: true };
+}
+

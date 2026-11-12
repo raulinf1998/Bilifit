@@ -183,6 +183,7 @@ export interface Activity {
   startLat?: number | null;
   startLon?: number | null;
   totalVolumeKg?: number | null;
+  doneTogether?: boolean;
   laps?: ActivityLap[];
   extras?: ActivityExtras | null;
   createdAt: string;
@@ -387,12 +388,14 @@ export interface HuaweiImportLog {
 }
 
 export interface HuaweiConnectionStatus {
+  accountId?: 'raul' | 'pequenaja';
   watchDir: string;
   watchDirExists: boolean;
   watchDirFileCount: number;
   googleConfigured: boolean;
   googleConnected: boolean;
   hasGoogleEnvCredentials: boolean;
+  sharedOAuthAppConfigured?: boolean;
   googleClientId?: string | null;
   googleAccountEmail?: string | null;
   driveFolderId?: string | null;

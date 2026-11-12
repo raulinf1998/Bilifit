@@ -31,7 +31,7 @@ export interface HealthSyncFileIdentity {
 const HUAWEI_SPORT_MAP: Record<number, { sport: SportType; subSport: string; fallbackTitle: string }> = {
   2: { sport: 'mountain', subSport: 'Senderismo', fallbackTitle: 'Ruta de Montaña' },
   3: { sport: 'cycling', subSport: 'Ciclismo', fallbackTitle: 'Salida en Bici' },
-  4: { sport: 'running', subSport: 'Asfalto', fallbackTitle: 'Carrera' },
+  4: { sport: 'running', subSport: 'Correr', fallbackTitle: 'Carrera' },
   5: { sport: 'walking', subSport: 'Caminar', fallbackTitle: 'Caminata' },
   101: { sport: 'running', subSport: 'Cinta / Interior', fallbackTitle: 'Carrera en Cinta' },
   102: { sport: 'running', subSport: 'Natación Piscina', fallbackTitle: 'Natación en Piscina' },

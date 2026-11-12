@@ -357,7 +357,7 @@ export default function HomeWorkoutsPage() {
               className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-colors ${
                 active
                   ? 'bg-purple-600 text-white shadow-sm shadow-purple-600/30'
-                  : 'border hover:bg-slate-500/10'
+                  : 'border hover:bg-sunken'
               }`}
               style={!active ? { borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' } : undefined}
             >
@@ -369,7 +369,7 @@ export default function HomeWorkoutsPage() {
       </div>
 
       {savedBanner && (
-        <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300 flex items-center justify-between">
+        <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
           <span>{savedBanner}</span>
           <button type="button" onClick={() => setTab('routines')} className="underline font-semibold text-xs">
             Ir a Mis Rutinas
@@ -480,7 +480,7 @@ export default function HomeWorkoutsPage() {
                       onClick={() => toggleSessionEquipment(eq.id)}
                       className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                         selected
-                          ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                          ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40'
                           : 'opacity-50 hover:opacity-80'
                       }`}
                       style={!selected ? { borderColor: 'var(--border-subtle)' } : undefined}
@@ -499,7 +499,7 @@ export default function HomeWorkoutsPage() {
             <button
               type="button"
               onClick={() => handleGenerate(1)}
-              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 to-[#fc4c02] hover:opacity-95 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-purple-600/20"
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 to-primary hover:opacity-95 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-purple-600/20"
             >
               <Sparkles className="h-4 w-4" />
               Generar Rutina con mi Material
@@ -533,7 +533,7 @@ export default function HomeWorkoutsPage() {
                     <button
                       type="button"
                       onClick={() => handleGenerate(1)}
-                      className="inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold hover:bg-slate-500/10"
+                      className="inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold hover:bg-sunken"
                       style={{ borderColor: 'var(--border-subtle)' }}
                     >
                       <RefreshCw className="h-3.5 w-3.5" /> Regenerar
@@ -541,7 +541,7 @@ export default function HomeWorkoutsPage() {
                     <button
                       type="button"
                       onClick={saveGeneratedRoutine}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-purple-500/40 bg-purple-500/15 px-3 py-2 text-xs font-semibold text-purple-300 hover:bg-purple-500/25"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-purple-500/40 bg-purple-500/15 px-3 py-2 text-xs font-semibold text-purple-700 dark:text-purple-300 hover:bg-purple-500/25"
                     >
                       <BookmarkPlus className="h-3.5 w-3.5" /> Guardar Rutina
                     </button>
@@ -572,18 +572,18 @@ export default function HomeWorkoutsPage() {
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-xs font-bold text-purple-400">#{idx + 1}</span>
                             <span className="font-semibold text-sm">{item.exerciseName}</span>
-                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-500/15" style={{ color: 'var(--text-secondary)' }}>
+                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-sunken" style={{ color: 'var(--text-secondary)' }}>
                               {MUSCLE_LABELS[item.muscleGroup]}
                             </span>
                           </div>
                           <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                             {item.requiredEquipment.length === 0 ? (
-                              <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300">
+                              <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
                                 Sin material (peso corporal)
                               </span>
                             ) : (
                               item.requiredEquipment.map((eqId) => (
-                                <span key={eqId} className="text-[11px] px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300">
+                                <span key={eqId} className="text-[11px] px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-700 dark:text-cyan-300">
                                   {equipmentNameMap.get(eqId) ?? eqId}
                                 </span>
                               ))
@@ -602,7 +602,7 @@ export default function HomeWorkoutsPage() {
                           <button
                             type="button"
                             onClick={() => openSwapModal(idx)}
-                            className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium hover:bg-slate-500/10"
+                            className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium hover:bg-sunken"
                             style={{ borderColor: 'var(--border-subtle)' }}
                             title="Cambiar por otro ejercicio compatible con tu material"
                           >
@@ -619,7 +619,7 @@ export default function HomeWorkoutsPage() {
 
                       {swapIndex === idx && (
                         <div className="pt-2 border-t space-y-2" style={{ borderColor: 'var(--border-subtle)' }}>
-                          <div className="text-xs font-semibold text-purple-300">
+                          <div className="text-xs font-semibold text-purple-700 dark:text-purple-300">
                             Alternativas compatibles con tu material seleccionado:
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -665,7 +665,7 @@ export default function HomeWorkoutsPage() {
             {loading ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {[1, 2, 3, 4, 5, 6].map((i) => (
-                  <div key={i} className="h-24 rounded-xl bg-slate-800/40 animate-pulse" />
+                  <div key={i} className="h-24 rounded-xl bg-sunken animate-pulse" />
                 ))}
               </div>
             ) : (
@@ -771,7 +771,7 @@ export default function HomeWorkoutsPage() {
             <div key={rt.id} className="card-surface p-5 flex flex-col justify-between space-y-4">
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                  <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/30">
                     {ROUTINE_GOAL_LABELS[rt.goal]?.label ?? rt.goal}
                   </span>
                   <span className="text-xs tabular-nums" style={{ color: 'var(--text-muted)' }}>
@@ -792,8 +792,8 @@ export default function HomeWorkoutsPage() {
                       key={eqId}
                       className={`text-[11px] px-2 py-0.5 rounded border ${
                         ownedSet.has(eqId)
-                          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                          : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                          : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
                       }`}
                     >
                       {equipmentNameMap.get(eqId) ?? eqId}
@@ -865,7 +865,7 @@ export default function HomeWorkoutsPage() {
                 className="rounded-xl border p-4 space-y-3"
                 style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
               >
-                <div className="text-xs font-bold text-purple-300">Crear Ejercicio Personalizado</div>
+                <div className="text-xs font-bold text-purple-700 dark:text-purple-300">Crear Ejercicio Personalizado</div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <input
                     required
@@ -927,7 +927,7 @@ export default function HomeWorkoutsPage() {
                             )
                           }
                           className={`px-2 py-1 rounded text-[11px] border ${
-                            active ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300' : ''
+                            active ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-700 dark:text-cyan-300' : ''
                           }`}
                           style={!active ? { borderColor: 'var(--border-subtle)' } : undefined}
                         >
@@ -990,11 +990,11 @@ export default function HomeWorkoutsPage() {
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold text-sm">{ex.name}</span>
-                        <span className="text-[11px] px-2 py-0.5 rounded bg-slate-500/15" style={{ color: 'var(--text-secondary)' }}>
+                        <span className="text-[11px] px-2 py-0.5 rounded bg-sunken" style={{ color: 'var(--text-secondary)' }}>
                           {MUSCLE_LABELS[ex.muscleGroup]}
                         </span>
                         {!compatible && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300">
                             Falta material
                           </span>
                         )}
@@ -1025,7 +1025,7 @@ export default function HomeWorkoutsPage() {
                           },
                         ])
                       }
-                      className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-purple-600/20 text-purple-300 border border-purple-500/30 px-3 py-1.5 text-xs font-semibold hover:bg-purple-600/30"
+                      className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-purple-600/20 text-purple-700 dark:text-purple-300 border border-purple-500/30 px-3 py-1.5 text-xs font-semibold hover:bg-purple-600/30"
                     >
                       <Plus className="h-3.5 w-3.5" /> Añadir
                     </button>
@@ -1038,7 +1038,7 @@ export default function HomeWorkoutsPage() {
           {/* Borrador de rutina manual */}
           <form onSubmit={saveManualRoutine} className="lg:col-span-5 card-surface p-5 space-y-4 h-fit">
             <h2 className="text-base font-bold flex items-center gap-2">
-              <Flame className="h-4 w-4 text-[#fc4c02]" />
+              <Flame className="h-4 w-4 text-primary" />
               Tu Rutina en Construcción ({builderItems.length})
             </h2>
 

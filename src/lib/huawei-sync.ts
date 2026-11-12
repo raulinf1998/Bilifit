@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { currentAccountId } from '@/lib/account-context';
+import type { AccountId } from '@/lib/accounts';
 import { decryptSecret, encryptSecret } from '@/lib/crypto';
 import {
   createActivity,
@@ -65,16 +67,18 @@ interface LocalFileEntry {
   size: number;
 }
 
-let inFlightHuaweiSync: Promise<HuaweiSyncResult> | null = null;
+const inFlightHuaweiSyncByAccount = new Map<AccountId, Promise<HuaweiSyncResult>>();
 
-export function getDefaultHuaweiWatchDir(): string {
+export function getDefaultHuaweiWatchDir(account: AccountId = currentAccountId()): string {
   const configured = process.env.HUAWEI_SYNC_DIR?.trim();
   if (configured) {
-    return path.isAbsolute(configured)
+    const resolved = path.isAbsolute(configured)
       ? configured
       : path.join(/*turbopackIgnore: true*/ process.cwd(), configured);
+    return account === 'raul' ? resolved : `${resolved}-${account}`;
   }
-  return path.join(path.dirname(getDbPath()), 'huawei-sync');
+  const folderName = account === 'raul' ? 'huawei-sync' : `huawei-sync-${account}`;
+  return path.join(path.dirname(getDbPath(account)), folderName);
 }
 
 function getHuaweiEnvConfig() {
@@ -122,16 +126,50 @@ function ensureHuaweiConfigRow(): HuaweiDbRow {
   );
 }
 
-function resolveGoogleOAuthCredentials(row: HuaweiDbRow): { clientId: string | null; clientSecret: string | null; fromEnv: boolean } {
+function getSharedRaulGoogleOAuthCredentials(): { clientId: string; clientSecret: string } | null {
+  if (currentAccountId() === 'raul') return null;
+  try {
+    const raulDb = getDb('raul');
+    const raulRow = raulDb
+      .prepare('SELECT google_client_id, google_client_secret_enc FROM huawei_config WHERE id = 1')
+      .get() as { google_client_id: string | null; google_client_secret_enc: string | null } | undefined;
+    const clientId = raulRow?.google_client_id?.trim() || null;
+    const clientSecret = raulRow?.google_client_secret_enc
+      ? decryptSecret(raulRow.google_client_secret_enc)
+      : null;
+    if (clientId && clientSecret) {
+      return { clientId, clientSecret };
+    }
+  } catch {
+    // ignorar si la BD de Raúl aún no tiene credenciales OAuth
+  }
+  return null;
+}
+
+function resolveGoogleOAuthCredentials(row: HuaweiDbRow): {
+  clientId: string | null;
+  clientSecret: string | null;
+  fromEnv: boolean;
+  sharedFromRaul: boolean;
+} {
   const env = getHuaweiEnvConfig();
   const dbSecret = row.google_client_secret_enc ? decryptSecret(row.google_client_secret_enc) : null;
   if (row.google_client_id && dbSecret) {
-    return { clientId: row.google_client_id, clientSecret: dbSecret, fromEnv: false };
+    return { clientId: row.google_client_id, clientSecret: dbSecret, fromEnv: false, sharedFromRaul: false };
   }
   if (env.googleClientId && env.googleClientSecret) {
-    return { clientId: env.googleClientId, clientSecret: env.googleClientSecret, fromEnv: true };
+    return { clientId: env.googleClientId, clientSecret: env.googleClientSecret, fromEnv: true, sharedFromRaul: false };
   }
-  return { clientId: row.google_client_id ?? env.googleClientId, clientSecret: dbSecret ?? env.googleClientSecret, fromEnv: false };
+  const shared = getSharedRaulGoogleOAuthCredentials();
+  if (shared) {
+    return { clientId: shared.clientId, clientSecret: shared.clientSecret, fromEnv: false, sharedFromRaul: true };
+  }
+  return {
+    clientId: row.google_client_id ?? env.googleClientId,
+    clientSecret: dbSecret ?? env.googleClientSecret,
+    fromEnv: false,
+    sharedFromRaul: false,
+  };
 }
 
 function isSupportedWatchFileName(name: string): boolean {
@@ -227,12 +265,14 @@ export function getHuaweiStatus(originHint?: string): HuaweiConnectionStatus {
     Date.now() - Date.parse(row.sync_started_at) > STALE_LOCK_MS;
 
   return {
+    accountId: currentAccountId(),
     watchDir,
     watchDirExists,
     watchDirFileCount: bundledLocalCount,
     googleConfigured: Boolean(creds.clientId && creds.clientSecret),
     googleConnected: Boolean(row.google_refresh_token || row.google_access_token),
     hasGoogleEnvCredentials: Boolean(env.googleClientId && env.googleClientSecret),
+    sharedOAuthAppConfigured: Boolean(creds.sharedFromRaul || creds.fromEnv),
     googleClientId: creds.clientId,
     googleAccountEmail: row.google_account_email || null,
     driveFolderId: row.drive_folder_id || null,
@@ -413,6 +453,7 @@ export async function exchangeGoogleDriveCode(
           google_refresh_token = ?,
           google_token_expires_at = ?,
           google_account_email = ?,
+          auto_sync_enabled = 1,
           last_error = NULL
       WHERE id = 1
     `)
@@ -766,8 +807,10 @@ export async function syncHuaweiActivities(
     fetchImpl?: FetchLike;
   } = {}
 ): Promise<HuaweiSyncResult> {
-  if (inFlightHuaweiSync) {
-    return inFlightHuaweiSync;
+  const account = currentAccountId();
+  const existingFlight = inFlightHuaweiSyncByAccount.get(account);
+  if (existingFlight) {
+    return existingFlight;
   }
 
   const run = async (): Promise<HuaweiSyncResult> => {
@@ -959,18 +1002,21 @@ export async function syncHuaweiActivities(
     }
   };
 
-  inFlightHuaweiSync = run().finally(() => {
-    inFlightHuaweiSync = null;
+  const promise = run().finally(() => {
+    inFlightHuaweiSyncByAccount.delete(account);
   });
-  return inFlightHuaweiSync;
+  inFlightHuaweiSyncByAccount.set(account, promise);
+  return promise;
 }
 
 export async function runScheduledHuaweiSyncIfDue(): Promise<HuaweiSyncResult | null> {
-  if (inFlightHuaweiSync) return null;
+  const account = currentAccountId();
+  if (inFlightHuaweiSyncByAccount.has(account)) return null;
   const status = getHuaweiStatus();
   if (!status.autoSyncEnabled) return null;
-  if (!status.googleConnected && !status.watchDirExists) return null;
-  if (!status.googleConnected && status.watchDirFileCount === 0) return null;
+  const hasReadyDrive = Boolean(status.googleConnected && status.driveFolderId);
+  const hasReadyFolder = Boolean(status.watchDirExists && status.watchDirFileCount > 0);
+  if (!hasReadyDrive && !hasReadyFolder) return null;
   if (status.syncInProgress) return null;
 
   const intervalMs = Math.max(5, status.syncIntervalMin) * 60_000;

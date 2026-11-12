@@ -131,8 +131,8 @@ export default function CyclingMyWhooshPage() {
             <span>FTP ACTUAL</span>
             <Gauge className="h-4 w-4 text-cyan-400" />
           </div>
-          <div className="text-2xl font-bold text-cyan-400 tabular-nums">
-            {ftp} W <span className="text-sm font-normal text-slate-400">({wKg} W/kg)</span>
+          <div className="text-2xl font-bold text-cyan-600 dark:text-cyan-400 tabular-nums">
+            {ftp} W <span className="text-sm font-normal text-ink3">({wKg} W/kg)</span>
           </div>
           <form onSubmit={saveFtp} className="flex items-center gap-2 pt-1">
             <input
@@ -144,7 +144,7 @@ export default function CyclingMyWhooshPage() {
               className="w-20 rounded-lg border px-2 py-1 text-xs tabular-nums"
               style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
             />
-            <button type="submit" className="px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 text-xs font-semibold hover:bg-cyan-500/30">
+            <button type="submit" className="px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 text-xs font-semibold hover:bg-cyan-500/30">
               {savedNotice ? '¡Guardado!' : 'Actualizar FTP'}
             </button>
           </form>
@@ -221,14 +221,14 @@ export default function CyclingMyWhooshPage() {
                   type="button"
                   onClick={() => setSelectedWorldId(w.id)}
                   className={`text-left rounded-xl border p-2.5 transition-all ${
-                    active ? 'border-cyan-400 bg-cyan-500/10' : 'hover:border-slate-600'
+                    active ? 'border-cyan-500 bg-cyan-500/10' : 'hover:border-line2'
                   }`}
                   style={!active ? { background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' } : undefined}
                 >
                   <div className="flex items-center justify-between gap-1">
                     <span className="font-semibold text-xs truncate">{w.name}</span>
                     {st && st.count > 0 && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-semibold">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 font-semibold">
                         {st.count}
                       </span>
                     )}
@@ -325,7 +325,7 @@ export default function CyclingMyWhooshPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <SportBadge sport={act.sport} subSport={act.subSport} />
                   {worldLabel && (
-                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300">
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-700 dark:text-cyan-300">
                       Mundo: {worldLabel}
                     </span>
                   )}

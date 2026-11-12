@@ -243,7 +243,7 @@ export function mapStravaSport(
   if (t === 'weighttraining' || t === 'workout' || t === 'crossfit' || t === 'yoga') {
     return { sport: 'strength', subSport: 'Fuerza / Entrenamiento' };
   }
-  return { sport: 'running', subSport: 'Asfalto' };
+  return { sport: 'running', subSport: 'Correr' };
 }
 
 interface StravaSummaryActivity {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { withAccount } from '@/lib/account-context';
 import { getHuaweiStatus, updateHuaweiPreferences } from '@/lib/huawei-sync';
 
 function baseUrlFromReq(req: NextRequest): string {
@@ -8,32 +9,36 @@ function baseUrlFromReq(req: NextRequest): string {
 }
 
 export async function GET(req: NextRequest) {
-  return NextResponse.json({
-    status: getHuaweiStatus(baseUrlFromReq(req)),
-  });
+  return withAccount(req, () =>
+    NextResponse.json({
+      status: getHuaweiStatus(baseUrlFromReq(req)),
+    })
+  );
 }
 
 export async function PATCH(req: NextRequest) {
-  try {
-    const body = (await req.json().catch(() => ({}))) as {
-      watchDir?: string;
-      googleClientId?: string;
-      googleClientSecret?: string;
-      driveFolderId?: string | null;
-      driveFolderName?: string | null;
-      autoSyncEnabled?: boolean;
-      syncIntervalMin?: number;
-    };
+  return withAccount(req, async () => {
+    try {
+      const body = (await req.json().catch(() => ({}))) as {
+        watchDir?: string;
+        googleClientId?: string;
+        googleClientSecret?: string;
+        driveFolderId?: string | null;
+        driveFolderName?: string | null;
+        autoSyncEnabled?: boolean;
+        syncIntervalMin?: number;
+      };
 
-    updateHuaweiPreferences(body);
-    return NextResponse.json({
-      ok: true,
-      status: getHuaweiStatus(baseUrlFromReq(req)),
-    });
-  } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Error guardando configuración de Huawei Health.' },
-      { status: 400 }
-    );
-  }
+      updateHuaweiPreferences(body);
+      return NextResponse.json({
+        ok: true,
+        status: getHuaweiStatus(baseUrlFromReq(req)),
+      });
+    } catch (err) {
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : 'Error guardando configuración de Huawei Health.' },
+        { status: 400 }
+      );
+    }
+  });
 }

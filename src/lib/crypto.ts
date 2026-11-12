@@ -1,14 +1,15 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getDbPath } from '@/lib/db';
+import { getBaseDbPath } from '@/lib/db';
 
 function getEncryptionKey(): Buffer {
   const envSecret = process.env.BILIFIT_SECRET?.trim();
   if (envSecret) {
     return crypto.createHash('sha256').update(envSecret).digest();
   }
-  const dbDir = path.dirname(getDbPath());
+  const baseDbPath = getBaseDbPath();
+  const dbDir = path.dirname(baseDbPath);
   const keyFile = path.join(dbDir, '.bilifit-secret');
   try {
     if (fs.existsSync(keyFile)) {
@@ -22,7 +23,7 @@ function getEncryptionKey(): Buffer {
     fs.writeFileSync(keyFile, raw.toString('hex'), { mode: 0o600 });
     return raw;
   } catch {
-    return crypto.createHash('sha256').update(`bilifit-local:${getDbPath()}`).digest();
+    return crypto.createHash('sha256').update(`bilifit-local:${baseDbPath}`).digest();
   }
 }
 

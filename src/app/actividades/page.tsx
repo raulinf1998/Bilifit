@@ -2,8 +2,10 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { Plus, Search, Trash2, X } from 'lucide-react';
+import { Heart, Plus, Search, Trash2, X } from 'lucide-react';
+import { useActiveAccount } from '@/components/AccountProvider';
 import { SportBadge } from '@/components/SportBadge';
+import { TogetherToggleButton, getTogetherLabel } from '@/components/TogetherControl';
 import { formatDistanceKm, formatDuration, formatPaceMinKm, formatSpeedKmh } from '@/lib/metrics';
 import type { Activity, GearItem, SportType } from '@/types';
 
@@ -19,9 +21,13 @@ const FILTERS: Array<{ id: string; label: string }> = [
 ];
 
 export default function ActivitiesPage() {
+  const activeAccount = useActiveAccount();
+  const togetherLabel = getTogetherLabel(activeAccount);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [gear, setGear] = useState<GearItem[]>([]);
   const [sport, setSport] = useState('all');
+  const [onlyTogether, setOnlyTogether] = useState(false);
+  const [togglingIds, setTogglingIds] = useState<Record<string, boolean>>({});
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
   const [showManual, setShowManual] = useState(false);
@@ -36,24 +42,26 @@ export default function ActivitiesPage() {
   const [avgWatts, setAvgWatts] = useState('');
   const [rpe, setRpe] = useState(6);
   const [gearId, setGearId] = useState('');
+  const [doneTogether, setDoneTogether] = useState(false);
   const [description, setDescription] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     const params = new URLSearchParams();
     if (sport !== 'all') params.set('sport', sport);
+    if (onlyTogether) params.set('together', '1');
     if (q.trim()) params.set('q', q.trim());
 
     const [actRes, gearRes] = await Promise.all([
-      fetch(`/api/activities?${params.toString()}`),
-      fetch('/api/gear'),
+      fetch(`/api/activities?${params.toString()}`, { cache: 'no-store' }),
+      fetch('/api/gear', { cache: 'no-store' }),
     ]);
     const actData = await actRes.json();
     const gearData = await gearRes.json();
     setActivities(actData.activities ?? []);
     setGear(gearData.gear ?? []);
     setLoading(false);
-  }, [sport, q]);
+  }, [sport, onlyTogether, q]);
 
   useEffect(() => {
     load();
@@ -74,14 +82,40 @@ export default function ActivitiesPage() {
         avgWatts: avgWatts ? Number(avgWatts) : null,
         rpe,
         gearId: gearId || null,
+        doneTogether,
         description,
       }),
     });
     if (res.ok) {
       setTitle('');
       setDescription('');
+      setDoneTogether(false);
       setShowManual(false);
       await load();
+    }
+  }
+
+  async function handleToggleTogether(e: React.MouseEvent, act: Activity) {
+    e.preventDefault();
+    e.stopPropagation();
+    const nextVal = !Boolean(act.doneTogether);
+    setTogglingIds((prev) => ({ ...prev, [act.id]: true }));
+    setActivities((prev) =>
+      prev.map((item) => (item.id === act.id ? { ...item, doneTogether: nextVal } : item))
+    );
+    try {
+      const res = await fetch(`/api/activities/${act.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ doneTogether: nextVal }),
+      });
+      if (!res.ok) {
+        await load();
+      } else if (onlyTogether && !nextVal) {
+        setActivities((prev) => prev.filter((item) => item.id !== act.id));
+      }
+    } finally {
+      setTogglingIds((prev) => ({ ...prev, [act.id]: false }));
     }
   }
 
@@ -105,7 +139,7 @@ export default function ActivitiesPage() {
         <button
           type="button"
           onClick={() => setShowManual((v) => !v)}
-          className="inline-flex items-center gap-2 rounded-xl bg-[#fc4c02] hover:bg-[#e54400] px-4 py-2.5 text-sm font-semibold text-white transition-colors"
+          className="inline-flex items-center gap-2 rounded-xl bg-primary hover:bg-primaryhover px-4 py-2.5 text-sm font-semibold text-onprimary transition-colors"
         >
           {showManual ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
           {showManual ? 'Cancelar' : 'Registrar Manual'}
@@ -254,9 +288,17 @@ export default function ActivitiesPage() {
                 max={10}
                 value={rpe}
                 onChange={(e) => setRpe(Number(e.target.value))}
-                className="w-full accent-[#fc4c02] mt-2"
+                className="w-full accent-primary mt-2"
               />
             </div>
+          </div>
+
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <TogetherToggleButton
+              compact
+              active={doneTogether}
+              onClick={() => setDoneTogether((v) => !v)}
+            />
           </div>
 
           <textarea
@@ -271,7 +313,7 @@ export default function ActivitiesPage() {
           <div className="flex justify-end">
             <button
               type="submit"
-              className="rounded-xl bg-emerald-500 hover:bg-emerald-600 px-5 py-2 text-sm font-semibold text-white"
+              className="rounded-xl bg-emerald-600 hover:bg-emerald-500 px-5 py-2 text-sm font-semibold text-white"
             >
               Guardar Actividad
             </button>
@@ -288,13 +330,26 @@ export default function ActivitiesPage() {
               type="button"
               onClick={() => setSport(f.id)}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
-                sport === f.id ? 'bg-[#fc4c02] text-white border-[#fc4c02]' : 'hover:bg-slate-500/10'
+                sport === f.id ? 'bg-primary text-onprimary border-primary' : 'hover:bg-sunken'
               }`}
               style={sport !== f.id ? { borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' } : undefined}
             >
               {f.label}
             </button>
           ))}
+          <button
+            type="button"
+            aria-pressed={onlyTogether}
+            onClick={() => setOnlyTogether((v) => !v)}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
+              onlyTogether
+                ? 'bg-rose-500 text-white border-rose-500'
+                : 'hover:bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/35'
+            }`}
+          >
+            <Heart className={`h-3.5 w-3.5 ${onlyTogether ? 'fill-current' : ''}`} />
+            {togetherLabel}
+          </button>
         </div>
 
         <div className="relative w-full md:w-64">
@@ -313,7 +368,7 @@ export default function ActivitiesPage() {
       {loading ? (
         <div className="space-y-3">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-20 rounded-2xl bg-slate-800/40 animate-pulse" />
+            <div key={i} className="h-20 rounded-2xl bg-sunken animate-pulse" />
           ))}
         </div>
       ) : activities.length === 0 ? (
@@ -329,7 +384,7 @@ export default function ActivitiesPage() {
             <Link
               key={act.id}
               href={`/actividades/${act.id}`}
-              className="card-surface p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-[#fc4c02]/50 transition-colors"
+              className="card-surface p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-primary/50 transition-colors"
             >
               <div className="space-y-1.5">
                 <div className="flex flex-wrap items-center gap-2">
@@ -341,7 +396,7 @@ export default function ActivitiesPage() {
                     {act.source}
                   </span>
                   {act.worldName && (
-                    <span className="text-[11px] px-2 py-0.5 rounded-md bg-cyan-500/15 text-cyan-300">
+                    <span className="text-[11px] px-2 py-0.5 rounded-md bg-cyan-500/15 text-cyan-700 dark:text-cyan-300">
                       {act.worldName}
                     </span>
                   )}
@@ -416,14 +471,32 @@ export default function ActivitiesPage() {
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={(e) => handleDelete(e, act.id)}
-                  className="p-2 rounded-lg text-rose-400 hover:bg-rose-500/15 transition-colors"
-                  title="Eliminar actividad"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    disabled={Boolean(togglingIds[act.id])}
+                    aria-pressed={Boolean(act.doneTogether)}
+                    onClick={(e) => handleToggleTogether(e, act)}
+                    className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-all ${
+                      act.doneTogether
+                        ? 'border-rose-500 bg-rose-500 text-white shadow-sm hover:bg-rose-600'
+                        : 'border-line bg-surface text-ink3 hover:border-rose-500/40 hover:text-rose-600 dark:hover:text-rose-300'
+                    }`}
+                    title={act.doneTogether ? `Quitar «${togetherLabel}»` : `Marcar «${togetherLabel}»`}
+                  >
+                    <Heart className={`h-3 w-3 ${act.doneTogether ? 'fill-current' : ''}`} />
+                    <span className="hidden sm:inline">{togetherLabel}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(e) => handleDelete(e, act.id)}
+                    className="p-2 rounded-lg text-rose-600 dark:text-rose-400 hover:bg-rose-500/15 transition-colors"
+                    title="Eliminar actividad"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             </Link>
           ))}

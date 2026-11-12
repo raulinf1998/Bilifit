@@ -6,6 +6,17 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  async headers() {
+    return [
+      {
+        source: '/api/:path*',
+        headers: [
+          { key: 'Cache-Control', value: 'no-store, no-cache, must-revalidate, proxy-revalidate' },
+          { key: 'Vary', value: 'Cookie' },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;
