@@ -53,7 +53,7 @@ function mapFitSport(
   }
 
   if (sport.includes('walking') || sport === 'walk') {
-    return { sport: 'mountain', subSport: 'Caminata' };
+    return { sport: 'walking', subSport: 'Caminar' };
   }
 
   if (sport.includes('running') || sport === 'run') {
@@ -70,6 +70,10 @@ function mapFitSport(
 
   if (sport.includes('training') || sub.includes('strength')) {
     return { sport: 'strength', subSport: 'Fuerza' };
+  }
+
+  if (fn.includes('walking') || fn.includes('caminar') || fn.includes('caminata')) {
+    return { sport: 'walking', subSport: 'Caminar' };
   }
 
   return { sport: 'running', subSport: sportRaw || 'Actividad FIT' };
@@ -218,12 +222,16 @@ export async function parseFitBuffer(buffer: Buffer, fileName = 'actividad.fit')
       const dur = Math.round(lap.total_elapsed_time ?? lap.total_timer_time ?? 0);
       const mov = Math.round(lap.total_timer_time ?? dur);
       const rawLapCad = lap.avg_cadence;
+      const shouldDoubleLapCad =
+        rawLapCad !== undefined &&
+        (((mapped.sport === 'running' || mapped.sport === 'mountain') && rawLapCad < 115) ||
+          (mapped.sport === 'walking' && rawLapCad < 80));
       const lapCad =
-        rawLapCad !== undefined && (mapped.sport === 'running' || mapped.sport === 'mountain') && rawLapCad < 115
-          ? Math.round(rawLapCad * 2)
-          : rawLapCad !== undefined
-            ? Math.round(rawLapCad)
-            : null;
+        rawLapCad !== undefined
+          ? shouldDoubleLapCad
+            ? Math.round(rawLapCad * 2)
+            : Math.round(rawLapCad)
+          : null;
       const lapSpeed = lap.enhanced_avg_speed ?? lap.avg_speed ?? (mov > 0 && dist > 0 ? dist / mov : null);
       const lapMaxSpeed = lap.enhanced_max_speed ?? lap.max_speed ?? null;
 
@@ -260,12 +268,16 @@ export async function parseFitBuffer(buffer: Buffer, fileName = 'actividad.fit')
     session?.normalized_power ?? (wattsCount > 10 ? calculateNormalizedPower(enrichedPoints) ?? undefined : undefined);
 
   const rawSessionCad = session?.avg_cadence ?? (cadCount > 0 ? Math.round(cadSum / cadCount) : undefined);
+  const shouldDoubleSessionCad =
+    rawSessionCad !== undefined &&
+    (((mapped.sport === 'running' || mapped.sport === 'mountain') && rawSessionCad < 115) ||
+      (mapped.sport === 'walking' && rawSessionCad < 80));
   const avgCadence =
-    rawSessionCad !== undefined && (mapped.sport === 'running' || mapped.sport === 'mountain') && rawSessionCad < 115
-      ? Math.round(rawSessionCad * 2)
-      : rawSessionCad !== undefined
-        ? Math.round(rawSessionCad)
-        : undefined;
+    rawSessionCad !== undefined
+      ? shouldDoubleSessionCad
+        ? Math.round(rawSessionCad * 2)
+        : Math.round(rawSessionCad)
+      : undefined;
 
   const avgSpeedMs =
     session?.avg_speed ??

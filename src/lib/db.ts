@@ -61,9 +61,26 @@ export function getDb(): Database.Database {
   initSchema(db);
   seedIfEmpty(db);
   backfillMyWhooshWorlds(db);
+  backfillWalkingActivities(db);
 
   dbInstance = db;
   return dbInstance;
+}
+
+export function backfillWalkingActivities(db: Database.Database = getDb()): number {
+  const res = db
+    .prepare(
+      `UPDATE activities
+       SET sport = 'walking',
+           sub_sport = 'Caminar'
+       WHERE sport = 'mountain'
+         AND (
+           sub_sport = 'Caminata'
+           OR external_id LIKE 'huawei_ht_%_5'
+         )`
+    )
+    .run();
+  return res.changes;
 }
 
 export function backfillMyWhooshWorlds(db: Database.Database = getDb()): number {

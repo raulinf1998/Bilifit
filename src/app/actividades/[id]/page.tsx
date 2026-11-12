@@ -227,7 +227,7 @@ export default function ActivityDetailPage() {
 
   const ftp = profile?.ftpWatts ?? 245;
   const weightKg = profile?.weightKg ?? 72;
-  const isPaceSport = activity.sport === 'running' || activity.sport === 'mountain';
+  const isPaceSport = activity.sport === 'running' || activity.sport === 'mountain' || activity.sport === 'walking';
   const hasGps =
     activity.points.some((p) => typeof p.lat === 'number' && typeof p.lon === 'number') ||
     Boolean(activity.polyline) ||
@@ -331,6 +331,7 @@ export default function ActivityDetailPage() {
                 <option value="running">Correr</option>
                 <option value="mywhoosh">MyWhoosh / Bici Indoor</option>
                 <option value="mountain">Montaña / Trail</option>
+                <option value="walking">Caminar</option>
                 <option value="cycling">Ciclismo Exterior</option>
                 <option value="strength">Fuerza en Casa</option>
               </select>

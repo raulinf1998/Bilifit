@@ -61,7 +61,9 @@ function SegmentsContent() {
     await loadList();
   }
 
-  const isPace = selectedSegment ? selectedSegment.sport === 'running' || selectedSegment.sport === 'mountain' : false;
+  const isPace = selectedSegment
+    ? selectedSegment.sport === 'running' || selectedSegment.sport === 'mountain' || selectedSegment.sport === 'walking'
+    : false;
 
   return (
     <div className="space-y-6">
@@ -81,6 +83,7 @@ function SegmentsContent() {
             { id: 'all', label: 'Todos' },
             { id: 'running', label: 'Correr' },
             { id: 'mountain', label: 'Montaña' },
+            { id: 'walking', label: 'Caminar' },
             { id: 'mywhoosh', label: 'MyWhoosh' },
             { id: 'cycling', label: 'Ciclismo' },
           ].map((f) => (

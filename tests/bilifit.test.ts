@@ -18,6 +18,8 @@ import {
   calculateNormalizedPower,
   calculatePMC,
   computePowerCurve,
+  sportColor,
+  sportLabel,
 } from '../src/lib/metrics';
 import { decodePolyline, encodePolyline } from '../src/lib/polyline';
 import { parseGpxString, generateGpxString } from '../src/lib/parsers/gpx';
@@ -46,6 +48,7 @@ import {
 } from '../src/lib/home-workouts';
 import {
   backfillMyWhooshWorlds,
+  backfillWalkingActivities,
   createActivity,
   createCustomEquipment,
   createSegmentAndMatch,
@@ -1428,12 +1431,140 @@ test('Huawei Health parsers, Health Sync smart bundling, local watch folder and 
   assert.equal(driveSync.imported, 1);
   assert.equal(gpxDownloadAttempted, false, 'Should only download .fit and skip redundant .gpx in Drive bundle');
 
-  const walkImported = listActivities({ sport: 'mountain' }).find((a) => a.title === 'Paseo Senda del Oso');
-  assert.ok(walkImported, 'Google Drive Huawei walk should be imported with CSV title');
+  const walkImported = listActivities({ sport: 'walking' }).find((a) => a.title === 'Paseo Senda del Oso');
+  assert.ok(walkImported, 'Google Drive Huawei walk should be imported with CSV title under walking sport');
+  assert.equal(walkImported.sport, 'walking');
+  assert.equal(walkImported.subSport, 'Caminar');
   assert.equal(walkImported.source, 'huawei');
   assert.equal(walkImported.extras?.steps, 4320);
 
   const afterGdDisconnect = disconnectGoogleDrive();
   assert.equal(afterGdDisconnect.googleConnected, false);
   assert.ok(getHuaweiStatus().importedCount >= 2);
+});
+
+test('Caminar (walking) sport classification, analytics, DB backfill, and Oscuro map tile layer', async () => {
+  assert.equal(sportLabel('walking'), 'Caminar');
+  assert.equal(sportColor('walking'), '#F59E0B');
+
+  // 1. GPX / TCX / Strava / Huawei mapping for walking vs mountain
+  const walkGpx = `<?xml version="1.0" encoding="UTF-8"?>
+  <gpx version="1.1" creator="Reloj GPS">
+    <trk>
+      <name>Caminata por el Parque</name>
+      <type>walking</type>
+      <trkseg>
+        <trkpt lat="43.3600" lon="-5.8500"><ele>220</ele><time>2026-09-01T08:00:00Z</time></trkpt>
+        <trkpt lat="43.3645" lon="-5.8500"><ele>225</ele><time>2026-09-01T08:05:00Z</time></trkpt>
+        <trkpt lat="43.3690" lon="-5.8500"><ele>222</ele><time>2026-09-01T08:10:00Z</time></trkpt>
+      </trkseg>
+    </trk>
+  </gpx>`;
+  const gpxWalk = parseGpxString(walkGpx, 'paseo.gpx');
+  assert.equal(gpxWalk.sport, 'walking');
+  assert.equal(gpxWalk.subSport, 'Caminar');
+
+  const walkTcx = `<?xml version="1.0" encoding="UTF-8"?>
+  <TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
+    <Activities>
+      <Activity Sport="Walking">
+        <Id>2026-09-02T09:00:00Z</Id>
+        <Notes>Paseo Matinal</Notes>
+        <Lap StartTime="2026-09-02T09:00:00Z">
+          <TotalTimeSeconds>600</TotalTimeSeconds>
+          <DistanceMeters>1000</DistanceMeters>
+          <Track>
+            <Trackpoint><Time>2026-09-02T09:00:00Z</Time><Position><LatitudeDegrees>43.360</LatitudeDegrees><LongitudeDegrees>-5.850</LongitudeDegrees></Position><AltitudeMeters>220</AltitudeMeters><Cadence>56</Cadence></Trackpoint>
+            <Trackpoint><Time>2026-09-02T09:05:00Z</Time><Position><LatitudeDegrees>43.3645</LatitudeDegrees><LongitudeDegrees>-5.850</LongitudeDegrees></Position><AltitudeMeters>222</AltitudeMeters><Cadence>58</Cadence></Trackpoint>
+            <Trackpoint><Time>2026-09-02T09:10:00Z</Time><Position><LatitudeDegrees>43.3690</LatitudeDegrees><LongitudeDegrees>-5.850</LongitudeDegrees></Position><AltitudeMeters>224</AltitudeMeters><Cadence>57</Cadence></Trackpoint>
+          </Track>
+        </Lap>
+      </Activity>
+    </Activities>
+  </TrainingCenterDatabase>`;
+  const tcxWalk = parseTcxString(walkTcx, 'paseo.tcx');
+  assert.equal(tcxWalk.sport, 'walking');
+  assert.equal(tcxWalk.subSport, 'Caminar');
+  assert.equal(tcxWalk.avgCadence, 114); // 57 * 2 spm
+
+  const hiWalk = parseHiTrackText(
+    [
+      'tp=lbs;k=1;lat=43.3600;lon=-5.8500;alt=220;t=1785400000;',
+      'tp=lbs;k=2;lat=43.3645;lon=-5.8500;alt=225;t=1785400300;',
+      'tp=s-r;k=1785400060;v=112;',
+      'tp=s-r;k=1785400120;v=116;',
+    ].join('\n'),
+    {
+      fileName: 'HiTrack_1785400000',
+      sportTypeCode: 5,
+      startTimeMs: 1785400000_000,
+      totalTimeMs: 300_000,
+      totalDistanceM: 500,
+    }
+  );
+  assert.equal(hiWalk.sport, 'walking');
+  assert.equal(hiWalk.subSport, 'Caminar');
+  assert.ok(hiWalk.points.some((p) => p.cad === 112), 'Already-spm walking cadence >= 80 must not double');
+
+  assert.equal(mapStravaSport('Walk', 'Walk', 'Paseo urbano').sport, 'walking');
+  assert.equal(mapStravaSport('Hike', 'Hike', 'Subida al Angliru').sport, 'mountain');
+  assert.equal(mapStravaSport('Run', 'TrailRun', 'Trail Picos').sport, 'mountain');
+
+  // 2. Walking pace zones and stride length extras
+  const walkPts = enrichPointsTelemetry(
+    [
+      { t: 0, lat: 43.36, lon: -5.85, ele: 220, speed: 1.55, cad: 58, hr: 105 },
+      { t: 60, lat: 43.3608, lon: -5.85, ele: 222, speed: 1.65, cad: 60, hr: 110 },
+      { t: 120, lat: 43.3617, lon: -5.85, ele: 224, speed: 1.75, cad: 62, hr: 114 },
+      { t: 180, lat: 43.3626, lon: -5.85, ele: 225, speed: 1.6, cad: 59, hr: 112 },
+    ],
+    'walking'
+  );
+  const walkZones = computePaceZones(walkPts, 'walking');
+  assert.equal(walkZones.length, 5);
+  assert.ok(walkZones.some((z) => z.seconds > 0 && z.zone !== 'Z1'), 'Walking pace zones should differentiate walking speeds');
+
+  const walkExtras = computeSessionExtras(
+    {
+      sport: 'walking',
+      durationSec: 180,
+      movingTimeSec: 180,
+      distanceMeters: 295,
+      elevationGain: 5,
+      avgSpeedMs: 1.64,
+      avgHr: 110,
+      avgWatts: null,
+      normalizedPower: null,
+      extras: null,
+    },
+    walkPts
+  );
+  assert.ok(walkExtras.avgStrideLenM && walkExtras.avgStrideLenM > 0.5 && walkExtras.avgStrideLenM < 1.3);
+  assert.ok(walkExtras.gapSpeedMs && walkExtras.gapSpeedMs > 1.4);
+
+  // 3. DB backfill migrates legacy Caminata rows from mountain -> walking without touching genuine mountain hikes
+  const db = getDb();
+  const legacyWalkId = 'act_legacy_walk_test';
+  const realHikeId = 'act_real_hike_test';
+  db.prepare(
+    `INSERT INTO activities (id, external_id, source, sport, sub_sport, title, started_at, duration_sec, moving_time_sec, distance_meters, elevation_gain, elevation_loss, tss, created_at)
+     VALUES (?, ?, 'huawei', 'mountain', 'Caminata', 'Paseo Antiguo', '2026-07-05T08:39:00Z', 1800, 1800, 2500, 30, 30, 20, '2026-07-05T09:15:00Z')`
+  ).run(legacyWalkId, 'huawei_ht_1783240740000_5');
+  db.prepare(
+    `INSERT INTO activities (id, external_id, source, sport, sub_sport, title, started_at, duration_sec, moving_time_sec, distance_meters, elevation_gain, elevation_loss, tss, created_at)
+     VALUES (?, ?, 'huawei', 'mountain', 'Senderismo', 'Ruta Picos', '2026-07-06T08:00:00Z', 7200, 7200, 14000, 950, 950, 120, '2026-07-06T10:30:00Z')`
+  ).run(realHikeId, 'huawei_ht_1783324800000_282');
+
+  const migratedWalks = backfillWalkingActivities(db);
+  assert.ok(migratedWalks >= 1);
+  assert.equal(getActivityById(legacyWalkId)?.sport, 'walking');
+  assert.equal(getActivityById(legacyWalkId)?.subSport, 'Caminar');
+  assert.equal(getActivityById(realHikeId)?.sport, 'mountain');
+
+  // 4. ActivityMap dark layer uses OpenStreetMap + CSS dark filter (no CartoDB API key tile URL)
+  const mapSource = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'ActivityMap.tsx'), 'utf8');
+  const cssSource = fs.readFileSync(path.join(process.cwd(), 'src', 'app', 'globals.css'), 'utf8');
+  assert.ok(!mapSource.includes('basemaps.cartocdn.com'), 'CartoDB dark tiles require API keys and must not be used');
+  assert.ok(mapSource.includes("className: 'bilifit-dark-tiles'"));
+  assert.ok(cssSource.includes('.bilifit-dark-tiles'));
 });

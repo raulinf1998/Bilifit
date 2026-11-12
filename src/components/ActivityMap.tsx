@@ -16,21 +16,28 @@ import type { ActivityPoint, SportType } from '@/types';
 
 type MapStyle = 'virtual' | 'topo' | 'osm' | 'dark';
 
-const TILE_LAYERS: Record<Exclude<MapStyle, 'virtual'>, { label: string; url: string; attribution: string }> = {
+const TILE_LAYERS: Record<
+  Exclude<MapStyle, 'virtual'>,
+  { label: string; url: string; attribution: string; className?: string; maxZoom?: number }
+> = {
   topo: {
     label: 'Topo',
     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
     attribution: '© OpenTopoMap (CC-BY-SA)',
+    maxZoom: 17,
   },
   osm: {
     label: 'Mapa',
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '© OpenStreetMap',
+    maxZoom: 19,
   },
   dark: {
     label: 'Oscuro',
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    attribution: '© CartoDB',
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '© OpenStreetMap · Estilo Oscuro',
+    className: 'bilifit-dark-tiles',
+    maxZoom: 19,
   },
 };
 
@@ -307,7 +314,8 @@ export default function ActivityMap({
       const cfg = TILE_LAYERS[layer === 'virtual' ? fallbackStyle : layer];
       baseLayerRef.current = L.tileLayer(cfg.url, {
         attribution: cfg.attribution,
-        maxZoom: 17,
+        maxZoom: cfg.maxZoom ?? 17,
+        className: cfg.className ?? '',
       }).addTo(map);
     }
 

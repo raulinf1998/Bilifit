@@ -1,4 +1,4 @@
-export type SportType = 'running' | 'mywhoosh' | 'cycling' | 'mountain' | 'strength';
+export type SportType = 'running' | 'mywhoosh' | 'cycling' | 'mountain' | 'walking' | 'strength';
 
 export interface ActivityPoint {
   t: number; // elapsed seconds

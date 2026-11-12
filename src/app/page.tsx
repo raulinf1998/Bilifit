@@ -322,7 +322,7 @@ export default function DashboardPage() {
                     <div style={{ color: 'var(--text-muted)' }}>Tiempo</div>
                     <div className="font-semibold">{formatDuration(act.durationSec)}</div>
                   </div>
-                  {act.sport === 'running' && act.avgSpeedMs && (
+                  {(act.sport === 'running' || act.sport === 'mountain' || act.sport === 'walking') && act.avgSpeedMs && (
                     <div>
                       <div style={{ color: 'var(--text-muted)' }}>Ritmo</div>
                       <div className="font-semibold">{formatPaceMinKm(act.avgSpeedMs)}</div>

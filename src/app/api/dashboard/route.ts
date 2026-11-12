@@ -35,6 +35,7 @@ export async function GET() {
     mywhoosh: thisMonth.filter((a) => a.sport === 'mywhoosh').length,
     cycling: thisMonth.filter((a) => a.sport === 'cycling').length,
     mountain: thisMonth.filter((a) => a.sport === 'mountain').length,
+    walking: thisMonth.filter((a) => a.sport === 'walking').length,
     strength: thisMonth.filter((a) => a.sport === 'strength').length,
   };
 
@@ -45,6 +46,7 @@ export async function GET() {
     mywhooshHours: number;
     cyclingHours: number;
     mountainHours: number;
+    walkingHours: number;
     strengthHours: number;
     totalKm: number;
     totalTss: number;
@@ -69,6 +71,7 @@ export async function GET() {
       mywhooshHours: hoursFor('mywhoosh'),
       cyclingHours: hoursFor('cycling'),
       mountainHours: hoursFor('mountain'),
+      walkingHours: hoursFor('walking'),
       strengthHours: hoursFor('strength'),
       totalKm: Math.round((items.reduce((s, i) => s + i.distanceMeters, 0) / 1000) * 10) / 10,
       totalTss: items.reduce((s, i) => s + i.tss, 0),
