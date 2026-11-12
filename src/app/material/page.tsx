@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Plus, Trash2, Wrench } from 'lucide-react';
-import type { GearItem, SportType } from '@/types';
+import { sportLabel } from '@/lib/metrics';
+import type { GearItem } from '@/types';
 
 const CATEGORY_LABELS: Record<GearItem['category'], string> = {
   running_shoes: 'Zapatillas Asfalto',
@@ -117,7 +118,7 @@ export default function GearManagementPage() {
 
               {g.defaultForSport && (
                 <div className="text-[11px] px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-300 w-fit">
-                  Por defecto para: {g.defaultForSport}
+                  Por defecto para: {sportLabel(g.defaultForSport)}
                 </div>
               )}
             </div>
@@ -170,6 +171,7 @@ export default function GearManagementPage() {
               <option value="">Ninguno</option>
               <option value="running">Correr</option>
               <option value="mountain">Montaña / Trail</option>
+              <option value="walking">Caminar</option>
               <option value="mywhoosh">MyWhoosh</option>
               <option value="cycling">Ciclismo Exterior</option>
             </select>

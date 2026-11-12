@@ -32,7 +32,7 @@ const HUAWEI_SPORT_MAP: Record<number, { sport: SportType; subSport: string; fal
   2: { sport: 'mountain', subSport: 'Montaña / Senderismo', fallbackTitle: 'Ruta de Montaña' },
   3: { sport: 'cycling', subSport: 'Ciclismo', fallbackTitle: 'Salida en Bici' },
   4: { sport: 'running', subSport: 'Asfalto', fallbackTitle: 'Carrera' },
-  5: { sport: 'mountain', subSport: 'Caminata', fallbackTitle: 'Caminata' },
+  5: { sport: 'walking', subSport: 'Caminar', fallbackTitle: 'Caminata' },
   101: { sport: 'running', subSport: 'Cinta / Interior', fallbackTitle: 'Carrera en Cinta' },
   102: { sport: 'running', subSport: 'Natación Piscina', fallbackTitle: 'Natación en Piscina' },
   103: { sport: 'cycling', subSport: 'Bici Indoor', fallbackTitle: 'Bici Indoor' },
@@ -701,8 +701,17 @@ export function applyHealthSyncMetadata(parsed: ParsedActivityData, meta: Health
       deviceName: nextExtras.deviceName,
     });
 
-  const nextSport: SportType = virtualCtx ? 'mywhoosh' : parsed.sport;
-  const nextSubSport = virtualCtx ? 'MyWhoosh Indoor' : parsed.subSport;
+  const csvWalkingSignal = /^walk(ing)?$|caminat/i.test((meta.activityType ?? '').trim());
+  const nextSport: SportType = virtualCtx
+    ? 'mywhoosh'
+    : csvWalkingSignal && parsed.sport !== 'mywhoosh'
+      ? 'walking'
+      : parsed.sport;
+  const nextSubSport = virtualCtx
+    ? 'MyWhoosh Indoor'
+    : nextSport === 'walking'
+      ? 'Caminar'
+      : parsed.subSport;
 
   const resolvedWorld = resolveMyWhooshWorldForActivity({
     worldName: parsed.worldName,

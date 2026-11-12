@@ -228,7 +228,10 @@ export function mapStravaSport(
   if (t === 'trailrun') {
     return { sport: 'mountain', subSport: 'Trail Running' };
   }
-  if (t === 'hike' || t === 'walk' || t === 'rockclimbing' || t === 'mountaineering' || t === 'backcountryski') {
+  if (t === 'walk') {
+    return { sport: 'walking', subSport: 'Caminar' };
+  }
+  if (t === 'hike' || t === 'rockclimbing' || t === 'mountaineering' || t === 'backcountryski') {
     return { sport: 'mountain', subSport: t === 'hike' ? 'Senderismo / Montaña' : 'Montaña' };
   }
   if (t === 'mountainbikeride' || t === 'gravelride' || t === 'ride' || t === 'ebikeride') {
@@ -341,12 +344,16 @@ async function fetchStravaLaps(accessToken: string, stravaId: number, sport: Spo
       const startDistM = Math.round(cumDist);
       cumDist += dist;
       const rawCad = lap.average_cadence;
+      const shouldDoubleLapCad =
+        rawCad &&
+        (((sport === 'running' || sport === 'mountain') && rawCad < 115) ||
+          (sport === 'walking' && rawCad < 80));
       const cad =
-        rawCad && (sport === 'running' || sport === 'mountain') && rawCad < 115
-          ? Math.round(rawCad * 2)
-          : rawCad
-            ? Math.round(rawCad)
-            : null;
+        rawCad
+          ? shouldDoubleLapCad
+            ? Math.round(rawCad * 2)
+            : Math.round(rawCad)
+          : null;
       return {
         lapNumber: lap.lap_index ?? idx + 1,
         name: lap.name || `Vuelta ${idx + 1}`,
@@ -433,12 +440,16 @@ export async function syncStravaActivities(limit = 30, fetchStreams = true): Pro
     }
 
     const rawCad = item.average_cadence;
+    const shouldDoubleSessionCad =
+      rawCad &&
+      (((mapped.sport === 'running' || mapped.sport === 'mountain') && rawCad < 115) ||
+        (mapped.sport === 'walking' && rawCad < 80));
     const adjustedCadence =
-      rawCad && (mapped.sport === 'running' || mapped.sport === 'mountain') && rawCad < 115
-        ? Math.round(rawCad * 2)
-        : rawCad
-          ? Math.round(rawCad)
-          : null;
+      rawCad
+        ? shouldDoubleSessionCad
+          ? Math.round(rawCad * 2)
+          : Math.round(rawCad)
+        : null;
 
     const np =
       item.weighted_average_watts ??

@@ -52,6 +52,8 @@ export function sportLabel(sport: SportType): string {
       return 'Ciclismo';
     case 'mountain':
       return 'Montaña';
+    case 'walking':
+      return 'Caminar';
     case 'strength':
       return 'Fuerza en Casa';
   }
@@ -67,6 +69,8 @@ export function sportColor(sport: SportType): string {
       return '#3B82F6';
     case 'mountain':
       return '#10B981';
+    case 'walking':
+      return '#F59E0B';
     case 'strength':
       return '#A855F7';
   }

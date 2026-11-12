@@ -76,8 +76,11 @@ export function enrichPointsTelemetry(points: ActivityPoint[], sport: SportType)
       p.dist = 0;
     }
 
-    // Normalizar cadencia de carrera cuando viene por ciclo simple (ej. 85 -> 170 spm)
-    if ((sport === 'running' || sport === 'mountain') && typeof p.cad === 'number' && p.cad > 20 && p.cad < 115) {
+    // Normalizar cadencia de carrera/caminata cuando viene por ciclo simple (ej. 85 -> 170 spm)
+    if (
+      ((sport === 'running' || sport === 'mountain') && typeof p.cad === 'number' && p.cad > 20 && p.cad < 115) ||
+      (sport === 'walking' && typeof p.cad === 'number' && p.cad > 20 && p.cad < 80)
+    ) {
       p.cad = Math.round(p.cad * 2);
     }
 
@@ -168,7 +171,7 @@ export function computeKmSplits(points: ActivityPoint[], sport: SportType): Acti
       if (typeof pt.speed === 'number') {
         if (pt.speed > maxSpeed && pt.speed < 35) maxSpeed = pt.speed;
         if (pt.speed > 0.35 || (pt.watts ?? 0) > 15) movingSec += dt;
-        if (pt.speed > 0.4 && (sport === 'running' || sport === 'mountain')) {
+        if (pt.speed > 0.4 && (sport === 'running' || sport === 'mountain' || sport === 'walking')) {
           const factor = calculateMinettiGapFactor(pt.grade ?? 0);
           const gapSpd = pt.speed * factor;
           gapWeightedSum += gapSpd * Math.max(1, dt);
@@ -364,15 +367,24 @@ export function computeHeartRateZones(points: ActivityPoint[], profile: AthleteP
  * Zonas de Ritmo para correr y montaña.
  */
 export function computePaceZones(points: ActivityPoint[], sport: SportType): ZoneBucket[] {
-  if (sport !== 'running' && sport !== 'mountain') return [];
+  if (sport !== 'running' && sport !== 'mountain' && sport !== 'walking') return [];
   // Umbrales en s/km
-  const defs = [
-    { zone: 'Z1', name: 'Suave / Caminando', range: '> 6:15 /km', minSec: 375, maxSec: 3600, color: '#94A3B8' },
-    { zone: 'Z2', name: 'Aeróbico / Rodaje', range: '5:20 - 6:15 /km', minSec: 320, maxSec: 375, color: '#3B82F6' },
-    { zone: 'Z3', name: 'Tempo', range: '4:40 - 5:20 /km', minSec: 280, maxSec: 320, color: '#10B981' },
-    { zone: 'Z4', name: 'Umbral', range: '4:05 - 4:40 /km', minSec: 245, maxSec: 280, color: '#F59E0B' },
-    { zone: 'Z5', name: 'Series / VO2', range: '< 4:05 /km', minSec: 90, maxSec: 245, color: '#FC4C02' },
-  ];
+  const defs =
+    sport === 'walking'
+      ? [
+          { zone: 'Z1', name: 'Paseo suave', range: '> 13:00 /km', minSec: 780, maxSec: 3600, color: '#94A3B8' },
+          { zone: 'Z2', name: 'Caminata moderada', range: '11:00 - 13:00 /km', minSec: 660, maxSec: 780, color: '#3B82F6' },
+          { zone: 'Z3', name: 'Paso ligero', range: '9:30 - 11:00 /km', minSec: 570, maxSec: 660, color: '#10B981' },
+          { zone: 'Z4', name: 'Marcha rápida', range: '8:15 - 9:30 /km', minSec: 495, maxSec: 570, color: '#F59E0B' },
+          { zone: 'Z5', name: 'Marcha intensa', range: '< 8:15 /km', minSec: 180, maxSec: 495, color: '#FC4C02' },
+        ]
+      : [
+          { zone: 'Z1', name: 'Suave / Caminando', range: '> 6:15 /km', minSec: 375, maxSec: 3600, color: '#94A3B8' },
+          { zone: 'Z2', name: 'Aeróbico / Rodaje', range: '5:20 - 6:15 /km', minSec: 320, maxSec: 375, color: '#3B82F6' },
+          { zone: 'Z3', name: 'Tempo', range: '4:40 - 5:20 /km', minSec: 280, maxSec: 320, color: '#10B981' },
+          { zone: 'Z4', name: 'Umbral', range: '4:05 - 4:40 /km', minSec: 245, maxSec: 280, color: '#F59E0B' },
+          { zone: 'Z5', name: 'Series / VO2', range: '< 4:05 /km', minSec: 90, maxSec: 245, color: '#FC4C02' },
+        ];
 
   const secondsArr = [0, 0, 0, 0, 0];
   let totalSec = 0;
@@ -471,8 +483,13 @@ export function computeSessionExtras(
   const strides = points.map((p) => p.stride).filter((v): v is number => typeof v === 'number' && v > 0.3 && v < 3);
   if (strides.length > 0) {
     base.avgStrideLenM = base.avgStrideLenM ?? Math.round((strides.reduce((a, b) => a + b, 0) / strides.length) * 100) / 100;
-  } else if ((activity.sport === 'running' || activity.sport === 'mountain') && activity.avgSpeedMs && points.some((p) => p.cad)) {
-    const cads = points.map((p) => p.cad).filter((v): v is number => typeof v === 'number' && v > 100);
+  } else if (
+    (activity.sport === 'running' || activity.sport === 'mountain' || activity.sport === 'walking') &&
+    activity.avgSpeedMs &&
+    points.some((p) => p.cad)
+  ) {
+    const minCad = activity.sport === 'walking' ? 70 : 100;
+    const cads = points.map((p) => p.cad).filter((v): v is number => typeof v === 'number' && v > minCad);
     if (cads.length > 0) {
       const avgCad = cads.reduce((a, b) => a + b, 0) / cads.length;
       base.avgStrideLenM = Math.round(((activity.avgSpeedMs * 60) / avgCad) * 100) / 100;
@@ -529,7 +546,7 @@ export function computeSessionExtras(
   }
 
   // GAP medio y VAM en subidas
-  if (activity.sport === 'running' || activity.sport === 'mountain') {
+  if (activity.sport === 'running' || activity.sport === 'mountain' || activity.sport === 'walking') {
     let gapSum = 0;
     let gapDur = 0;
     for (let i = 1; i < points.length; i++) {

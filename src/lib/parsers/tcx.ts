@@ -198,10 +198,11 @@ export function parseTcxString(xmlText: string, fileName = 'actividad.tcx'): Par
   const avgHr = hrCount > 0 ? Math.round(hrSum / hrCount) : undefined;
   const np = hasPower ? calculateNormalizedPower(enrichedPoints) ?? undefined : undefined;
   const rawAvgCad = cadCount > 0 ? Math.round(cadSum / cadCount) : undefined;
-  const avgCadence =
-    rawAvgCad !== undefined && (inferred.sport === 'running' || inferred.sport === 'mountain') && rawAvgCad < 115
-      ? rawAvgCad * 2
-      : rawAvgCad;
+  const shouldDoubleCad =
+    rawAvgCad !== undefined &&
+    (((inferred.sport === 'running' || inferred.sport === 'mountain') && rawAvgCad < 115) ||
+      (inferred.sport === 'walking' && rawAvgCad < 80));
+  const avgCadence = shouldDoubleCad ? rawAvgCad! * 2 : rawAvgCad;
 
   const extras = computeSessionExtras(
     {

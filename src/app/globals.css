@@ -63,3 +63,7 @@ body {
   max-width: none !important;
   max-height: none !important;
 }
+
+.leaflet-container .bilifit-dark-tiles {
+  filter: invert(100%) hue-rotate(180deg) brightness(92%) contrast(92%) saturate(85%);
+}

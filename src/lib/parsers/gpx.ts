@@ -106,8 +106,8 @@ export function inferSportFromText(
     return { sport: 'mountain', subSport: combined.includes('trail') ? 'Trail Running' : 'Senderismo / Montaña' };
   }
 
-  if (combined.includes('walk') || combined.includes('caminat')) {
-    return { sport: 'mountain', subSport: 'Caminata' };
+  if (combined.includes('walk') || combined.includes('caminat') || combined.includes('caminar') || combined.includes('paseo')) {
+    return { sport: 'walking', subSport: 'Caminar' };
   }
 
   if (combined.includes('strength') || combined.includes('fuerza') || combined.includes('weight') || combined.includes('gym')) {
@@ -308,10 +308,11 @@ export function parseGpxString(xmlText: string, fileName = 'actividad.gpx'): Par
   const startedAt = startMs !== null ? new Date(startMs).toISOString() : new Date().toISOString();
   const avgSpeedMs = effectiveMoving > 0 && distanceMeters > 0 ? Math.round((distanceMeters / effectiveMoving) * 100) / 100 : undefined;
   const rawAvgCad = cadCount > 0 ? Math.round(cadSum / cadCount) : undefined;
-  const avgCadence =
-    rawAvgCad !== undefined && (inferred.sport === 'running' || inferred.sport === 'mountain') && rawAvgCad < 115
-      ? rawAvgCad * 2
-      : rawAvgCad;
+  const shouldDoubleCad =
+    rawAvgCad !== undefined &&
+    (((inferred.sport === 'running' || inferred.sport === 'mountain') && rawAvgCad < 115) ||
+      (inferred.sport === 'walking' && rawAvgCad < 80));
+  const avgCadence = shouldDoubleCad ? rawAvgCad! * 2 : rawAvgCad;
 
   const avgWatts = wattsCount > 0 ? Math.round(wattsSum / wattsCount) : undefined;
   const avgHr = hrCount > 0 ? Math.round(hrSum / hrCount) : undefined;

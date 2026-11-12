@@ -12,6 +12,7 @@ const FILTERS: Array<{ id: string; label: string }> = [
   { id: 'running', label: 'Correr' },
   { id: 'mywhoosh', label: 'MyWhoosh' },
   { id: 'mountain', label: 'Montaña' },
+  { id: 'walking', label: 'Caminar' },
   { id: 'cycling', label: 'Ciclismo Ext.' },
   { id: 'strength', label: 'Fuerza en Casa' },
 ];
@@ -127,6 +128,7 @@ export default function ActivitiesPage() {
                 <option value="running">Correr</option>
                 <option value="mywhoosh">MyWhoosh (Bici Indoor)</option>
                 <option value="mountain">Montaña / Trail / Senderismo</option>
+                <option value="walking">Caminar</option>
                 <option value="cycling">Ciclismo Exterior</option>
                 <option value="strength">Fuerza en Casa</option>
               </select>
@@ -370,7 +372,7 @@ export default function ActivitiesPage() {
                     <div style={{ color: 'var(--text-muted)' }}>Duración</div>
                     <div className="font-bold text-sm">{formatDuration(act.durationSec)}</div>
                   </div>
-                  {(act.sport === 'running' || act.sport === 'mountain') && act.avgSpeedMs && (
+                  {(act.sport === 'running' || act.sport === 'mountain' || act.sport === 'walking') && act.avgSpeedMs && (
                     <div>
                       <div style={{ color: 'var(--text-muted)' }}>Ritmo</div>
                       <div className="font-bold text-sm">{formatPaceMinKm(act.avgSpeedMs)}</div>
