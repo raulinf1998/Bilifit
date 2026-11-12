@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createActivity, findDuplicateActivity, getAthleteProfile } from '@/lib/db';
-import { estimateActivityTSS } from '@/lib/metrics';
+import { defaultSubSportForSport, estimateActivityTSS } from '@/lib/metrics';
 import { parseUploadedActivityBatch } from '@/lib/parsers';
 import type { SportType } from '@/types';
 
@@ -35,6 +35,10 @@ export async function POST(req: NextRequest) {
 
     for (const act of parsed.activities) {
       const finalSport = sportOverride ?? act.sport;
+      const finalSubSport =
+        sportOverride && sportOverride !== act.sport
+          ? defaultSubSportForSport(sportOverride)
+          : act.subSport ?? null;
       if (findDuplicateActivity(act.startedAt, finalSport, act.distanceMeters, act.externalId)) {
         skipped++;
         continue;
@@ -64,7 +68,7 @@ export async function POST(req: NextRequest) {
         externalId: act.externalId ?? null,
         source: isHuawei ? 'huawei' : act.source,
         sport: finalSport,
-        subSport: act.subSport ?? null,
+        subSport: finalSubSport,
         title: act.title,
         description: act.description ?? null,
         startedAt: act.startedAt,

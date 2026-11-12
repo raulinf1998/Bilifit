@@ -1,4 +1,5 @@
 import { Bike, Dumbbell, Footprints, Mountain, PersonStanding, Zap } from 'lucide-react';
+import { resolveDisplaySubSport } from '@/lib/metrics';
 import type { SportType } from '@/types';
 
 export function SportIcon({ sport, className = 'h-4 w-4' }: { sport: SportType; className?: string }) {
@@ -37,12 +38,14 @@ export function SportBadge({ sport, subSport }: { sport: SportType; subSport?: s
     strength: 'Casa / Fuerza',
   };
 
+  const displayLabel = resolveDisplaySubSport(sport, subSport) || labels[sport];
+
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${styles[sport]}`}
     >
       <SportIcon sport={sport} className="h-3.5 w-3.5" />
-      <span>{subSport || labels[sport]}</span>
+      <span>{displayLabel}</span>
     </span>
   );
 }

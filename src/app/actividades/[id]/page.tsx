@@ -27,6 +27,7 @@ import ActivityMap from '@/components/ActivityMap';
 import { PowerZonesChart, TelemetryChart, ZoneBarsChart } from '@/components/Charts';
 import { SportBadge } from '@/components/SportBadge';
 import {
+  defaultSubSportForSport,
   formatDistanceKm,
   formatDuration,
   formatDurationClock,
@@ -108,6 +109,7 @@ export default function ActivityDetailPage() {
       body: JSON.stringify({
         title,
         sport,
+        ...(activity && sport !== activity.sport ? { subSport: defaultSubSportForSport(sport) } : {}),
         worldName: sport === 'mywhoosh' || worldName ? worldName || null : null,
         gearId: gearId || null,
         rpe,

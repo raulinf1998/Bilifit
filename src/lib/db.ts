@@ -11,6 +11,7 @@ import {
   enrichPointsTelemetry,
 } from '@/lib/analytics';
 import { DEFAULT_EXERCISES, DEFAULT_HOME_EQUIPMENT } from '@/lib/home-workouts';
+import { defaultSubSportForSport, isMismatchedSubSport } from '@/lib/metrics';
 import { isMyWhooshContext, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
 import { decodePolyline } from '@/lib/polyline';
 import { buildSeedActivityRows, SEED_GEAR, SEED_PROFILE, SEED_ROUTES, SEED_ROUTINES } from '@/lib/seed';
@@ -62,6 +63,7 @@ export function getDb(): Database.Database {
   seedIfEmpty(db);
   backfillMyWhooshWorlds(db);
   backfillWalkingActivities(db);
+  backfillMismatchedSubSports(db);
 
   dbInstance = db;
   return dbInstance;
@@ -76,11 +78,37 @@ export function backfillWalkingActivities(db: Database.Database = getDb()): numb
        WHERE sport = 'mountain'
          AND (
            sub_sport = 'Caminata'
-           OR external_id LIKE 'huawei_ht_%_5'
+           OR (external_id LIKE 'huawei_ht_%_5' AND (sub_sport IS NULL OR TRIM(sub_sport) = ''))
          )`
     )
     .run();
   return res.changes;
+}
+
+export function backfillMismatchedSubSports(db: Database.Database = getDb()): number {
+  const rows = db
+    .prepare(
+      `SELECT id, sport, sub_sport
+       FROM activities
+       WHERE sub_sport IS NOT NULL AND TRIM(sub_sport) != ''`
+    )
+    .all() as Array<{ id: string; sport: string; sub_sport: string }>;
+
+  const updateStmt = db.prepare('UPDATE activities SET sub_sport = ? WHERE id = ?');
+  let updated = 0;
+
+  const tx = db.transaction(() => {
+    for (const row of rows) {
+      const sport = row.sport as SportType;
+      if (isMismatchedSubSport(sport, row.sub_sport)) {
+        updateStmt.run(defaultSubSportForSport(sport), row.id);
+        updated++;
+      }
+    }
+  });
+  tx();
+
+  return updated;
 }
 
 export function backfillMyWhooshWorlds(db: Database.Database = getDb()): number {
@@ -831,6 +859,10 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
   const gearId = input.gearId ?? findDefaultGearForSport(input.sport);
   const enrichedPoints = input.points && input.points.length > 0 ? enrichPointsTelemetry(input.points, input.sport) : [];
   const extras = input.extras ?? (enrichedPoints.length > 0 ? computeSessionExtras(input, enrichedPoints) : null);
+  const normalizedSubSport =
+    input.subSport && isMismatchedSubSport(input.sport, input.subSport)
+      ? defaultSubSportForSport(input.sport)
+      : input.subSport ?? null;
 
   db.prepare(`
     INSERT INTO activities (
@@ -845,7 +877,7 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
     input.externalId ?? null,
     input.source,
     input.sport,
-    input.subSport ?? null,
+    normalizedSubSport,
     input.title,
     input.description ?? null,
     input.startedAt,
@@ -926,6 +958,18 @@ export function updateActivity(
   const existing = getActivityById(id);
   if (!existing) return null;
 
+  const nextSport = patch.sport ?? existing.sport;
+  const nextSubSport =
+    patch.subSport !== undefined
+      ? patch.subSport && isMismatchedSubSport(nextSport, patch.subSport)
+        ? defaultSubSportForSport(nextSport)
+        : patch.subSport
+      : patch.sport && patch.sport !== existing.sport
+        ? defaultSubSportForSport(patch.sport)
+        : existing.subSport && isMismatchedSubSport(nextSport, existing.subSport)
+          ? defaultSubSportForSport(nextSport)
+          : existing.subSport ?? null;
+
   getDb()
     .prepare(`
       UPDATE activities
@@ -934,8 +978,8 @@ export function updateActivity(
     `)
     .run(
       patch.title ?? existing.title,
-      patch.sport ?? existing.sport,
-      patch.subSport !== undefined ? patch.subSport : existing.subSport ?? null,
+      nextSport,
+      nextSubSport,
       patch.description !== undefined ? patch.description : existing.description ?? null,
       patch.rpe !== undefined ? patch.rpe : existing.rpe ?? null,
       patch.gearId !== undefined ? patch.gearId : existing.gearId ?? null,

@@ -59,6 +59,91 @@ export function sportLabel(sport: SportType): string {
   }
 }
 
+export function defaultSubSportForSport(sport: SportType): string {
+  switch (sport) {
+    case 'running':
+      return 'Correr';
+    case 'mywhoosh':
+      return 'MyWhoosh Indoor';
+    case 'cycling':
+      return 'Ciclismo';
+    case 'mountain':
+      return 'Montaña';
+    case 'walking':
+      return 'Caminar';
+    case 'strength':
+      return 'Casa / Fuerza';
+  }
+}
+
+const KNOWN_SUBSPORT_OWNER: Record<string, SportType> = {
+  caminar: 'walking',
+  caminata: 'walking',
+  walk: 'walking',
+  walking: 'walking',
+  paseo: 'walking',
+  montaña: 'mountain',
+  montana: 'mountain',
+  'montaña / senderismo': 'mountain',
+  'senderismo / montaña': 'mountain',
+  senderismo: 'mountain',
+  'trail running': 'mountain',
+  trailrun: 'mountain',
+  'ruta de montaña': 'mountain',
+  hike: 'mountain',
+  hiking: 'mountain',
+  correr: 'running',
+  asfalto: 'running',
+  cinta: 'running',
+  'cinta / interior': 'running',
+  'series / tempo': 'running',
+  'natación piscina': 'running',
+  'aguas abiertas': 'running',
+  'actividad gps': 'running',
+  'actividad fit': 'running',
+  run: 'running',
+  running: 'running',
+  ciclismo: 'cycling',
+  carretera: 'cycling',
+  mtb: 'cycling',
+  gravel: 'cycling',
+  'bici indoor': 'cycling',
+  ride: 'cycling',
+  cycling: 'cycling',
+  biking: 'cycling',
+  mountainbikeride: 'cycling',
+  gravelride: 'cycling',
+  mywhoosh: 'mywhoosh',
+  'mywhoosh indoor': 'mywhoosh',
+  virtual_activity: 'mywhoosh',
+  virtualride: 'mywhoosh',
+  'virtual ride': 'mywhoosh',
+  'casa / fuerza': 'strength',
+  'fuerza en casa': 'strength',
+  fuerza: 'strength',
+  'rutina en casa': 'strength',
+  'fuerza / crossfit': 'strength',
+  'fuerza / entrenamiento': 'strength',
+  'elíptica / cardio': 'strength',
+  entrenamiento: 'strength',
+  strength: 'strength',
+  weighttraining: 'strength',
+};
+
+export function isMismatchedSubSport(sport: SportType, subSport?: string | null): boolean {
+  const normalized = subSport?.trim().toLowerCase();
+  if (!normalized) return false;
+  const owner = KNOWN_SUBSPORT_OWNER[normalized];
+  return Boolean(owner && owner !== sport);
+}
+
+export function resolveDisplaySubSport(sport: SportType, subSport?: string | null): string | null {
+  const trimmed = subSport?.trim();
+  if (!trimmed) return null;
+  if (isMismatchedSubSport(sport, trimmed)) return null;
+  return trimmed;
+}
+
 export function sportColor(sport: SportType): string {
   switch (sport) {
     case 'running':

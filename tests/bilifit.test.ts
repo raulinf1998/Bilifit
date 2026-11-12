@@ -18,6 +18,9 @@ import {
   calculateNormalizedPower,
   calculatePMC,
   computePowerCurve,
+  defaultSubSportForSport,
+  isMismatchedSubSport,
+  resolveDisplaySubSport,
   sportColor,
   sportLabel,
 } from '../src/lib/metrics';
@@ -47,6 +50,7 @@ import {
   isExerciseCompatible,
 } from '../src/lib/home-workouts';
 import {
+  backfillMismatchedSubSports,
   backfillMyWhooshWorlds,
   backfillWalkingActivities,
   createActivity,
@@ -60,6 +64,7 @@ import {
   listHomeEquipment,
   listSegments,
   toggleHomeEquipment,
+  updateActivity,
 } from '../src/lib/db';
 import {
   calculateMinettiGapFactor,
@@ -1584,7 +1589,7 @@ test('Caminar (walking) sport classification, analytics, DB backfill, and Oscuro
   assert.equal(openMapTiles.url, 'https://tiles.openfreemap.org/planet');
   assert.ok(DARK_MAP_STYLE.layers.length >= 25);
 
-  // Verify every hex color in DARK_MAP_STYLE stays neutral monochrome/charcoal (max channel spread <= 12)
+  // Verify every hex color in DARK_MAP_STYLE stays neutral monochrome/charcoal (max channel spread <= 14)
   const hexMatches = JSON.stringify(DARK_MAP_STYLE).match(/#[0-9a-fA-F]{6}/g) ?? [];
   assert.ok(hexMatches.length >= 20);
   for (const hex of hexMatches) {
@@ -1594,4 +1599,110 @@ test('Caminar (walking) sport classification, analytics, DB backfill, and Oscuro
     const spread = Math.max(r, g, b) - Math.min(r, g, b);
     assert.ok(spread <= 14, `Expected monochrome/slate tone in Oscuro map style, got ${hex} (spread=${spread})`);
   }
+
+  // 5. Changing activity sport synchronizes subSport and repairs existing mountain/Caminar mismatches
+  assert.equal(isMismatchedSubSport('mountain', 'Caminar'), true);
+  assert.equal(isMismatchedSubSport('mountain', 'Senderismo'), false);
+  assert.equal(isMismatchedSubSport('mountain', 'Trail Running'), false);
+  assert.equal(resolveDisplaySubSport('mountain', 'Caminar'), null);
+  assert.equal(resolveDisplaySubSport('mountain', 'Trail Running'), 'Trail Running');
+  assert.equal(resolveDisplaySubSport('walking', 'Caminar'), 'Caminar');
+  assert.equal(defaultSubSportForSport('mountain'), 'Montaña');
+
+  const badgeSource = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'SportBadge.tsx'), 'utf8');
+  assert.ok(badgeSource.includes('resolveDisplaySubSport'));
+
+  const editedWalkToMountain = createActivity({
+    id: 'act_walk_edited_to_mtn',
+    externalId: 'huawei_ht_1789999000000_5',
+    source: 'huawei',
+    sport: 'walking',
+    subSport: 'Caminar',
+    title: '2026.09.20 10.53 WALKING',
+    description: null,
+    startedAt: '2026-09-20T10:53:00Z',
+    durationSec: 28020,
+    movingTimeSec: 28020,
+    distanceMeters: 11790,
+    elevationGain: 618,
+    elevationLoss: 618,
+    avgSpeedMs: 0.88,
+    maxSpeedMs: 1.5,
+    avgHr: 125,
+    maxHr: 162,
+    avgWatts: null,
+    normalizedPower: null,
+    maxWatts: null,
+    avgCadence: 102,
+    calories: 1400,
+    tss: 126,
+    rpe: 7,
+    gearId: null,
+    worldName: null,
+    polyline: null,
+    startLat: null,
+    startLon: null,
+    points: [],
+    strengthLogs: [],
+    totalVolumeKg: null,
+    createdAt: new Date().toISOString(),
+  });
+  const updatedToMountain = updateActivity(editedWalkToMountain.id, { sport: 'mountain' });
+  assert.equal(updatedToMountain?.sport, 'mountain');
+  assert.equal(updatedToMountain?.subSport, 'Montaña');
+
+  // Re-running backfillWalkingActivities must NOT revert a user-retagged mountain activity
+  backfillWalkingActivities(db);
+  assert.equal(getActivityById(editedWalkToMountain.id)?.sport, 'mountain');
+  assert.equal(getActivityById(editedWalkToMountain.id)?.subSport, 'Montaña');
+
+  // Legacy mismatched row in DB (sport='mountain', sub_sport='Caminar') is repaired by backfillMismatchedSubSports
+  const stuckMtnId = 'act_stuck_mtn_caminar';
+  db.prepare(
+    `INSERT INTO activities (id, external_id, source, sport, sub_sport, title, started_at, duration_sec, moving_time_sec, distance_meters, elevation_gain, elevation_loss, tss, created_at)
+     VALUES (?, ?, 'huawei', 'mountain', 'Caminar', '2026.09.20 10.53 WALKING', '2026-09-20T10:53:00Z', 28020, 28020, 11790, 618, 618, 126, '2026-09-20T18:45:00Z')`
+  ).run(stuckMtnId, 'huawei_hs_20260920_1053');
+
+  const fixedSubSports = backfillMismatchedSubSports(db);
+  assert.ok(fixedSubSports >= 1);
+  assert.equal(getActivityById(stuckMtnId)?.sport, 'mountain');
+  assert.equal(getActivityById(stuckMtnId)?.subSport, 'Montaña');
+
+  // Direct createActivity with mismatched subSport (e.g. import sportOverride) also normalizes subSport
+  const overriddenImport = createActivity({
+    id: 'act_import_override_mtn',
+    externalId: null,
+    source: 'gpx',
+    sport: 'mountain',
+    subSport: 'Caminar',
+    title: 'Ruta Override',
+    description: null,
+    startedAt: '2026-09-21T08:00:00Z',
+    durationSec: 7200,
+    movingTimeSec: 7200,
+    distanceMeters: 12000,
+    elevationGain: 700,
+    elevationLoss: 700,
+    avgSpeedMs: 1.66,
+    maxSpeedMs: 2.5,
+    avgHr: 140,
+    maxHr: 170,
+    avgWatts: null,
+    normalizedPower: null,
+    maxWatts: null,
+    avgCadence: null,
+    calories: 900,
+    tss: 110,
+    rpe: 7,
+    gearId: null,
+    worldName: null,
+    polyline: null,
+    startLat: null,
+    startLon: null,
+    points: [],
+    strengthLogs: [],
+    totalVolumeKg: null,
+    createdAt: new Date().toISOString(),
+  });
+  assert.equal(overriddenImport.subSport, 'Montaña');
 });
