@@ -11,7 +11,7 @@ import {
   enrichPointsTelemetry,
 } from '@/lib/analytics';
 import { DEFAULT_EXERCISES, DEFAULT_HOME_EQUIPMENT } from '@/lib/home-workouts';
-import { defaultSubSportForSport, isMismatchedSubSport } from '@/lib/metrics';
+import { defaultSubSportForSport, estimateActivityTSS, isMismatchedSubSport } from '@/lib/metrics';
 import { isMyWhooshContext, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
 import { decodePolyline } from '@/lib/polyline';
 import { buildSeedActivityRows, SEED_GEAR, SEED_PROFILE, SEED_ROUTES, SEED_ROUTINES } from '@/lib/seed';
@@ -63,6 +63,7 @@ export function getDb(): Database.Database {
   seedIfEmpty(db);
   backfillMyWhooshWorlds(db);
   backfillWalkingActivities(db);
+  backfillSplitTrailActivities(db);
   backfillMismatchedSubSports(db);
 
   dbInstance = db;
@@ -83,6 +84,49 @@ export function backfillWalkingActivities(db: Database.Database = getDb()): numb
     )
     .run();
   return res.changes;
+}
+
+export function backfillSplitTrailActivities(db: Database.Database = getDb()): number {
+  let updated = 0;
+  const tx = db.transaction(() => {
+    const actRes = db
+      .prepare(
+        `UPDATE activities
+         SET sport = 'trail',
+             sub_sport = 'Trail Running'
+         WHERE sport = 'mountain'
+           AND (
+             LOWER(TRIM(COALESCE(sub_sport, ''))) IN ('trail running', 'trailrun', 'trail')
+             OR external_id LIKE 'huawei_ht_%_118'
+           )`
+      )
+      .run();
+    updated += actRes.changes;
+
+    // Normalizar antiguas etiquetas combinadas de Senderismo
+    db.prepare(
+      `UPDATE activities
+       SET sub_sport = 'Senderismo'
+       WHERE sport = 'mountain'
+         AND LOWER(TRIM(COALESCE(sub_sport, ''))) IN ('montaña / senderismo', 'senderismo / montaña', 'montaña', 'montana', 'ruta de montaña')`
+    ).run();
+
+    // Actualizar segmentos creados desde actividades de Trail Running (e.g. seed Naranco)
+    db.prepare(
+      `UPDATE segments
+       SET sport = 'trail'
+       WHERE sport = 'mountain'
+         AND source_activity_id IN (SELECT id FROM activities WHERE sport = 'trail')`
+    ).run();
+
+    db.prepare(
+      `UPDATE gear_items
+       SET default_for_sport = 'trail'
+       WHERE id = 'gear_trail_shoes' AND default_for_sport = 'mountain'`
+    ).run();
+  });
+  tx();
+  return updated;
 }
 
 export function backfillMismatchedSubSports(db: Database.Database = getDb()): number {
@@ -958,34 +1002,81 @@ export function updateActivity(
   const existing = getActivityById(id);
   if (!existing) return null;
 
+  const db = getDb();
   const nextSport = patch.sport ?? existing.sport;
+  const sportChanged = Boolean(patch.sport && patch.sport !== existing.sport);
+  const nextRpe = patch.rpe !== undefined ? patch.rpe : existing.rpe ?? null;
   const nextSubSport =
     patch.subSport !== undefined
       ? patch.subSport && isMismatchedSubSport(nextSport, patch.subSport)
         ? defaultSubSportForSport(nextSport)
         : patch.subSport
-      : patch.sport && patch.sport !== existing.sport
-        ? defaultSubSportForSport(patch.sport)
+      : sportChanged
+        ? defaultSubSportForSport(nextSport)
         : existing.subSport && isMismatchedSubSport(nextSport, existing.subSport)
           ? defaultSubSportForSport(nextSport)
           : existing.subSport ?? null;
 
-  getDb()
-    .prepare(`
+  const nextTss =
+    sportChanged || (patch.rpe !== undefined && patch.rpe !== existing.rpe && !existing.avgHr && !existing.avgWatts)
+      ? estimateActivityTSS(
+          {
+            sport: nextSport,
+            durationSec: existing.durationSec,
+            movingTimeSec: existing.movingTimeSec,
+            avgWatts: existing.avgWatts ?? null,
+            normalizedPower: existing.normalizedPower ?? null,
+            avgHr: existing.avgHr ?? null,
+            rpe: nextRpe,
+            elevationGain: existing.elevationGain,
+          },
+          getAthleteProfile()
+        )
+      : existing.tss;
+
+  db.prepare(`
       UPDATE activities
-      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?
+      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?, tss = ?
       WHERE id = ?
-    `)
-    .run(
-      patch.title ?? existing.title,
-      nextSport,
-      nextSubSport,
-      patch.description !== undefined ? patch.description : existing.description ?? null,
-      patch.rpe !== undefined ? patch.rpe : existing.rpe ?? null,
-      patch.gearId !== undefined ? patch.gearId : existing.gearId ?? null,
-      patch.worldName !== undefined ? patch.worldName : existing.worldName ?? null,
-      id
-    );
+    `).run(
+    patch.title ?? existing.title,
+    nextSport,
+    nextSubSport,
+    patch.description !== undefined ? patch.description : existing.description ?? null,
+    nextRpe,
+    patch.gearId !== undefined ? patch.gearId : existing.gearId ?? null,
+    patch.worldName !== undefined ? patch.worldName : existing.worldName ?? null,
+    nextTss,
+    id
+  );
+
+  if (sportChanged && existing.points.length > 1) {
+    // Re-emparejar esfuerzos con los segmentos del nuevo deporte
+    db.prepare(
+      `DELETE FROM segment_efforts
+       WHERE activity_id = ?
+         AND segment_id IN (SELECT id FROM segments WHERE sport != ?)`
+    ).run(id, nextSport);
+
+    const segments = listSegments().filter((s) => s.sport === nextSport);
+    const enriched = enrichPointsTelemetry(existing.points, nextSport);
+    for (const seg of segments) {
+      const effort = matchPointsToSegment(
+        {
+          id,
+          title: patch.title ?? existing.title,
+          startedAt: existing.startedAt,
+          sport: nextSport,
+          worldName: patch.worldName !== undefined ? patch.worldName : existing.worldName ?? null,
+        },
+        enriched,
+        seg
+      );
+      if (effort) {
+        insertSegmentEffortRow(db, effort);
+      }
+    }
+  }
 
   return getActivityById(id);
 }

@@ -23,13 +23,14 @@ export default function MountainRoutesPage() {
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
-    const [rtRes, mtnActRes, runActRes] = await Promise.all([
+    const [rtRes, mtnActRes, trailActRes, runActRes] = await Promise.all([
       fetch('/api/routes').then((r) => r.json()),
       fetch('/api/activities?sport=mountain').then((r) => r.json()),
+      fetch('/api/activities?sport=trail').then((r) => r.json()),
       fetch('/api/activities?sport=running').then((r) => r.json()),
     ]);
     setRoutes(rtRes.routes ?? []);
-    setActivities([...(mtnActRes.activities ?? []), ...(runActRes.activities ?? [])]);
+    setActivities([...(mtnActRes.activities ?? []), ...(trailActRes.activities ?? []), ...(runActRes.activities ?? [])]);
   }, []);
 
   useEffect(() => {
@@ -91,7 +92,7 @@ export default function MountainRoutesPage() {
     await load();
   }
 
-  const mtnOnly = activities.filter((a) => a.sport === 'mountain');
+  const mtnOnly = activities.filter((a) => a.sport === 'mountain' || a.sport === 'trail');
   const totalMtnClimb = Math.round(mtnOnly.reduce((s, a) => s + a.elevationGain, 0));
 
   return (

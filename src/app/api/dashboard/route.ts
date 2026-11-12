@@ -32,6 +32,7 @@ export async function GET() {
 
   const monthBySport = {
     running: thisMonth.filter((a) => a.sport === 'running').length,
+    trail: thisMonth.filter((a) => a.sport === 'trail').length,
     mywhoosh: thisMonth.filter((a) => a.sport === 'mywhoosh').length,
     cycling: thisMonth.filter((a) => a.sport === 'cycling').length,
     mountain: thisMonth.filter((a) => a.sport === 'mountain').length,
@@ -43,6 +44,7 @@ export async function GET() {
   const weeklyBuckets: Array<{
     label: string;
     runningHours: number;
+    trailHours: number;
     mywhooshHours: number;
     cyclingHours: number;
     mountainHours: number;
@@ -68,6 +70,7 @@ export async function GET() {
     weeklyBuckets.push({
       label,
       runningHours: hoursFor('running'),
+      trailHours: hoursFor('trail'),
       mywhooshHours: hoursFor('mywhoosh'),
       cyclingHours: hoursFor('cycling'),
       mountainHours: hoursFor('mountain'),

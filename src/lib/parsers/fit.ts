@@ -48,8 +48,12 @@ function mapFitSport(
     };
   }
 
-  if (sport.includes('hiking') || sub.includes('trail') || sub.includes('mountain')) {
-    return { sport: 'mountain', subSport: sub.includes('trail') ? 'Trail Running' : 'Montaña / Senderismo' };
+  if (sub.includes('trail') || fn.includes('trail')) {
+    return { sport: 'trail', subSport: 'Trail Running' };
+  }
+
+  if (sport.includes('hiking') || sub.includes('mountain') || sport.includes('mountaineering')) {
+    return { sport: 'mountain', subSport: 'Senderismo' };
   }
 
   if (sport.includes('walking') || sport === 'walk') {
@@ -59,7 +63,7 @@ function mapFitSport(
   if (sport.includes('running') || sport === 'run') {
     const km = distanceMeters / 1000;
     if (km >= 4 && elevationGain / km > 35 && elevationGain >= 300) {
-      return { sport: 'mountain', subSport: 'Trail Running' };
+      return { sport: 'trail', subSport: 'Trail Running' };
     }
     return { sport: 'running', subSport: sub.includes('treadmill') ? 'Cinta' : 'Asfalto' };
   }
@@ -224,7 +228,8 @@ export async function parseFitBuffer(buffer: Buffer, fileName = 'actividad.fit')
       const rawLapCad = lap.avg_cadence;
       const shouldDoubleLapCad =
         rawLapCad !== undefined &&
-        (((mapped.sport === 'running' || mapped.sport === 'mountain') && rawLapCad < 115) ||
+        (((mapped.sport === 'running' || mapped.sport === 'trail' || mapped.sport === 'mountain') &&
+          rawLapCad < 115) ||
           (mapped.sport === 'walking' && rawLapCad < 80));
       const lapCad =
         rawLapCad !== undefined
@@ -270,7 +275,8 @@ export async function parseFitBuffer(buffer: Buffer, fileName = 'actividad.fit')
   const rawSessionCad = session?.avg_cadence ?? (cadCount > 0 ? Math.round(cadSum / cadCount) : undefined);
   const shouldDoubleSessionCad =
     rawSessionCad !== undefined &&
-    (((mapped.sport === 'running' || mapped.sport === 'mountain') && rawSessionCad < 115) ||
+    (((mapped.sport === 'running' || mapped.sport === 'trail' || mapped.sport === 'mountain') &&
+      rawSessionCad < 115) ||
       (mapped.sport === 'walking' && rawSessionCad < 80));
   const avgCadence =
     rawSessionCad !== undefined

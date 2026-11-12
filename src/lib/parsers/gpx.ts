@@ -94,8 +94,11 @@ export function inferSportFromText(
     return { sport: 'mywhoosh', subSport: 'MyWhoosh Indoor', worldName: resolvedWorld?.world.name };
   }
 
+  if (combined.includes('trail')) {
+    return { sport: 'trail', subSport: 'Trail Running' };
+  }
+
   if (
-    combined.includes('trail') ||
     combined.includes('hik') ||
     combined.includes('senderismo') ||
     combined.includes('trek') ||
@@ -103,7 +106,7 @@ export function inferSportFromText(
     combined.includes('alpin') ||
     combined.includes('picos')
   ) {
-    return { sport: 'mountain', subSport: combined.includes('trail') ? 'Trail Running' : 'Senderismo / Montaña' };
+    return { sport: 'mountain', subSport: 'Senderismo' };
   }
 
   if (combined.includes('walk') || combined.includes('caminat') || combined.includes('caminar') || combined.includes('paseo')) {
@@ -117,7 +120,7 @@ export function inferSportFromText(
   if (combined.includes('run') || combined.includes('correr') || combined.includes('carrera')) {
     const km = distanceMeters / 1000;
     if (km >= 4 && elevationGain / km > 35 && elevationGain >= 300) {
-      return { sport: 'mountain', subSport: 'Trail Running' };
+      return { sport: 'trail', subSport: 'Trail Running' };
     }
     return { sport: 'running', subSport: 'Asfalto' };
   }
@@ -130,7 +133,7 @@ export function inferSportFromText(
     return { sport: 'cycling', subSport: 'Ciclismo' };
   }
   if (distanceMeters > 0 && elevationGain >= 400 && elevationGain / Math.max(1, distanceMeters / 1000) > 35) {
-    return { sport: 'mountain', subSport: 'Ruta de Montaña' };
+    return { sport: 'mountain', subSport: 'Senderismo' };
   }
   return { sport: 'running', subSport: 'Actividad GPS' };
 }
@@ -310,7 +313,8 @@ export function parseGpxString(xmlText: string, fileName = 'actividad.gpx'): Par
   const rawAvgCad = cadCount > 0 ? Math.round(cadSum / cadCount) : undefined;
   const shouldDoubleCad =
     rawAvgCad !== undefined &&
-    (((inferred.sport === 'running' || inferred.sport === 'mountain') && rawAvgCad < 115) ||
+    (((inferred.sport === 'running' || inferred.sport === 'trail' || inferred.sport === 'mountain') &&
+      rawAvgCad < 115) ||
       (inferred.sport === 'walking' && rawAvgCad < 80));
   const avgCadence = shouldDoubleCad ? rawAvgCad! * 2 : rawAvgCad;
 

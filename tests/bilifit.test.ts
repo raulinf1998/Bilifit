@@ -52,6 +52,7 @@ import {
 import {
   backfillMismatchedSubSports,
   backfillMyWhooshWorlds,
+  backfillSplitTrailActivities,
   backfillWalkingActivities,
   createActivity,
   createCustomEquipment,
@@ -254,7 +255,8 @@ test('FIT binary parser decodes encoded FIT buffer and ZIP importer extracts mul
   const imported = await parseUploadedActivityFile('strava_export.zip', zipBuf);
   assert.equal(imported.errors.length, 0);
   assert.equal(imported.activities.length, 1);
-  assert.equal(imported.activities[0].sport, 'mountain');
+  assert.equal(imported.activities[0].sport, 'trail');
+  assert.equal(imported.activities[0].subSport, 'Trail Running');
   assert.equal(imported.activities[0].distanceMeters, 6200);
   assert.equal(imported.activities[0].elevationGain, 240);
 });
@@ -387,7 +389,8 @@ test('SQLite DB initializes seed data, toggles equipment, and persists activitie
 
   // Strava mapper check
   assert.equal(mapStravaSport('VirtualRide', 'VirtualRide', 'MyWhoosh Arabia').sport, 'mywhoosh');
-  assert.equal(mapStravaSport('Run', 'TrailRun', 'Trail Picos').sport, 'mountain');
+  assert.equal(mapStravaSport('Run', 'TrailRun', 'Trail Picos').sport, 'trail');
+  assert.equal(mapStravaSport('Hike', 'Hike', 'Subida Pienzu').sport, 'mountain');
 });
 
 test('MyWhoosh virtual worlds resolve, align (including Free Rides), avoid outdoor false positives, and backfill safely', async () => {
@@ -883,7 +886,7 @@ test('Segments engine seeds initial segments, detects climb candidates and match
     id: 'act_seg_test_climb',
     externalId: null,
     source: 'gpx',
-    sport: 'mountain',
+    sport: 'trail',
     subSport: 'Trail Running',
     title: 'Subida de Prueba Segmento',
     description: null,
@@ -1514,7 +1517,10 @@ test('Caminar (walking) sport classification, analytics, DB backfill, and Oscuro
 
   assert.equal(mapStravaSport('Walk', 'Walk', 'Paseo urbano').sport, 'walking');
   assert.equal(mapStravaSport('Hike', 'Hike', 'Subida al Angliru').sport, 'mountain');
-  assert.equal(mapStravaSport('Run', 'TrailRun', 'Trail Picos').sport, 'mountain');
+  assert.equal(mapStravaSport('Run', 'TrailRun', 'Trail Picos').sport, 'trail');
+  assert.equal(sportLabel('mountain'), 'Senderismo');
+  assert.equal(sportLabel('trail'), 'Trail Running');
+  assert.equal(sportColor('trail'), '#84CC16');
 
   // 2. Walking pace zones and stride length extras
   const walkPts = enrichPointsTelemetry(
@@ -1600,17 +1606,23 @@ test('Caminar (walking) sport classification, analytics, DB backfill, and Oscuro
     assert.ok(spread <= 14, `Expected monochrome/slate tone in Oscuro map style, got ${hex} (spread=${spread})`);
   }
 
-  // 5. Changing activity sport synchronizes subSport and repairs existing mountain/Caminar mismatches
+  // 5. Splitting Senderismo (mountain) vs Trail Running (trail), syncing subSport on edit, and DB backfills
   assert.equal(isMismatchedSubSport('mountain', 'Caminar'), true);
+  assert.equal(isMismatchedSubSport('mountain', 'Trail Running'), true);
+  assert.equal(isMismatchedSubSport('trail', 'Trail Running'), false);
   assert.equal(isMismatchedSubSport('mountain', 'Senderismo'), false);
-  assert.equal(isMismatchedSubSport('mountain', 'Trail Running'), false);
   assert.equal(resolveDisplaySubSport('mountain', 'Caminar'), null);
-  assert.equal(resolveDisplaySubSport('mountain', 'Trail Running'), 'Trail Running');
+  assert.equal(resolveDisplaySubSport('mountain', 'Trail Running'), null);
+  assert.equal(resolveDisplaySubSport('trail', 'Trail Running'), 'Trail Running');
   assert.equal(resolveDisplaySubSport('walking', 'Caminar'), 'Caminar');
-  assert.equal(defaultSubSportForSport('mountain'), 'Montaña');
+  assert.equal(defaultSubSportForSport('mountain'), 'Senderismo');
+  assert.equal(defaultSubSportForSport('trail'), 'Trail Running');
 
   const badgeSource = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'SportBadge.tsx'), 'utf8');
   assert.ok(badgeSource.includes('resolveDisplaySubSport'));
+  assert.ok(badgeSource.includes('TrailRunningIcon'));
+  assert.ok(badgeSource.includes("mountain: 'Senderismo'"));
+  assert.ok(badgeSource.includes("trail: 'Trail Running'"));
 
   const editedWalkToMountain = createActivity({
     id: 'act_walk_edited_to_mtn',
@@ -1649,24 +1661,41 @@ test('Caminar (walking) sport classification, analytics, DB backfill, and Oscuro
   });
   const updatedToMountain = updateActivity(editedWalkToMountain.id, { sport: 'mountain' });
   assert.equal(updatedToMountain?.sport, 'mountain');
-  assert.equal(updatedToMountain?.subSport, 'Montaña');
+  assert.equal(updatedToMountain?.subSport, 'Senderismo');
 
-  // Re-running backfillWalkingActivities must NOT revert a user-retagged mountain activity
+  const updatedToTrail = updateActivity(editedWalkToMountain.id, { sport: 'trail' });
+  assert.equal(updatedToTrail?.sport, 'trail');
+  assert.equal(updatedToTrail?.subSport, 'Trail Running');
+
+  // Re-running backfillWalkingActivities must NOT revert a user-retagged trail/mountain activity
+  const updatedBackToHike = updateActivity(editedWalkToMountain.id, { sport: 'mountain' });
+  assert.equal(updatedBackToHike?.subSport, 'Senderismo');
   backfillWalkingActivities(db);
   assert.equal(getActivityById(editedWalkToMountain.id)?.sport, 'mountain');
-  assert.equal(getActivityById(editedWalkToMountain.id)?.subSport, 'Montaña');
+  assert.equal(getActivityById(editedWalkToMountain.id)?.subSport, 'Senderismo');
 
-  // Legacy mismatched row in DB (sport='mountain', sub_sport='Caminar') is repaired by backfillMismatchedSubSports
+  // Legacy Trail Running stored under mountain migrates to sport='trail', while stuck mountain/Caminar repairs to Senderismo
+  const legacyTrailId = 'act_legacy_trail_split';
+  db.prepare(
+    `INSERT INTO activities (id, external_id, source, sport, sub_sport, title, started_at, duration_sec, moving_time_sec, distance_meters, elevation_gain, elevation_loss, tss, created_at)
+     VALUES (?, ?, 'huawei', 'mountain', 'Trail Running', 'Trail Antiguo', '2026-09-18T08:00:00Z', 3600, 3600, 10000, 450, 450, 75, '2026-09-18T09:10:00Z')`
+  ).run(legacyTrailId, 'huawei_ht_1789800000000_118');
+
   const stuckMtnId = 'act_stuck_mtn_caminar';
   db.prepare(
     `INSERT INTO activities (id, external_id, source, sport, sub_sport, title, started_at, duration_sec, moving_time_sec, distance_meters, elevation_gain, elevation_loss, tss, created_at)
      VALUES (?, ?, 'huawei', 'mountain', 'Caminar', '2026.09.20 10.53 WALKING', '2026-09-20T10:53:00Z', 28020, 28020, 11790, 618, 618, 126, '2026-09-20T18:45:00Z')`
   ).run(stuckMtnId, 'huawei_hs_20260920_1053');
 
+  const splitMigrated = backfillSplitTrailActivities(db);
+  assert.ok(splitMigrated >= 1);
+  assert.equal(getActivityById(legacyTrailId)?.sport, 'trail');
+  assert.equal(getActivityById(legacyTrailId)?.subSport, 'Trail Running');
+
   const fixedSubSports = backfillMismatchedSubSports(db);
   assert.ok(fixedSubSports >= 1);
   assert.equal(getActivityById(stuckMtnId)?.sport, 'mountain');
-  assert.equal(getActivityById(stuckMtnId)?.subSport, 'Montaña');
+  assert.equal(getActivityById(stuckMtnId)?.subSport, 'Senderismo');
 
   // Direct createActivity with mismatched subSport (e.g. import sportOverride) also normalizes subSport
   const overriddenImport = createActivity({
@@ -1704,5 +1733,5 @@ test('Caminar (walking) sport classification, analytics, DB backfill, and Oscuro
     totalVolumeKg: null,
     createdAt: new Date().toISOString(),
   });
-  assert.equal(overriddenImport.subSport, 'Montaña');
+  assert.equal(overriddenImport.subSport, 'Senderismo');
 });

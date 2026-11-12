@@ -204,7 +204,7 @@ export const SEED_GEAR: GearItem[] = [
     name: 'Zapatillas Trail Montaña',
     brand: 'Salomon / Hoka',
     category: 'trail_shoes',
-    defaultForSport: 'mountain',
+    defaultForSport: 'trail',
     initialKm: 145,
     trackedKm: 0,
     maxKm: 650,
@@ -483,7 +483,7 @@ export function buildSeedActivities(): SeedActivitySpec[] {
   list.push({
     id: 'act_seed_mtn_1',
     source: 'gpx',
-    sport: 'mountain',
+    sport: 'trail',
     subSport: 'Trail Running',
     title: 'Trail Monte Naranco y Sendero Norte',
     description: 'Subida continua hasta el Pico Paisano y bajada divertida por sendero embarrado.',
@@ -498,7 +498,7 @@ export function buildSeedActivities(): SeedActivitySpec[] {
     avgCadence: 164,
     rpe: 8,
     gearId: 'gear_trail_shoes',
-    points: enrichPointsTelemetry(tr1.points, 'mountain'),
+    points: enrichPointsTelemetry(tr1.points, 'trail'),
     polyline: tr1.polyline,
   });
 
@@ -669,15 +669,16 @@ export function buildSeedActivities(): SeedActivitySpec[] {
         polyline: mwHist.polyline,
       });
     } else if (kind === 2) {
-      // Montaña
+      // Montaña: alternar entre Trail Running y Senderismo
+      const isTrail = Math.floor(idx / 4) % 2 === 0;
       const dur = 5400 + (idx % 3) * 1800;
-      const mtnLoop = buildGpsLoop(43.385, -5.868, 0.017, 0.022, 210, 420 + (idx % 2) * 120, dur, 80, 144, 2.2);
+      const mtnLoop = buildGpsLoop(43.385, -5.868, 0.017, 0.022, 210, 420 + (idx % 2) * 120, dur, 80, 144, isTrail ? 2.5 : 1.7);
       list.push({
         id: `act_hist_mtn_${idx}`,
         source: 'gpx',
-        sport: 'mountain',
-        subSport: idx % 2 === 0 ? 'Trail Running' : 'Senderismo / Montaña',
-        title: idx % 2 === 0 ? 'Salida Trail Monte Naranco' : 'Ruta de Montaña Asturias',
+        sport: isTrail ? 'trail' : 'mountain',
+        subSport: isTrail ? 'Trail Running' : 'Senderismo',
+        title: isTrail ? 'Salida Trail Monte Naranco' : 'Ruta de Senderismo Asturias',
         description: 'Ruta de desnivel acumulado para preparar salidas largas.',
         daysAgo: dAgo,
         hour: 9,
@@ -689,7 +690,7 @@ export function buildSeedActivities(): SeedActivitySpec[] {
         maxHr: 173,
         rpe: 7,
         gearId: 'gear_trail_shoes',
-        points: enrichPointsTelemetry(mtnLoop.points, 'mountain'),
+        points: enrichPointsTelemetry(mtnLoop.points, isTrail ? 'trail' : 'mountain'),
         polyline: mtnLoop.polyline,
       });
     } else {

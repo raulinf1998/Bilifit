@@ -170,7 +170,8 @@ export default function GearManagementPage() {
             >
               <option value="">Ninguno</option>
               <option value="running">Correr</option>
-              <option value="mountain">Montaña / Trail</option>
+              <option value="trail">Trail Running</option>
+              <option value="mountain">Senderismo</option>
               <option value="walking">Caminar</option>
               <option value="mywhoosh">MyWhoosh</option>
               <option value="cycling">Ciclismo Exterior</option>

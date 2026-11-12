@@ -51,6 +51,8 @@ export default function ActivityDetailPage() {
   const [hoverPoint, setHoverPoint] = useState<ActivityPoint | null>(null);
   const [highlightPolyline, setHighlightPolyline] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const [title, setTitle] = useState('');
   const [sport, setSport] = useState<SportType>('running');
@@ -103,22 +105,33 @@ export default function ActivityDetailPage() {
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    const res = await fetch(`/api/activities/${params.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title,
-        sport,
-        ...(activity && sport !== activity.sport ? { subSport: defaultSubSportForSport(sport) } : {}),
-        worldName: sport === 'mywhoosh' || worldName ? worldName || null : null,
-        gearId: gearId || null,
-        rpe,
-        description,
-      }),
-    });
-    if (res.ok) {
-      await loadAll();
-      setEditing(false);
+    setSavingEdit(true);
+    setSaveError(null);
+    try {
+      const res = await fetch(`/api/activities/${params.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          sport,
+          ...(activity && sport !== activity.sport ? { subSport: defaultSubSportForSport(sport) } : {}),
+          worldName: sport === 'mywhoosh' || worldName ? worldName || null : null,
+          gearId: gearId || null,
+          rpe,
+          description,
+        }),
+      });
+      if (res.ok) {
+        await loadAll();
+        setEditing(false);
+      } else {
+        const data = await res.json().catch(() => null);
+        setSaveError(data?.error || 'No se pudieron guardar los cambios');
+      }
+    } catch {
+      setSaveError('Error de conexión al guardar los cambios');
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -229,7 +242,11 @@ export default function ActivityDetailPage() {
 
   const ftp = profile?.ftpWatts ?? 245;
   const weightKg = profile?.weightKg ?? 72;
-  const isPaceSport = activity.sport === 'running' || activity.sport === 'mountain' || activity.sport === 'walking';
+  const isPaceSport =
+    activity.sport === 'running' ||
+    activity.sport === 'trail' ||
+    activity.sport === 'mountain' ||
+    activity.sport === 'walking';
   const hasGps =
     activity.points.some((p) => typeof p.lat === 'number' && typeof p.lon === 'number') ||
     Boolean(activity.polyline) ||
@@ -331,9 +348,10 @@ export default function ActivityDetailPage() {
                 style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
               >
                 <option value="running">Correr</option>
-                <option value="mywhoosh">MyWhoosh / Bici Indoor</option>
-                <option value="mountain">Montaña / Trail</option>
+                <option value="trail">Trail Running</option>
+                <option value="mountain">Senderismo</option>
                 <option value="walking">Caminar</option>
+                <option value="mywhoosh">MyWhoosh / Bici Indoor</option>
                 <option value="cycling">Ciclismo Exterior</option>
                 <option value="strength">Fuerza en Casa</option>
               </select>
@@ -390,12 +408,14 @@ export default function ActivityDetailPage() {
                 style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
               />
             </div>
-            <div className="sm:col-span-2 flex justify-end">
+            <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-2">
+              {saveError ? <span className="text-xs text-rose-400">{saveError}</span> : <span />}
               <button
                 type="submit"
-                className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 px-4 py-2 text-sm font-semibold text-white"
+                disabled={savingEdit}
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white"
               >
-                <Save className="h-4 w-4" /> Guardar cambios
+                <Save className="h-4 w-4" /> {savingEdit ? 'Guardando...' : 'Guardar cambios'}
               </button>
             </div>
           </form>
@@ -553,7 +573,9 @@ export default function ActivityDetailPage() {
             worldName={activity.worldName}
             title={activity.title}
             color={sportColor(activity.sport)}
-            defaultLayer={worldInfo ? 'virtual' : activity.sport === 'mountain' ? 'topo' : 'osm'}
+            defaultLayer={
+              worldInfo ? 'virtual' : activity.sport === 'mountain' || activity.sport === 'trail' ? 'topo' : 'osm'
+            }
             hoverPoint={hoverPoint}
             highlightPolyline={highlightPolyline}
             heightClass="h-[440px]"

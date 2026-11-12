@@ -157,6 +157,7 @@ export function FitnessPMCChart({ data }: { data: FitnessDayPoint[] }) {
 export interface WeeklyBucket {
   label: string;
   runningHours: number;
+  trailHours?: number;
   mywhooshHours: number;
   cyclingHours: number;
   mountainHours: number;
@@ -171,7 +172,13 @@ export function WeeklyVolumeChart({ buckets }: { buckets: WeeklyBucket[] }) {
   if (!buckets || buckets.length === 0) return null;
 
   const bucketTotal = (b: WeeklyBucket) =>
-    b.runningHours + b.mywhooshHours + b.cyclingHours + b.mountainHours + (b.walkingHours ?? 0) + b.strengthHours;
+    b.runningHours +
+    (b.trailHours ?? 0) +
+    b.mywhooshHours +
+    b.cyclingHours +
+    b.mountainHours +
+    (b.walkingHours ?? 0) +
+    b.strengthHours;
 
   const totals = buckets.map(bucketTotal);
   const maxHours = Math.max(4, ...totals);
@@ -185,10 +192,13 @@ export function WeeklyVolumeChart({ buckets }: { buckets: WeeklyBucket[] }) {
             <span className="h-2.5 w-2.5 rounded-sm bg-[#fc4c02]" /> Correr
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-sm bg-cyan-400" /> MyWhoosh
+            <span className="h-2.5 w-2.5 rounded-sm bg-lime-400" /> Trail
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-sm bg-emerald-400" /> Montaña
+            <span className="h-2.5 w-2.5 rounded-sm bg-emerald-400" /> Senderismo
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-sm bg-cyan-400" /> MyWhoosh
           </span>
           <span className="flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-sm bg-amber-400" /> Caminar
@@ -208,6 +218,7 @@ export function WeeklyVolumeChart({ buckets }: { buckets: WeeklyBucket[] }) {
       <div className="grid grid-cols-8 gap-2 sm:gap-3 items-end h-44 pt-4">
         {buckets.map((b, i) => {
           const sum = bucketTotal(b);
+          const trailH = b.trailHours ?? 0;
           const walkingH = b.walkingHours ?? 0;
           const pct = (val: number) => `${Math.max(0, (val / maxHours) * 100)}%`;
           return (
@@ -225,6 +236,7 @@ export function WeeklyVolumeChart({ buckets }: { buckets: WeeklyBucket[] }) {
                 style={{ height: '130px', background: 'rgba(148,163,184,0.08)' }}
               >
                 {b.runningHours > 0 && <div style={{ height: pct(b.runningHours), background: '#fc4c02' }} />}
+                {trailH > 0 && <div style={{ height: pct(trailH), background: '#84cc16' }} />}
                 {b.mywhooshHours > 0 && <div style={{ height: pct(b.mywhooshHours), background: '#06b6d4' }} />}
                 {b.cyclingHours > 0 && <div style={{ height: pct(b.cyclingHours), background: '#3b82f6' }} />}
                 {b.mountainHours > 0 && <div style={{ height: pct(b.mountainHours), background: '#10b981' }} />}
@@ -261,7 +273,8 @@ export function TelemetryChart({
 
   if (!points || points.length < 3) return null;
 
-  const isPaceSport = sport === 'running' || sport === 'mountain' || sport === 'walking';
+  const isPaceSport =
+    sport === 'running' || sport === 'trail' || sport === 'mountain' || sport === 'walking';
   const hasEle = points.some((p) => typeof p.ele === 'number');
   const hasSpeed = points.some((p) => typeof p.speed === 'number' && p.speed > 0.3);
   const hasWatts = points.some((p) => typeof p.watts === 'number');

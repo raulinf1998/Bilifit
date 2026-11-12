@@ -29,7 +29,7 @@ export interface HealthSyncFileIdentity {
 }
 
 const HUAWEI_SPORT_MAP: Record<number, { sport: SportType; subSport: string; fallbackTitle: string }> = {
-  2: { sport: 'mountain', subSport: 'Montaña / Senderismo', fallbackTitle: 'Ruta de Montaña' },
+  2: { sport: 'mountain', subSport: 'Senderismo', fallbackTitle: 'Ruta de Montaña' },
   3: { sport: 'cycling', subSport: 'Ciclismo', fallbackTitle: 'Salida en Bici' },
   4: { sport: 'running', subSport: 'Asfalto', fallbackTitle: 'Carrera' },
   5: { sport: 'walking', subSport: 'Caminar', fallbackTitle: 'Caminata' },
@@ -39,7 +39,7 @@ const HUAWEI_SPORT_MAP: Record<number, { sport: SportType; subSport: string; fal
   104: { sport: 'running', subSport: 'Aguas Abiertas', fallbackTitle: 'Natación Aguas Abiertas' },
   111: { sport: 'strength', subSport: 'Elíptica / Cardio', fallbackTitle: 'Elíptica' },
   117: { sport: 'strength', subSport: 'Entrenamiento', fallbackTitle: 'Sesión Huawei' },
-  118: { sport: 'mountain', subSport: 'Trail Running', fallbackTitle: 'Trail Running' },
+  118: { sport: 'trail', subSport: 'Trail Running', fallbackTitle: 'Trail Running' },
   145: { sport: 'strength', subSport: 'Fuerza / CrossFit', fallbackTitle: 'Fuerza / CrossFit' },
   282: { sport: 'mountain', subSport: 'Senderismo', fallbackTitle: 'Senderismo' },
 };
@@ -702,16 +702,26 @@ export function applyHealthSyncMetadata(parsed: ParsedActivityData, meta: Health
     });
 
   const csvWalkingSignal = /^walk(ing)?$|caminat/i.test((meta.activityType ?? '').trim());
+  const csvTrailSignal = /trail[\s_-]*run/i.test(`${meta.activityType ?? ''} ${meta.activityName ?? ''}`);
+  const csvHikeSignal = /^(hik(e|ing)|senderismo|mountaineering)$/i.test((meta.activityType ?? '').trim());
   const nextSport: SportType = virtualCtx
     ? 'mywhoosh'
     : csvWalkingSignal && parsed.sport !== 'mywhoosh'
       ? 'walking'
-      : parsed.sport;
+      : csvTrailSignal && parsed.sport !== 'mywhoosh'
+        ? 'trail'
+        : csvHikeSignal && parsed.sport !== 'mywhoosh'
+          ? 'mountain'
+          : parsed.sport;
   const nextSubSport = virtualCtx
     ? 'MyWhoosh Indoor'
     : nextSport === 'walking'
       ? 'Caminar'
-      : parsed.subSport;
+      : nextSport === 'trail'
+        ? 'Trail Running'
+        : nextSport === 'mountain' && csvHikeSignal
+          ? 'Senderismo'
+          : parsed.subSport;
 
   const resolvedWorld = resolveMyWhooshWorldForActivity({
     worldName: parsed.worldName,
