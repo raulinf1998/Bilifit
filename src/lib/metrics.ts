@@ -146,6 +146,7 @@ export function resolveDisplaySubSport(sport: SportType, subSport?: string | nul
   const trimmed = subSport?.trim();
   if (!trimmed) return null;
   if (isMismatchedSubSport(sport, trimmed)) return null;
+  if (sport === 'running' && trimmed.toLowerCase() === 'asfalto') return 'Correr';
   return trimmed;
 }
 

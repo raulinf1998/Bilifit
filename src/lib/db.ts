@@ -147,6 +147,9 @@ export function backfillMismatchedSubSports(db: Database.Database = getDb()): nu
       if (isMismatchedSubSport(sport, row.sub_sport)) {
         updateStmt.run(defaultSubSportForSport(sport), row.id);
         updated++;
+      } else if (sport === 'running' && row.sub_sport.trim().toLowerCase() === 'asfalto') {
+        updateStmt.run('Correr', row.id);
+        updated++;
       }
     }
   });
@@ -906,7 +909,9 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
   const normalizedSubSport =
     input.subSport && isMismatchedSubSport(input.sport, input.subSport)
       ? defaultSubSportForSport(input.sport)
-      : input.subSport ?? null;
+      : input.sport === 'running' && input.subSport?.trim().toLowerCase() === 'asfalto'
+        ? 'Correr'
+        : input.subSport ?? null;
 
   db.prepare(`
     INSERT INTO activities (

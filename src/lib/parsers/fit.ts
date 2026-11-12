@@ -65,7 +65,7 @@ function mapFitSport(
     if (km >= 4 && elevationGain / km > 35 && elevationGain >= 300) {
       return { sport: 'trail', subSport: 'Trail Running' };
     }
-    return { sport: 'running', subSport: sub.includes('treadmill') ? 'Cinta' : 'Asfalto' };
+    return { sport: 'running', subSport: sub.includes('treadmill') ? 'Cinta' : 'Correr' };
   }
 
   if (sport.includes('cycling') || sport.includes('biking')) {

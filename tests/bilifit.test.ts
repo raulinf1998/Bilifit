@@ -1734,4 +1734,20 @@ test('Caminar (walking) sport classification, analytics, DB backfill, and Oscuro
     createdAt: new Date().toISOString(),
   });
   assert.equal(overriddenImport.subSport, 'Senderismo');
+
+  // Running activities use 'Correr' instead of 'Asfalto' across parsers, display resolution, and DB backfill
+  assert.equal(resolveDisplaySubSport('running', 'Asfalto'), 'Correr');
+  assert.equal(mapStravaSport('Run', 'Run', 'Rodaje').subSport, 'Correr');
+  const gpxRun = parseGpxString(
+    `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1"><trk><name>Rodaje</name><type>running</type><trkseg><trkpt lat="43.36" lon="-5.85"><ele>220</ele><time>2026-09-22T08:00:00Z</time></trkpt><trkpt lat="43.365" lon="-5.85"><ele>222</ele><time>2026-09-22T08:05:00Z</time></trkpt></trkseg></trk></gpx>`,
+    'rodaje.gpx'
+  );
+  assert.equal(gpxRun.subSport, 'Correr');
+  const legacyAsfaltoId = 'act_legacy_asfalto_run';
+  db.prepare(
+    `INSERT INTO activities (id, external_id, source, sport, sub_sport, title, started_at, duration_sec, moving_time_sec, distance_meters, elevation_gain, elevation_loss, tss, created_at)
+     VALUES (?, NULL, 'strava', 'running', 'Asfalto', 'Rodaje Asfalto Antiguo', '2026-09-22T08:00:00Z', 1800, 1800, 5000, 30, 30, 40, '2026-09-22T08:35:00Z')`
+  ).run(legacyAsfaltoId);
+  backfillMismatchedSubSports(db);
+  assert.equal(getActivityById(legacyAsfaltoId)?.subSport, 'Correr');
 });
