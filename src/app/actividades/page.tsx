@@ -10,9 +10,10 @@ import type { Activity, GearItem, SportType } from '@/types';
 const FILTERS: Array<{ id: string; label: string }> = [
   { id: 'all', label: 'Todas' },
   { id: 'running', label: 'Correr' },
-  { id: 'mywhoosh', label: 'MyWhoosh' },
-  { id: 'mountain', label: 'Montaña' },
+  { id: 'trail', label: 'Trail Running' },
+  { id: 'mountain', label: 'Senderismo' },
   { id: 'walking', label: 'Caminar' },
+  { id: 'mywhoosh', label: 'MyWhoosh' },
   { id: 'cycling', label: 'Ciclismo Ext.' },
   { id: 'strength', label: 'Fuerza en Casa' },
 ];
@@ -126,9 +127,10 @@ export default function ActivitiesPage() {
                 style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
               >
                 <option value="running">Correr</option>
-                <option value="mywhoosh">MyWhoosh (Bici Indoor)</option>
-                <option value="mountain">Montaña / Trail / Senderismo</option>
+                <option value="trail">Trail Running</option>
+                <option value="mountain">Senderismo</option>
                 <option value="walking">Caminar</option>
+                <option value="mywhoosh">MyWhoosh (Bici Indoor)</option>
                 <option value="cycling">Ciclismo Exterior</option>
                 <option value="strength">Fuerza en Casa</option>
               </select>
@@ -372,7 +374,11 @@ export default function ActivitiesPage() {
                     <div style={{ color: 'var(--text-muted)' }}>Duración</div>
                     <div className="font-bold text-sm">{formatDuration(act.durationSec)}</div>
                   </div>
-                  {(act.sport === 'running' || act.sport === 'mountain' || act.sport === 'walking') && act.avgSpeedMs && (
+                  {(act.sport === 'running' ||
+                    act.sport === 'trail' ||
+                    act.sport === 'mountain' ||
+                    act.sport === 'walking') &&
+                    act.avgSpeedMs && (
                     <div>
                       <div style={{ color: 'var(--text-muted)' }}>Ritmo</div>
                       <div className="font-bold text-sm">{formatPaceMinKm(act.avgSpeedMs)}</div>

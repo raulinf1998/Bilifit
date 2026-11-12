@@ -78,7 +78,10 @@ export function enrichPointsTelemetry(points: ActivityPoint[], sport: SportType)
 
     // Normalizar cadencia de carrera/caminata cuando viene por ciclo simple (ej. 85 -> 170 spm)
     if (
-      ((sport === 'running' || sport === 'mountain') && typeof p.cad === 'number' && p.cad > 20 && p.cad < 115) ||
+      ((sport === 'running' || sport === 'trail' || sport === 'mountain') &&
+        typeof p.cad === 'number' &&
+        p.cad > 20 &&
+        p.cad < 115) ||
       (sport === 'walking' && typeof p.cad === 'number' && p.cad > 20 && p.cad < 80)
     ) {
       p.cad = Math.round(p.cad * 2);
@@ -171,7 +174,7 @@ export function computeKmSplits(points: ActivityPoint[], sport: SportType): Acti
       if (typeof pt.speed === 'number') {
         if (pt.speed > maxSpeed && pt.speed < 35) maxSpeed = pt.speed;
         if (pt.speed > 0.35 || (pt.watts ?? 0) > 15) movingSec += dt;
-        if (pt.speed > 0.4 && (sport === 'running' || sport === 'mountain' || sport === 'walking')) {
+        if (pt.speed > 0.4 && (sport === 'running' || sport === 'trail' || sport === 'mountain' || sport === 'walking')) {
           const factor = calculateMinettiGapFactor(pt.grade ?? 0);
           const gapSpd = pt.speed * factor;
           gapWeightedSum += gapSpd * Math.max(1, dt);
@@ -367,7 +370,7 @@ export function computeHeartRateZones(points: ActivityPoint[], profile: AthleteP
  * Zonas de Ritmo para correr y montaña.
  */
 export function computePaceZones(points: ActivityPoint[], sport: SportType): ZoneBucket[] {
-  if (sport !== 'running' && sport !== 'mountain' && sport !== 'walking') return [];
+  if (sport !== 'running' && sport !== 'trail' && sport !== 'mountain' && sport !== 'walking') return [];
   // Umbrales en s/km
   const defs =
     sport === 'walking'
@@ -484,7 +487,7 @@ export function computeSessionExtras(
   if (strides.length > 0) {
     base.avgStrideLenM = base.avgStrideLenM ?? Math.round((strides.reduce((a, b) => a + b, 0) / strides.length) * 100) / 100;
   } else if (
-    (activity.sport === 'running' || activity.sport === 'mountain' || activity.sport === 'walking') &&
+    (activity.sport === 'running' || activity.sport === 'trail' || activity.sport === 'mountain' || activity.sport === 'walking') &&
     activity.avgSpeedMs &&
     points.some((p) => p.cad)
   ) {
@@ -546,7 +549,7 @@ export function computeSessionExtras(
   }
 
   // GAP medio y VAM en subidas
-  if (activity.sport === 'running' || activity.sport === 'mountain' || activity.sport === 'walking') {
+  if (activity.sport === 'running' || activity.sport === 'trail' || activity.sport === 'mountain' || activity.sport === 'walking') {
     let gapSum = 0;
     let gapDur = 0;
     for (let i = 1; i < points.length; i++) {

@@ -75,11 +75,12 @@ export default function ActivityImporter({ onImported }: { onImported?: () => vo
             className="w-full rounded-lg border px-3 py-2 text-sm"
             style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
           >
-            <option value="">Automático (detectar MyWhoosh, Montaña, Caminar, Correr, Bici)</option>
+            <option value="">Automático (detectar MyWhoosh, Trail Running, Senderismo, Caminar, Correr, Bici)</option>
             <option value="running">Forzar: Correr</option>
-            <option value="mywhoosh">Forzar: MyWhoosh / Bici Indoor</option>
-            <option value="mountain">Forzar: Montaña / Trail / Senderismo</option>
+            <option value="trail">Forzar: Trail Running</option>
+            <option value="mountain">Forzar: Senderismo</option>
             <option value="walking">Forzar: Caminar</option>
+            <option value="mywhoosh">Forzar: MyWhoosh / Bici Indoor</option>
             <option value="cycling">Forzar: Bici Carretera / MTB</option>
             <option value="strength">Forzar: Fuerza</option>
           </select>

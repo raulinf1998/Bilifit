@@ -2,6 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { deleteActivity, getActivityById, updateActivity } from '@/lib/db';
 import { computePowerCurve } from '@/lib/metrics';
 import { generateGpxString } from '@/lib/parsers/gpx';
+import type { SportType } from '@/types';
+
+const VALID_SPORTS = new Set<SportType>([
+  'running',
+  'trail',
+  'mountain',
+  'walking',
+  'mywhoosh',
+  'cycling',
+  'strength',
+]);
 
 export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
@@ -29,9 +40,12 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
   const { id } = await context.params;
   try {
     const body = await req.json();
+    if (body.sport !== undefined && !VALID_SPORTS.has(body.sport as SportType)) {
+      return NextResponse.json({ error: 'Tipo de deporte no válido' }, { status: 400 });
+    }
     const updated = updateActivity(id, {
       title: typeof body.title === 'string' ? body.title.trim() : undefined,
-      sport: body.sport,
+      sport: body.sport as SportType | undefined,
       subSport: body.subSport,
       description: body.description,
       rpe: typeof body.rpe === 'number' ? body.rpe : undefined,

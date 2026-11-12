@@ -226,13 +226,13 @@ export function mapStravaSport(
     return { sport: 'mywhoosh', subSport: 'MyWhoosh Indoor', worldName: resolvedWorld?.world.name };
   }
   if (t === 'trailrun') {
-    return { sport: 'mountain', subSport: 'Trail Running' };
+    return { sport: 'trail', subSport: 'Trail Running' };
   }
   if (t === 'walk') {
     return { sport: 'walking', subSport: 'Caminar' };
   }
   if (t === 'hike' || t === 'rockclimbing' || t === 'mountaineering' || t === 'backcountryski') {
-    return { sport: 'mountain', subSport: t === 'hike' ? 'Senderismo / Montaña' : 'Montaña' };
+    return { sport: 'mountain', subSport: t === 'hike' ? 'Senderismo' : 'Montaña' };
   }
   if (t === 'mountainbikeride' || t === 'gravelride' || t === 'ride' || t === 'ebikeride') {
     return {
@@ -346,7 +346,7 @@ async function fetchStravaLaps(accessToken: string, stravaId: number, sport: Spo
       const rawCad = lap.average_cadence;
       const shouldDoubleLapCad =
         rawCad &&
-        (((sport === 'running' || sport === 'mountain') && rawCad < 115) ||
+        (((sport === 'running' || sport === 'trail' || sport === 'mountain') && rawCad < 115) ||
           (sport === 'walking' && rawCad < 80));
       const cad =
         rawCad
@@ -442,7 +442,7 @@ export async function syncStravaActivities(limit = 30, fetchStreams = true): Pro
     const rawCad = item.average_cadence;
     const shouldDoubleSessionCad =
       rawCad &&
-      (((mapped.sport === 'running' || mapped.sport === 'mountain') && rawCad < 115) ||
+      (((mapped.sport === 'running' || mapped.sport === 'trail' || mapped.sport === 'mountain') && rawCad < 115) ||
         (mapped.sport === 'walking' && rawCad < 80));
     const adjustedCadence =
       rawCad

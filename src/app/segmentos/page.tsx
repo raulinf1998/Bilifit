@@ -62,7 +62,10 @@ function SegmentsContent() {
   }
 
   const isPace = selectedSegment
-    ? selectedSegment.sport === 'running' || selectedSegment.sport === 'mountain' || selectedSegment.sport === 'walking'
+    ? selectedSegment.sport === 'running' ||
+      selectedSegment.sport === 'trail' ||
+      selectedSegment.sport === 'mountain' ||
+      selectedSegment.sport === 'walking'
     : false;
 
   return (
@@ -82,7 +85,8 @@ function SegmentsContent() {
           {[
             { id: 'all', label: 'Todos' },
             { id: 'running', label: 'Correr' },
-            { id: 'mountain', label: 'Montaña' },
+            { id: 'trail', label: 'Trail Running' },
+            { id: 'mountain', label: 'Senderismo' },
             { id: 'walking', label: 'Caminar' },
             { id: 'mywhoosh', label: 'MyWhoosh' },
             { id: 'cycling', label: 'Ciclismo' },
@@ -194,7 +198,7 @@ function SegmentsContent() {
                   worldName={selectedSegment.worldName}
                   title={selectedSegment.name}
                   color={sportColor(selectedSegment.sport)}
-                  defaultLayer={selectedSegment.sport === 'mountain' ? 'topo' : 'osm'}
+                  defaultLayer={selectedSegment.sport === 'mountain' || selectedSegment.sport === 'trail' ? 'topo' : 'osm'}
                   heightClass="h-64"
                 />
               </div>

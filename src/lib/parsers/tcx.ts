@@ -200,7 +200,8 @@ export function parseTcxString(xmlText: string, fileName = 'actividad.tcx'): Par
   const rawAvgCad = cadCount > 0 ? Math.round(cadSum / cadCount) : undefined;
   const shouldDoubleCad =
     rawAvgCad !== undefined &&
-    (((inferred.sport === 'running' || inferred.sport === 'mountain') && rawAvgCad < 115) ||
+    (((inferred.sport === 'running' || inferred.sport === 'trail' || inferred.sport === 'mountain') &&
+      rawAvgCad < 115) ||
       (inferred.sport === 'walking' && rawAvgCad < 80));
   const avgCadence = shouldDoubleCad ? rawAvgCad! * 2 : rawAvgCad;
 
