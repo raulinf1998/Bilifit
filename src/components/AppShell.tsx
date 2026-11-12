@@ -8,7 +8,6 @@ import {
   Bike,
   Dumbbell,
   Flag,
-  Flame,
   LayoutDashboard,
   Mountain,
   RefreshCw,
@@ -68,9 +67,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       >
         <div className="flex items-center justify-between px-5 py-5 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
           <Link href="/" className="flex items-center gap-2.5">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-[#fc4c02] to-amber-500 flex items-center justify-center text-white shadow-md shadow-[#fc4c02]/25">
-              <Flame className="h-5 w-5" />
-            </div>
+            <img
+              src="/icons/bilifit-logo.png"
+              alt="Bilifit"
+              width={36}
+              height={36}
+              className="h-9 w-9 rounded-xl shadow-md shadow-[#fc4c02]/20 ring-1 ring-white/10 shrink-0"
+            />
             <div>
               <div className="font-bold text-lg leading-tight tracking-tight">Bilifit</div>
               <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -142,9 +145,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         }}
       >
         <Link href="/" className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-[#fc4c02] to-amber-500 flex items-center justify-center text-white">
-            <Flame className="h-4 w-4" />
-          </div>
+          <img
+            src="/icons/bilifit-logo.png"
+            alt="Bilifit"
+            width={32}
+            height={32}
+            className="h-8 w-8 rounded-lg shadow-sm shadow-[#fc4c02]/20 ring-1 ring-white/10 shrink-0"
+          />
           <span className="font-bold text-base">Bilifit</span>
         </Link>
         <div className="flex items-center gap-2">
