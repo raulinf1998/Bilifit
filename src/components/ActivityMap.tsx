@@ -1,8 +1,14 @@
 'use client';
 
 import 'leaflet/dist/leaflet.css';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Globe, Layers, Maximize2, Minimize2 } from 'lucide-react';
+import {
+  DARK_MAP_ATTRIBUTION,
+  DARK_MAP_BACKGROUND,
+  DARK_MAP_STYLE,
+} from '@/lib/dark-map-style';
 import {
   alignCoordsToMyWhooshWorld,
   getWorldDisplayBounds,
@@ -15,6 +21,16 @@ import { decodePolyline } from '@/lib/polyline';
 import type { ActivityPoint, SportType } from '@/types';
 
 type MapStyle = 'virtual' | 'topo' | 'osm' | 'dark';
+
+function isWebGLSupported(): boolean {
+  if (typeof document === 'undefined') return false;
+  try {
+    const canvas = document.createElement('canvas');
+    return Boolean(canvas.getContext('webgl2') || canvas.getContext('webgl'));
+  } catch {
+    return false;
+  }
+}
 
 const TILE_LAYERS: Record<
   Exclude<MapStyle, 'virtual'>,
@@ -35,7 +51,7 @@ const TILE_LAYERS: Record<
   dark: {
     label: 'Oscuro',
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: '© OpenStreetMap · Estilo Oscuro',
+    attribution: DARK_MAP_ATTRIBUTION,
     className: 'bilifit-dark-tiles',
     maxZoom: 19,
   },
@@ -171,10 +187,16 @@ export default function ActivityMap({
       const map = L.map(containerRef.current, {
         center: initialCenter,
         zoom: 12,
+        minZoom: 1,
         zoomControl: true,
         attributionControl: true,
         zoomSnap: 0.25,
         zoomDelta: 0.5,
+        maxBounds: [
+          [-85, -Infinity],
+          [85, Infinity],
+        ],
+        maxBoundsViscosity: 1,
       });
       mapRef.current = map;
       routeLayerGroupRef.current = L.layerGroup().addTo(map);
@@ -218,6 +240,8 @@ export default function ActivityMap({
     const routeGroup = routeLayerGroupRef.current;
     if (!map || !L || !routeGroup || mapReadyTick === 0) return;
 
+    let cancelled = false;
+
     if (baseLayerRef.current) {
       map.removeLayer(baseLayerRef.current);
       baseLayerRef.current = null;
@@ -226,7 +250,7 @@ export default function ActivityMap({
 
     const isVirtual = layer === 'virtual' && Boolean(myWhooshMatch) && Boolean(virtualDisplayBounds);
 
-    // Calcular y aplicar vista/encuadre ANTES de añadir ImageOverlay para evitar 'Set map center and zoom first'
+    // Calcular y aplicar vista/encuadre ANTES de añadir capas base para evitar 'Set map center and zoom first'
     let routeLine: import('leaflet').Polyline | null = null;
     if (displayCoords.length >= 2) {
       if (isVirtual) {
@@ -294,6 +318,22 @@ export default function ActivityMap({
       }
     }
 
+    map.invalidateSize({ animate: false });
+
+    const mountRasterDarkFallback = () => {
+      if (cancelled || mapRef.current !== map) return;
+      if (baseLayerRef.current) {
+        map.removeLayer(baseLayerRef.current);
+        baseLayerRef.current = null;
+      }
+      const darkCfg = TILE_LAYERS.dark;
+      baseLayerRef.current = L.tileLayer(darkCfg.url, {
+        attribution: '© OpenStreetMap · Oscuro',
+        maxZoom: darkCfg.maxZoom ?? 19,
+        className: darkCfg.className ?? 'bilifit-dark-tiles',
+      }).addTo(map);
+    };
+
     if (isVirtual && myWhooshMatch && virtualDisplayBounds) {
       if (containerRef.current) containerRef.current.style.background = myWhooshMatch.world.backgroundColor;
       const overlay = L.imageOverlay(myWhooshMatch.world.imageUrl, virtualDisplayBounds, {
@@ -303,23 +343,103 @@ export default function ActivityMap({
         attribution: `MyWhoosh · ${myWhooshMatch.world.name}`,
       }).addTo(map);
       overlay.once('load', () => {
-        if (mapRef.current) {
+        if (!cancelled && mapRef.current) {
           mapRef.current.invalidateSize({ animate: false });
         }
       });
       baseLayerRef.current = overlay;
     } else {
-      if (containerRef.current) containerRef.current.style.background = '#0f172a';
       const fallbackStyle = defaultLayer === 'virtual' ? 'topo' : defaultLayer;
-      const cfg = TILE_LAYERS[layer === 'virtual' ? fallbackStyle : layer];
-      baseLayerRef.current = L.tileLayer(cfg.url, {
-        attribution: cfg.attribution,
-        maxZoom: cfg.maxZoom ?? 17,
-        className: cfg.className ?? '',
-      }).addTo(map);
+      const activeStyle = layer === 'virtual' ? fallbackStyle : layer;
+
+      if (activeStyle === 'dark') {
+        if (containerRef.current) containerRef.current.style.background = DARK_MAP_BACKGROUND;
+        if (!isWebGLSupported()) {
+          mountRasterDarkFallback();
+        } else {
+          (async () => {
+            try {
+              const maplibregl = await import('maplibre-gl');
+              if (typeof maplibregl.setWorkerUrl === 'function') {
+                maplibregl.setWorkerUrl('/vendor/maplibre-gl-worker.mjs');
+              }
+              const { maplibreGL } = await import('@maplibre/maplibre-gl-leaflet');
+              if (cancelled || mapRef.current !== map) return;
+
+              const glLayer = maplibreGL({
+                style: DARK_MAP_STYLE,
+                attributionControl: {
+                  customAttribution: DARK_MAP_ATTRIBUTION,
+                },
+              });
+
+              // Evitar lecturas nulas en animationFrame si se cambia de capa durante resize/zoom
+              const glInternal = glLayer as unknown as {
+                _map?: import('leaflet').Map | null;
+                _glMap?: {
+                  _actualCanvas?: HTMLElement;
+                  once: (event: string, fn: () => void) => void;
+                  jumpTo: (opts: { center: import('leaflet').LatLng; zoom: number }) => void;
+                } | null;
+                _resizeContainer?: () => void;
+                _zoomEnd?: () => void;
+                _transitionEnd?: () => void;
+              };
+              glInternal._transitionEnd = function () {
+                L.Util.requestAnimFrame(() => {
+                  if (!this._map || !this._glMap) return;
+                  const zoom = this._map.getZoom();
+                  const center = this._map.getCenter();
+                  const offset = this._map.latLngToContainerPoint(this._map.getBounds().getNorthWest());
+                  this._resizeContainer?.();
+                  if (this._glMap._actualCanvas) {
+                    L.DomUtil.setTransform(this._glMap._actualCanvas, offset, 1);
+                  }
+                  this._glMap.once('moveend', () => {
+                    if (!this._map || !this._glMap) return;
+                    this._zoomEnd?.();
+                  });
+                  this._glMap.jumpTo({ center, zoom: zoom - 1 });
+                }, this);
+              };
+
+              glLayer.addTo(map);
+              baseLayerRef.current = glLayer;
+
+              const glMap = glLayer.getMaplibreMap();
+              let styleLoaded = false;
+              let fellBack = false;
+              glMap?.once('load', () => {
+                styleLoaded = true;
+              });
+              glMap?.on('error', (evt: { error?: { message?: string; status?: number } }) => {
+                if (cancelled || fellBack || styleLoaded || mapRef.current !== map) return;
+                const msg = evt?.error?.message ?? '';
+                const status = evt?.error?.status;
+                if (status === 401 || status === 403 || status === 404 || msg.includes('Failed to fetch')) {
+                  fellBack = true;
+                  mountRasterDarkFallback();
+                }
+              });
+            } catch {
+              mountRasterDarkFallback();
+            }
+          })();
+        }
+      } else {
+        if (containerRef.current) containerRef.current.style.background = '#0f172a';
+        const cfg = TILE_LAYERS[activeStyle];
+        baseLayerRef.current = L.tileLayer(cfg.url, {
+          attribution: cfg.attribution,
+          maxZoom: cfg.maxZoom ?? 17,
+          className: cfg.className ?? '',
+        }).addTo(map);
+      }
     }
 
-    map.invalidateSize({ animate: false });
+    return () => {
+      cancelled = true;
+    };
   }, [mapReadyTick, layer, myWhooshMatch, virtualDisplayBounds, defaultLayer, displayCoords, color, fitScope]);
 
   // Resaltar segmento sobre el mapa si hay highlightPolyline
@@ -415,8 +535,15 @@ export default function ActivityMap({
     );
   }
 
+  const isDarkActive =
+    layer === 'dark' ||
+    (layer === 'virtual' && !myWhooshMatch && defaultLayer === 'dark');
+
   return (
-    <div className="relative rounded-xl overflow-hidden border" style={{ borderColor: 'var(--border-subtle)' }}>
+    <div
+      className={`relative rounded-xl overflow-hidden border ${isDarkActive ? 'bilifit-map-dark' : ''}`}
+      style={{ borderColor: 'var(--border-subtle)' }}
+    >
       <div ref={containerRef} className={`${heightClass} w-full`} />
       <div className="absolute top-3 right-3 z-[400] flex flex-col items-end gap-1.5">
         <div className="flex flex-wrap items-center gap-1 rounded-lg bg-slate-900/85 backdrop-blur px-1.5 py-1 border border-slate-700/70">

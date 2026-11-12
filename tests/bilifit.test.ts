@@ -98,6 +98,7 @@ import {
 } from '../src/lib/mywhoosh-sync';
 import { buildSegmentFromRange, detectClimbCandidates, matchPointsToSegment } from '../src/lib/segments';
 import { mapStravaSport } from '../src/lib/strava';
+import { DARK_MAP_ATTRIBUTION, DARK_MAP_BACKGROUND, DARK_MAP_STYLE } from '../src/lib/dark-map-style';
 
 test.after(() => {
   for (const suffix of ['', '-wal', '-shm']) {
@@ -1561,10 +1562,32 @@ test('Caminar (walking) sport classification, analytics, DB backfill, and Oscuro
   assert.equal(getActivityById(legacyWalkId)?.subSport, 'Caminar');
   assert.equal(getActivityById(realHikeId)?.sport, 'mountain');
 
-  // 4. ActivityMap dark layer uses OpenStreetMap + CSS dark filter (no CartoDB API key tile URL)
+  // 4. ActivityMap Oscuro mode uses OpenFreeMap monochrome dark vector style + monochrome grayscale fallback (no CartoDB API key tile URL)
   const mapSource = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'ActivityMap.tsx'), 'utf8');
   const cssSource = fs.readFileSync(path.join(process.cwd(), 'src', 'app', 'globals.css'), 'utf8');
   assert.ok(!mapSource.includes('basemaps.cartocdn.com'), 'CartoDB dark tiles require API keys and must not be used');
+  assert.ok(mapSource.includes('DARK_MAP_STYLE'));
   assert.ok(mapSource.includes("className: 'bilifit-dark-tiles'"));
-  assert.ok(cssSource.includes('.bilifit-dark-tiles'));
+  assert.ok(cssSource.includes('grayscale(100%)'), 'Fallback raster dark filter must be fully desaturated monochrome');
+  assert.ok(cssSource.includes('.bilifit-map-dark'));
+  assert.ok(fs.existsSync(path.join(process.cwd(), 'public', 'vendor', 'maplibre-gl-worker.mjs')));
+
+  assert.equal(DARK_MAP_STYLE.version, 8);
+  assert.equal(DARK_MAP_BACKGROUND, '#212121');
+  assert.ok(DARK_MAP_ATTRIBUTION.includes('OpenFreeMap'));
+  const openMapTiles = DARK_MAP_STYLE.sources.openmaptiles as { type: string; url?: string };
+  assert.equal(openMapTiles.type, 'vector');
+  assert.equal(openMapTiles.url, 'https://tiles.openfreemap.org/planet');
+  assert.ok(DARK_MAP_STYLE.layers.length >= 25);
+
+  // Verify every hex color in DARK_MAP_STYLE stays neutral monochrome/charcoal (max channel spread <= 12)
+  const hexMatches = JSON.stringify(DARK_MAP_STYLE).match(/#[0-9a-fA-F]{6}/g) ?? [];
+  assert.ok(hexMatches.length >= 20);
+  for (const hex of hexMatches) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const spread = Math.max(r, g, b) - Math.min(r, g, b);
+    assert.ok(spread <= 14, `Expected monochrome/slate tone in Oscuro map style, got ${hex} (spread=${spread})`);
+  }
 });

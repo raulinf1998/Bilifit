@@ -4,19 +4,24 @@
   "private": true,
   "description": "App open-source de seguimiento deportivo para correr, ciclismo indoor con MyWhoosh, rutas de montaña y rutinas en casa con tu propio material, vinculable con Strava.",
   "scripts": {
+    "postinstall": "node scripts/sync-maplibre-worker.mjs",
+    "predev": "node scripts/sync-maplibre-worker.mjs",
     "dev": "next dev -H 0.0.0.0 -p 3000",
+    "prebuild": "node scripts/sync-maplibre-worker.mjs",
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3000",
     "lint": "tsc --noEmit",
     "test": "npx tsx --test tests/*.test.ts"
   },
   "dependencies": {
+    "@maplibre/maplibre-gl-leaflet": "^0.1.4",
     "better-sqlite3": "^13.0.3",
     "fast-xml-parser": "^5.12.0",
     "fit-file-parser": "^6.2.7",
     "jszip": "^3.10.2",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.70.0",
+    "maplibre-gl": "^6.18.0",
     "next": "^16.4.5",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
