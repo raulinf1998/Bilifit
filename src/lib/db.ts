@@ -1009,7 +1009,14 @@ function mapActivityRow(row: Record<string, unknown>): Activity {
   };
 }
 
-export function listActivities(filters?: { sport?: string; q?: string; doneTogether?: boolean; limit?: number }): Activity[] {
+export function listActivities(filters?: {
+  sport?: string;
+  q?: string;
+  doneTogether?: boolean;
+  limit?: number;
+  from?: string;
+  to?: string;
+}): Activity[] {
   const db = getDb();
   const clauses: string[] = [];
   const params: unknown[] = [];
@@ -1020,6 +1027,14 @@ export function listActivities(filters?: { sport?: string; q?: string; doneToget
   }
   if (filters?.doneTogether) {
     clauses.push('a.done_together = 1');
+  }
+  if (filters?.from) {
+    clauses.push("(strftime('%s', a.started_at) + 0) >= (strftime('%s', ?) + 0)");
+    params.push(filters.from);
+  }
+  if (filters?.to) {
+    clauses.push("(strftime('%s', a.started_at) + 0) < (strftime('%s', ?) + 0)");
+    params.push(filters.to);
   }
   if (filters?.q && filters.q.trim()) {
     clauses.push('(LOWER(a.title) LIKE ? OR LOWER(COALESCE(a.description, \'\')) LIKE ?)');

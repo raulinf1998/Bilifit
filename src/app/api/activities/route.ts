@@ -7,6 +7,13 @@ import { estimateActivityTSS } from '@/lib/metrics';
 import { sanitizeImageList } from '@/lib/uploads';
 import type { SportType } from '@/types';
 
+function parseIsoBound(raw: string | null): string | null {
+  if (!raw) return null;
+  const ts = Date.parse(raw.trim());
+  if (!Number.isFinite(ts)) return null;
+  return new Date(ts).toISOString();
+}
+
 export async function GET(req: NextRequest) {
   return withAccount(req, () => {
     const sport = req.nextUrl.searchParams.get('sport') ?? undefined;
@@ -15,14 +22,18 @@ export async function GET(req: NextRequest) {
     const doneTogether = togetherParam === '1' || togetherParam === 'true' ? true : undefined;
     const limitStr = req.nextUrl.searchParams.get('limit');
     const limit = limitStr ? Number(limitStr) : undefined;
+    const from = parseIsoBound(req.nextUrl.searchParams.get('from'));
+    const to = parseIsoBound(req.nextUrl.searchParams.get('to'));
 
     const activities = listActivities({
       sport,
       q,
       doneTogether,
+      from: from ?? undefined,
+      to: to ?? undefined,
       limit: limit && Number.isFinite(limit) ? limit : undefined,
     });
-    return NextResponse.json({ activities });
+    return NextResponse.json({ activities, range: { from, to } });
   });
 }
 

@@ -1,20 +1,32 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, Heart, Image as ImageIcon, Plus, Search, Trash2, X } from 'lucide-react';
 import { useActiveAccount } from '@/components/AccountProvider';
 import ImageUploadControl from '@/components/ImageUploadControl';
+import { RangeSummary } from '@/components/RangeSummary';
 import { SportBadge } from '@/components/SportBadge';
 import { TogetherToggleButton, getTogetherLabel } from '@/components/TogetherControl';
+import { TimeRangeSelector, type CalendarDayStat } from '@/components/TimeRangeSelector';
 import {
   formatDistanceKm,
   formatDuration,
+  formatDurationClock,
   formatPaceMinKm,
   formatSpeedKmh,
   getEffectiveAvgSpeedMs,
   getEffectiveDurationSec,
 } from '@/lib/metrics';
+import {
+  buildDayStatsMap,
+  dayKeyOfIso,
+  filterActivitiesByIsoRange,
+  groupActivitiesByDay,
+  resolveRange,
+  todayKey,
+  type RangeMode,
+} from '@/lib/time-range';
 import type { Activity, GearItem, SportType } from '@/types';
 
 const FILTERS: Array<{ id: string; label: string }> = [
@@ -40,6 +52,56 @@ export default function ActivitiesPage() {
   const [loading, setLoading] = useState(true);
   const [showManual, setShowManual] = useState(false);
 
+  // Selector de franjas de tiempo (estilo Samsung Health: Días / Semanas / Meses)
+  const [mounted, setMounted] = useState(false);
+  const [rangeMode, setRangeMode] = useState<RangeMode>('all');
+  const [anchorKey, setAnchorKey] = useState('');
+  const calendarCacheRef = useRef<{ key: string; stats: Record<string, CalendarDayStat> }>({
+    key: '',
+    stats: {},
+  });
+
+  useEffect(() => {
+    setMounted(true);
+    setAnchorKey((prev) => prev || todayKey());
+  }, []);
+
+  const range = useMemo(() => resolveRange(rangeMode, anchorKey || todayKey()), [rangeMode, anchorKey]);
+  const selectedActivities = useMemo(
+    () =>
+      rangeMode === 'all'
+        ? activities
+        : filterActivitiesByIsoRange(activities, range.selectedStart, range.selectedEnd),
+    [activities, range.selectedStart, range.selectedEnd, rangeMode]
+  );
+  const dayGroups = useMemo(() => groupActivitiesByDay(selectedActivities), [selectedActivities]);
+  const groupByDay = rangeMode === 'week' || rangeMode === 'month';
+
+  const loadDayStats = useCallback(
+    async (fromIso: string, toIso: string): Promise<Record<string, CalendarDayStat>> => {
+      const filterKey = `${sport}|${onlyTogether ? '1' : '0'}|${q.trim().toLowerCase()}`;
+      const cacheKey = `${filterKey}|${fromIso}|${toIso}`;
+      if (calendarCacheRef.current.key === cacheKey) return calendarCacheRef.current.stats;
+
+      const params = new URLSearchParams({ from: fromIso, to: toIso });
+      if (sport !== 'all') params.set('sport', sport);
+      if (onlyTogether) params.set('together', '1');
+      if (q.trim()) params.set('q', q.trim());
+
+      const res = await fetch(`/api/activities?${params.toString()}`, { cache: 'no-store' });
+      if (!res.ok) return {};
+      const data = await res.json();
+      const dayMap = buildDayStatsMap((data.activities ?? []) as Activity[]);
+      const stats: Record<string, CalendarDayStat> = {};
+      for (const [key, stat] of Object.entries(dayMap)) {
+        stats[key] = { sessions: stat.sessions, minutes: Math.round(stat.durationSec / 60) };
+      }
+      calendarCacheRef.current = { key: cacheKey, stats };
+      return stats;
+    },
+    [onlyTogether, q, sport]
+  );
+
   // Form state manual
   const [title, setTitle] = useState('');
   const [mSport, setMSport] = useState<SportType>('running');
@@ -60,6 +122,8 @@ export default function ActivitiesPage() {
     if (sport !== 'all') params.set('sport', sport);
     if (onlyTogether) params.set('together', '1');
     if (q.trim()) params.set('q', q.trim());
+    if (range.windowStart) params.set('from', range.windowStart);
+    if (range.windowEnd) params.set('to', range.windowEnd);
 
     const [actRes, gearRes] = await Promise.all([
       fetch(`/api/activities?${params.toString()}`, { cache: 'no-store' }),
@@ -69,8 +133,9 @@ export default function ActivitiesPage() {
     const gearData = await gearRes.json();
     setActivities(actData.activities ?? []);
     setGear(gearData.gear ?? []);
+    calendarCacheRef.current = { key: '', stats: {} };
     setLoading(false);
-  }, [sport, onlyTogether, q]);
+  }, [sport, onlyTogether, q, range.windowStart, range.windowEnd]);
 
   useEffect(() => {
     load();
@@ -105,6 +170,8 @@ export default function ActivitiesPage() {
       setManualImages([]);
       setDoneTogether(false);
       setShowManual(false);
+      // Si hay una franja activa, saltar a hoy para que la sesión recién creada sea visible
+      if (rangeMode !== 'all') setAnchorKey(todayKey());
       await load();
     }
   }
@@ -347,6 +414,37 @@ export default function ActivitiesPage() {
         </form>
       )}
 
+      {/* Selector de franjas de tiempo + resumen */}
+      {mounted ? (
+        <>
+          <TimeRangeSelector
+            mode={rangeMode}
+            anchorKey={anchorKey}
+            range={range}
+            loadDayStats={loadDayStats}
+            onModeChange={setRangeMode}
+            onAnchorChange={(key) => {
+              if (rangeMode === 'all') setRangeMode('day');
+              setAnchorKey(key);
+            }}
+          />
+
+          <RangeSummary
+            range={range}
+            activities={activities}
+            onPickBucket={(bucketKey) => {
+              setAnchorKey(bucketKey);
+              if (rangeMode === 'all') setRangeMode('month');
+            }}
+          />
+        </>
+      ) : (
+        <div className="card-surface p-5 space-y-3">
+          <div className="h-8 w-64 rounded-full bg-sunken animate-pulse" />
+          <div className="h-28 rounded-xl bg-sunken animate-pulse" />
+        </div>
+      )}
+
       {/* Filtros y buscador */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
@@ -391,24 +489,67 @@ export default function ActivitiesPage() {
       </div>
 
       {/* Listado */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-base font-bold capitalize">
+          {rangeMode === 'all'
+            ? 'Todas las actividades'
+            : `${selectedActivities.length} ${
+                selectedActivities.length === 1 ? 'actividad' : 'actividades'
+              } · ${range.selectedLabel}`}
+        </h2>
+        {rangeMode !== 'all' && (
+          <button
+            type="button"
+            onClick={() => setRangeMode('all')}
+            className="rounded-xl border px-3 py-1.5 text-xs font-semibold hover:bg-sunken"
+            style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
+          >
+            Ver todo el historial
+          </button>
+        )}
+      </div>
+
       {loading ? (
         <div className="space-y-3">
           {[1, 2, 3, 4].map((i) => (
             <div key={i} className="h-20 rounded-2xl bg-sunken animate-pulse" />
           ))}
         </div>
-      ) : activities.length === 0 ? (
+      ) : selectedActivities.length === 0 ? (
         <div className="card-surface p-10 text-center space-y-2">
-          <div className="font-semibold">No hay actividades con este filtro</div>
+          <div className="font-semibold">
+            {rangeMode === 'all'
+              ? 'No hay actividades con este filtro'
+              : `Sin actividades en ${range.selectedLabel.toLowerCase()}`}
+          </div>
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            Prueba otro filtro, registra una sesión manual o importa un archivo desde Strava / MyWhoosh.
+            {rangeMode === 'all'
+              ? 'Prueba otro filtro, registra una sesión manual o importa un archivo desde Strava / MyWhoosh.'
+              : 'Usa las flechas o el calendario para moverte a otra franja, cambia de pestaña o registra una sesión manual.'}
           </p>
         </div>
       ) : (
         <div className="space-y-3">
-          {activities.map((act) => (
+          {selectedActivities.map((act, idx) => {
+            const dayKey = dayKeyOfIso(act.startedAt);
+            const prevKey = idx > 0 ? dayKeyOfIso(selectedActivities[idx - 1].startedAt) : null;
+            const group = groupByDay && dayKey && dayKey !== prevKey ? dayGroups.find((g) => g.key === dayKey) : null;
+            return (
+            <Fragment key={act.id}>
+            {group && (
+              <div
+                className="flex items-center justify-between gap-3 px-1 pt-2 pb-0.5 text-xs font-semibold"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <span className="capitalize">{group.label}</span>
+                <span className="tabular-nums">
+                  {formatDurationClock(group.durationSec)}
+                  {group.calories > 0 && ` · ${group.calories} kcal`}
+                  {group.sessions > 1 && ` · ${group.sessions} sesiones`}
+                </span>
+              </div>
+            )}
             <Link
-              key={act.id}
               href={`/actividades/${act.id}`}
               className="card-surface p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-primary/50 transition-colors"
             >
@@ -540,7 +681,9 @@ export default function ActivitiesPage() {
                 </div>
               </div>
             </Link>
-          ))}
+            </Fragment>
+            );
+          })}
         </div>
       )}
     </div>
