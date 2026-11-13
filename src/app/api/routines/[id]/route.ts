@@ -15,6 +15,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     if (Array.isArray(patch.items)) {
       patch.items = patch.items.map((item: RoutineExerciseItem) => ({
         ...item,
+        ...(typeof item.perDumbbell === 'boolean' ? { perDumbbell: item.perDumbbell } : {}),
         imageUrl: item.imageUrl ? sanitizeImageUrl(item.imageUrl) : null,
       }));
     }

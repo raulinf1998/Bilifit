@@ -22,11 +22,17 @@ import {
 import ImageLightboxModal from '@/components/ImageLightboxModal';
 import { TogetherToggleButton } from '@/components/TogetherControl';
 import { uploadExerciseOrWorkoutImage } from '@/lib/client-image';
+import {
+  calculateStrengthSetVolumeKg,
+  isSingleDumbbellByDefault,
+  resolveIsPerDumbbell,
+} from '@/lib/home-workouts';
 import { formatDurationClock } from '@/lib/metrics';
 import type { RoutineExerciseItem, StrengthSetLog } from '@/types';
 
 export interface LastExerciseLogRef {
   startedAt: string;
+  perDumbbell?: boolean;
   sets: Array<{ reps: number; weightKg: number; durationSec?: number }>;
 }
 
@@ -71,6 +77,7 @@ export default function WorkoutPlayer({
   routineName,
   items,
   exerciseImages,
+  exercisePerDumbbell,
   lastExerciseLogs,
   onExerciseImageUpdated,
   onClose,
@@ -80,6 +87,7 @@ export default function WorkoutPlayer({
   routineName: string;
   items: RoutineExerciseItem[];
   exerciseImages?: Record<string, string | null | undefined>;
+  exercisePerDumbbell?: Record<string, boolean>;
   lastExerciseLogs?: Record<string, LastExerciseLogRef>;
   onExerciseImageUpdated?: (exerciseId: string, nextUrl: string | null) => void;
   onClose: () => void;
@@ -96,6 +104,8 @@ export default function WorkoutPlayer({
   const [workoutImages, setWorkoutImages] = useState<string[]>([]);
   const [uploadingWorkoutImg, setUploadingWorkoutImg] = useState(false);
   const [workoutImgError, setWorkoutImgError] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<'finish' | 'discard' | null>(null);
+  const [finishError, setFinishError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const workoutFileRef = useRef<HTMLInputElement | null>(null);
 
@@ -113,10 +123,12 @@ export default function WorkoutPlayer({
     items.map((item) => {
       const timed = isTimedReps(item.reps);
       const targetVal = parseNumericReps(item.reps);
+      const perDumbbell = resolveIsPerDumbbell(item, exercisePerDumbbell?.[item.exerciseId]);
       return {
         exerciseId: item.exerciseId,
         exerciseName: item.exerciseName,
         equipmentUsed: item.requiredEquipment,
+        ...(perDumbbell ? { perDumbbell: true } : {}),
         sets: Array.from({ length: item.sets }, () => ({
           reps: timed ? 1 : targetVal,
           ...(timed ? { durationSec: targetVal } : {}),
@@ -159,6 +171,18 @@ export default function WorkoutPlayer({
     }, 1000);
     return () => window.clearInterval(id);
   }, [restLeft, soundEnabled]);
+
+  // Cerrar popup de confirmación con Escape si no se está guardando
+  useEffect(() => {
+    if (!confirmAction) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !saving) {
+        setConfirmAction(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [confirmAction, saving]);
 
   function resolveItemImage(spec: RoutineExerciseItem | undefined): string | null {
     if (!spec) return null;
@@ -291,19 +315,32 @@ export default function WorkoutPlayer({
   }
 
   const completedSets = logs.reduce((acc, ex) => acc + ex.sets.filter((s) => s.completed).length, 0);
+  const completedExercises = logs.filter((ex) => ex.sets.some((s) => s.completed)).length;
   const totalSets = logs.reduce((acc, ex) => acc + ex.sets.length, 0);
   const progressPct = totalSets > 0 ? Math.round((completedSets / totalSets) * 100) : 0;
-  const totalVolumeKg = logs.reduce(
-    (acc, ex) =>
+  const totalVolumeKg = logs.reduce((acc, ex, idx) => {
+    const spec = items[idx];
+    const perDb = resolveIsPerDumbbell(
+      { exerciseId: ex.exerciseId, perDumbbell: spec?.perDumbbell ?? ex.perDumbbell },
+      exercisePerDumbbell?.[ex.exerciseId]
+    );
+    return (
       acc +
       ex.sets
         .filter((s) => s.completed)
-        .reduce((sAcc, s) => sAcc + (s.durationSec && s.durationSec > 0 ? 1 : s.reps) * s.weightKg, 0),
-    0
-  );
+        .reduce((sAcc, s) => sAcc + calculateStrengthSetVolumeKg(s, perDb), 0)
+    );
+  }, 0);
 
   async function finishWorkout() {
     setSaving(true);
+    setFinishError(null);
+    const completedLogs: StrengthSetLog[] = logs
+      .map((ex) => ({
+        ...ex,
+        sets: ex.sets.filter((s) => s.completed),
+      }))
+      .filter((ex) => ex.sets.length > 0);
     try {
       const res = await fetch('/api/routines/complete', {
         method: 'POST',
@@ -316,15 +353,29 @@ export default function WorkoutPlayer({
           notes,
           doneTogether,
           images: workoutImages,
-          strengthLogs: logs,
+          strengthLogs: completedLogs,
         }),
       });
       if (res.ok) {
+        setConfirmAction(null);
         onCompleted();
+      } else {
+        setFinishError('No se pudo guardar el entrenamiento. Inténtalo de nuevo.');
       }
+    } catch {
+      setFinishError('Error de conexión al guardar el entrenamiento.');
     } finally {
       setSaving(false);
     }
+  }
+
+  function handleRequestClose() {
+    if (completedSets > 0 || elapsedSec >= 10 || workoutImages.length > 0) {
+      setFinishError(null);
+      setConfirmAction('discard');
+      return;
+    }
+    onClose();
   }
 
   return (
@@ -348,7 +399,7 @@ export default function WorkoutPlayer({
 
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleRequestClose}
               className="h-10 w-10 shrink-0 rounded-xl border hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 flex items-center justify-center"
               style={{ borderColor: 'var(--border-subtle)' }}
               title="Cerrar"
@@ -444,11 +495,24 @@ export default function WorkoutPlayer({
           {logs.map((ex, exIdx) => {
             const spec = items[exIdx];
             const timed = isTimedReps(spec?.reps);
+            const perDb = resolveIsPerDumbbell(
+              { exerciseId: ex.exerciseId, perDumbbell: spec?.perDumbbell ?? ex.perDumbbell },
+              exercisePerDumbbell?.[ex.exerciseId]
+            );
+            const isSingleDb =
+              !perDb &&
+              (isSingleDumbbellByDefault(ex.exerciseId) || Boolean(spec?.requiredEquipment?.includes('dumbbells')));
             const rowWeights = weightInputs[exIdx] ?? [];
             const firstWeightRaw = rowWeights.find((w) => parseDecimalInput(w) > 0) ?? '';
+            const latestWeightNum = [...rowWeights].reverse().map(parseDecimalInput).find((w) => w > 0) ?? 0;
             const hasEmptyWeightSlot = rowWeights.some((w) => w.trim() === '');
             const prevLog = lastExerciseLogs?.[ex.exerciseId];
             const imageUrl = resolveItemImage(spec);
+            const exVolumeKg = Math.round(
+              ex.sets
+                .filter((s) => s.completed)
+                .reduce((acc, s) => acc + calculateStrengthSetVolumeKg(s, perDb), 0)
+            );
 
             return (
               <div
@@ -512,8 +576,26 @@ export default function WorkoutPlayer({
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="font-bold text-sm sm:text-base leading-snug">
-                          {exIdx + 1}. {ex.exerciseName}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-bold text-sm sm:text-base leading-snug">
+                            {exIdx + 1}. {ex.exerciseName}
+                          </span>
+                          {perDb && (
+                            <span
+                              className="inline-flex items-center rounded-md border border-purple-500/35 bg-purple-500/15 px-2 py-0.5 text-[10px] font-semibold text-purple-700 dark:text-purple-300"
+                              title="Anota el peso de 1 mancuerna; el volumen total se multiplica por 2"
+                            >
+                              Por mancuerna (×2)
+                            </span>
+                          )}
+                          {isSingleDb && (
+                            <span
+                              className="inline-flex items-center rounded-md border border-cyan-500/35 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-700 dark:text-cyan-300"
+                              title="Ejercicio con una sola mancuerna"
+                            >
+                              1 mancuerna
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
                           Objetivo: {spec?.reps} · Descanso: {spec?.restSeconds ?? 60}s
@@ -522,7 +604,7 @@ export default function WorkoutPlayer({
                           <div className="text-[11px] mt-0.5 text-cyan-600 dark:text-cyan-400 tabular-nums">
                             Último ({new Date(prevLog.startedAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}):{' '}
                             {prevLog.sets
-                              .map((s) => (s.weightKg > 0 ? `${s.weightKg} kg` : 'corporal'))
+                              .map((s) => (s.weightKg > 0 ? `${s.weightKg} kg${perDb ? ' c/u' : ''}` : 'corporal'))
                               .join(' / ')}
                           </div>
                         )}
@@ -544,7 +626,7 @@ export default function WorkoutPlayer({
                           className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg border hover:bg-sunken min-h-[34px]"
                           style={{ borderColor: 'var(--border-subtle)' }}
                         >
-                          <Copy className="h-3 w-3" /> Igualar {firstWeightRaw} kg
+                          <Copy className="h-3 w-3" /> Igualar {firstWeightRaw} kg{perDb ? ' c/u' : ''}
                         </button>
                       )}
                       <button
@@ -597,15 +679,19 @@ export default function WorkoutPlayer({
                           min={0}
                           step="any"
                           inputMode="decimal"
-                          placeholder="Peso"
-                          aria-label={`${ex.exerciseName} serie ${setIdx + 1} peso en kg`}
+                          placeholder={perDb ? 'kg c/u' : 'Peso'}
+                          aria-label={`${ex.exerciseName} serie ${setIdx + 1} ${perDb ? 'peso por mancuerna en kg' : 'peso en kg'}`}
                           value={weightInputs[exIdx]?.[setIdx] ?? ''}
                           onChange={(e) => updateSetWeightInput(exIdx, setIdx, e.target.value)}
                           className="w-16 sm:w-20 rounded-lg border px-1.5 py-1.5 text-base sm:text-xs font-semibold text-center tabular-nums"
                           style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
                         />
-                        <span className="text-[11px] sm:text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
-                          kg
+                        <span
+                          className="text-[11px] sm:text-xs shrink-0"
+                          style={{ color: perDb ? 'var(--text-secondary)' : 'var(--text-muted)' }}
+                          title={perDb ? 'Peso de una sola mancuerna (kg cada una)' : undefined}
+                        >
+                          {perDb ? 'kg c/u' : 'kg'}
                         </span>
                       </div>
 
@@ -624,6 +710,24 @@ export default function WorkoutPlayer({
                       </button>
                     </div>
                   ))}
+                  {perDb && (
+                    <div
+                      className="text-[11px] flex flex-wrap items-center justify-between gap-2 px-1 pt-0.5"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      <span>Anota el peso de 1 mancuerna (el volumen cuenta ×2).</span>
+                      {(latestWeightNum > 0 || exVolumeKg > 0) && (
+                        <span className="font-semibold text-purple-600 dark:text-purple-300 tabular-nums">
+                          {latestWeightNum > 0
+                            ? `Par: ${Math.round(latestWeightNum * 2 * 100) / 100} kg`
+                            : ''}
+                          {exVolumeKg > 0
+                            ? `${latestWeightNum > 0 ? ' · ' : ''}Vol.: ${exVolumeKg} kg`
+                            : ''}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -748,7 +852,10 @@ export default function WorkoutPlayer({
           <button
             type="button"
             disabled={saving}
-            onClick={finishWorkout}
+            onClick={() => {
+              setFinishError(null);
+              setConfirmAction('finish');
+            }}
             className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 px-5 py-3 sm:py-2.5 text-sm font-bold text-white transition-colors min-h-[44px]"
           >
             <CheckCircle2 className="h-4 w-4" />
@@ -756,6 +863,121 @@ export default function WorkoutPlayer({
           </button>
         </div>
       </div>
+
+      {/* Popup de confirmación antes de finalizar o descartar el entrenamiento */}
+      {confirmAction && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="workout-confirm-title"
+          onClick={() => {
+            if (!saving) setConfirmAction(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border p-5 space-y-4 shadow-2xl"
+            style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="space-y-1.5">
+              <div
+                className={`text-[11px] font-bold uppercase tracking-wider ${
+                  confirmAction === 'finish'
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-rose-600 dark:text-rose-400'
+                }`}
+              >
+                {confirmAction === 'finish' ? 'Confirmar finalización' : 'Salir del entrenamiento'}
+              </div>
+              <h4 id="workout-confirm-title" className="text-lg font-bold leading-snug">
+                {confirmAction === 'finish'
+                  ? '¿Seguro que quieres acabar el entreno?'
+                  : '¿Seguro que quieres salir sin guardar?'}
+              </h4>
+              <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                {confirmAction === 'finish'
+                  ? 'Se guardará la sesión en tu historial y se actualizará tu volumen y carga física (TSS).'
+                  : 'Si sales ahora, perderás las series, pesos y el tiempo registrado en esta sesión.'}
+              </p>
+            </div>
+
+            <div
+              className="grid grid-cols-3 gap-2 rounded-xl border p-3 text-center"
+              style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
+            >
+              <div>
+                <div className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+                  Tiempo
+                </div>
+                <div className="text-sm font-bold tabular-nums">{formatDurationClock(elapsedSec)}</div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+                  Ejercicios / Series
+                </div>
+                <div className="text-sm font-bold tabular-nums">
+                  {completedExercises}/{logs.length} · {completedSets}/{totalSets}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>
+                  Volumen
+                </div>
+                <div className="text-sm font-bold tabular-nums">{Math.round(totalVolumeKg)} kg</div>
+              </div>
+            </div>
+
+            {confirmAction === 'finish' && (completedSets < totalSets || completedExercises < logs.length) && (
+              <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                {completedSets === 0
+                  ? 'Aún no has marcado ningún ejercicio o serie como completado. No aparecerá ningún ejercicio hecho si guardas así.'
+                  : `Solo se guardarán los ${completedExercises} ejercicios y ${completedSets} series que hayas marcado como completados.`}
+              </div>
+            )}
+
+            {finishError && (
+              <div className="rounded-xl border border-rose-500/35 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">
+                {finishError}
+              </div>
+            )}
+
+            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => setConfirmAction(null)}
+                className="rounded-xl border px-4 py-2.5 text-sm font-semibold hover:bg-sunken transition-colors min-h-[44px]"
+                style={{ borderColor: 'var(--border-subtle)' }}
+              >
+                Seguir entrenando
+              </button>
+              {confirmAction === 'finish' ? (
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={finishWorkout}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 px-4 py-2.5 text-sm font-bold text-white transition-colors min-h-[44px]"
+                >
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  {saving ? 'Guardando...' : 'Sí, acabar y guardar'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmAction(null);
+                    onClose();
+                  }}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-rose-600 hover:bg-rose-700 px-4 py-2.5 text-sm font-bold text-white transition-colors min-h-[44px]"
+                >
+                  Salir sin guardar
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal de imagen ampliada / subida de foto */}
       <ImageLightboxModal

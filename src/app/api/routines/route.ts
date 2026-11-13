@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
 
       const sanitizedItems: RoutineExerciseItem[] = body.items.map((item: RoutineExerciseItem) => ({
         ...item,
+        ...(typeof item.perDumbbell === 'boolean' ? { perDumbbell: item.perDumbbell } : {}),
         ...(item.imageUrl ? { imageUrl: sanitizeImageUrl(item.imageUrl) } : {}),
       }));
 

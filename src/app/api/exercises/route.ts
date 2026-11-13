@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
         restSeconds: Math.max(15, Number(body.restSeconds || 60)),
         instructions: String(body.instructions || 'Ejecución controlada manteniendo técnica limpia.'),
         imageUrl: body.imageUrl ? sanitizeImageUrl(body.imageUrl) : null,
+        perDumbbell: Boolean(body.perDumbbell),
       });
 
       return NextResponse.json({ exercise: ex }, { status: 201 });

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
@@ -20,7 +21,13 @@ import {
   enrichActivityLaps,
   enrichPointsTelemetry,
 } from '@/lib/analytics';
-import { DEFAULT_EXERCISES, DEFAULT_HOME_EQUIPMENT, defaultExerciseImageUrl } from '@/lib/home-workouts';
+import {
+  calculateStrengthSetVolumeKg,
+  DEFAULT_EXERCISES,
+  DEFAULT_HOME_EQUIPMENT,
+  defaultExerciseImageUrl,
+  resolveIsPerDumbbell,
+} from '@/lib/home-workouts';
 import { defaultSubSportForSport, estimateActivityTSS, isMismatchedSubSport } from '@/lib/metrics';
 import { isMyWhooshContext, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
 import { decodePolyline } from '@/lib/polyline';
@@ -622,6 +629,7 @@ function initSchema(db: Database.Database) {
   ensureColumn(db, 'activities', 'trimmed', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'activities', 'images_json', 'TEXT');
   ensureColumn(db, 'custom_exercises', 'image_url', 'TEXT');
+  ensureColumn(db, 'custom_exercises', 'per_dumbbell', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'routines', 'cover_image_url', 'TEXT');
 }
 
@@ -1397,6 +1405,7 @@ export function updateActivity(
     doneTogether: boolean;
     excludePausedTime: boolean;
     images: string[];
+    strengthLogs: StrengthSetLog[];
   }>
 ): ActivityDetail | null {
   const existing = getActivityById(id);
@@ -1410,6 +1419,61 @@ export function updateActivity(
   const nextExcludePaused =
     patch.excludePausedTime !== undefined ? Boolean(patch.excludePausedTime) : Boolean(existing.excludePausedTime);
   const nextImages = patch.images !== undefined ? sanitizeImageList(patch.images) : existing.images ?? [];
+
+  let nextStrengthLogs = existing.strengthLogs ?? [];
+  let nextTotalVolumeKg = existing.totalVolumeKg ?? null;
+  if (Array.isArray(patch.strengthLogs)) {
+    const exerciseLookup = new Map(listAllExercises().map((ex) => [ex.id, ex]));
+    let computedVolume = 0;
+    nextStrengthLogs = patch.strengthLogs
+      .map((ex) => {
+        const meta = exerciseLookup.get(ex.exerciseId);
+        const perDumbbell = resolveIsPerDumbbell(ex, meta?.perDumbbell);
+        const cleanSets = (ex.sets ?? [])
+          .filter((s) => s && s.completed !== false)
+          .map((s) => {
+            const weightRaw = Number(s.weightKg);
+            const weightKg = Number.isFinite(weightRaw) && weightRaw >= 0 ? Math.round(weightRaw * 100) / 100 : 0;
+            const durationRaw = Number(s.durationSec);
+            const hasDuration = Number.isFinite(durationRaw) && durationRaw > 0;
+            const repsRaw = Number(s.reps);
+            const reps = hasDuration
+              ? 1
+              : Number.isFinite(repsRaw) && repsRaw >= 0
+                ? Math.round(repsRaw)
+                : 0;
+            return {
+              reps,
+              weightKg,
+              ...(hasDuration ? { durationSec: Math.round(durationRaw) } : {}),
+              completed: true,
+            };
+          });
+        for (const s of cleanSets) {
+          computedVolume += calculateStrengthSetVolumeKg(s, perDumbbell);
+        }
+        return {
+          exerciseId: String(ex.exerciseId || `ex_custom_${crypto.randomUUID().slice(0, 6)}`),
+          exerciseName: String(ex.exerciseName || meta?.name || 'Ejercicio').trim() || 'Ejercicio',
+          equipmentUsed: Array.isArray(ex.equipmentUsed)
+            ? ex.equipmentUsed.map((eq) => String(eq))
+            : (meta?.requiredEquipment ?? []),
+          ...(perDumbbell ? { perDumbbell: true } : typeof ex.perDumbbell === 'boolean' ? { perDumbbell: ex.perDumbbell } : {}),
+          sets: cleanSets,
+        };
+      })
+      .filter((ex) => ex.sets.length > 0);
+    nextTotalVolumeKg = Math.round(computedVolume);
+  }
+
+  let nextDescription = patch.description !== undefined ? patch.description : existing.description ?? null;
+  if (
+    Array.isArray(patch.strengthLogs) &&
+    nextDescription &&
+    /^Sesión en casa completada \(\d+ ejercicios? · \d+ kg movidos\)\.?$/i.test(nextDescription.trim())
+  ) {
+    nextDescription = `Sesión en casa completada (${nextStrengthLogs.length} ${nextStrengthLogs.length === 1 ? 'ejercicio' : 'ejercicios'} · ${nextTotalVolumeKg ?? 0} kg movidos).`;
+  }
   const nextSubSport =
     patch.subSport !== undefined
       ? patch.subSport && isMismatchedSubSport(nextSport, patch.subSport)
@@ -1440,13 +1504,13 @@ export function updateActivity(
 
   db.prepare(`
       UPDATE activities
-      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?, tss = ?, done_together = ?, exclude_paused_time = ?, images_json = ?
+      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?, tss = ?, done_together = ?, exclude_paused_time = ?, images_json = ?, strength_logs_json = ?, total_volume_kg = ?
       WHERE id = ?
     `).run(
     patch.title ?? existing.title,
     nextSport,
     nextSubSport,
-    patch.description !== undefined ? patch.description : existing.description ?? null,
+    nextDescription,
     nextRpe,
     patch.gearId !== undefined ? patch.gearId : existing.gearId ?? null,
     patch.worldName !== undefined ? patch.worldName : existing.worldName ?? null,
@@ -1454,6 +1518,8 @@ export function updateActivity(
     nextDoneTogether ? 1 : 0,
     nextExcludePaused ? 1 : 0,
     JSON.stringify(nextImages),
+    JSON.stringify(nextStrengthLogs),
+    nextTotalVolumeKg,
     id
   );
 
@@ -1815,6 +1881,7 @@ export function listAllExercises(): Exercise[] {
     restSeconds: Number(r.rest_seconds),
     instructions: String(r.instructions),
     imageUrl: r.image_url ? sanitizeImageUrl(String(r.image_url)) : null,
+    perDumbbell: Boolean(r.per_dumbbell),
     isCustom: true,
   }));
 
@@ -1831,12 +1898,13 @@ export function listAllExercises(): Exercise[] {
 
 export function createCustomExercise(ex: Omit<Exercise, 'isCustom'>): Exercise {
   const cleanImage = ex.imageUrl ? sanitizeImageUrl(ex.imageUrl) : null;
+  const perDumbbell = Boolean(ex.perDumbbell);
   getDb()
     .prepare(`
       INSERT INTO custom_exercises (
         id, name, muscle_group, secondary_muscles_json, required_equipment_json,
-        difficulty, pattern, sport_benefit_json, default_sets, default_reps, rest_seconds, instructions, image_url
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        difficulty, pattern, sport_benefit_json, default_sets, default_reps, rest_seconds, instructions, image_url, per_dumbbell
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     .run(
       ex.id,
@@ -1851,9 +1919,10 @@ export function createCustomExercise(ex: Omit<Exercise, 'isCustom'>): Exercise {
       ex.defaultReps,
       ex.restSeconds,
       ex.instructions,
-      cleanImage
+      cleanImage,
+      perDumbbell ? 1 : 0
     );
-  return { ...ex, imageUrl: cleanImage, isCustom: true };
+  return { ...ex, imageUrl: cleanImage, perDumbbell, isCustom: true };
 }
 
 export function updateExerciseImage(exerciseId: string, imageUrl: string | null): Exercise | null {
@@ -1892,18 +1961,20 @@ export function listRoutines(): Routine[] {
     .prepare('SELECT * FROM routines ORDER BY created_at DESC')
     .all() as Record<string, unknown>[];
 
-  const exImageLookup = new Map(listAllExercises().map((ex) => [ex.id, ex.imageUrl ?? null]));
+  const exLookup = new Map(listAllExercises().map((ex) => [ex.id, ex]));
 
   return rows.map((r) => {
     const rawItems: RoutineExerciseItem[] = JSON.parse(String(r.items_json));
     const items = rawItems.map((it) => {
+      const meta = exLookup.get(it.exerciseId);
       const clean = it.imageUrl ? sanitizeImageUrl(it.imageUrl) : null;
       const isStaleDefaultAsset = Boolean(
         clean && /^\/exercises\/[a-z0-9_]+\.(svg|jpg|jpeg|png)$/i.test(clean) && clean.startsWith(`/exercises/${it.exerciseId}.`)
       );
       return {
         ...it,
-        imageUrl: !clean || isStaleDefaultAsset ? (exImageLookup.get(it.exerciseId) ?? clean) : clean,
+        perDumbbell: resolveIsPerDumbbell(it, meta?.perDumbbell),
+        imageUrl: !clean || isStaleDefaultAsset ? (meta?.imageUrl ?? clean) : clean,
       };
     });
     return {
@@ -1987,6 +2058,7 @@ export function deleteRoutine(id: string): boolean {
 
 export interface LastExerciseLogSummary {
   startedAt: string;
+  perDumbbell?: boolean;
   sets: Array<{ reps: number; weightKg: number; durationSec?: number }>;
 }
 
@@ -2001,6 +2073,7 @@ export function getLastExerciseLogs(): Record<string, LastExerciseLogSummary> {
     )
     .all() as Array<{ started_at: string; strength_logs_json: string }>;
 
+  const exLookup = new Map(listAllExercises().map((ex) => [ex.id, ex]));
   const result: Record<string, LastExerciseLogSummary> = {};
   for (const row of rows) {
     let logs: StrengthSetLog[] = [];
@@ -2019,8 +2092,10 @@ export function getLastExerciseLogs(): Record<string, LastExerciseLogSummary> {
           ...(typeof s.durationSec === 'number' && s.durationSec > 0 ? { durationSec: s.durationSec } : {}),
         }));
       if (completedSets.length > 0) {
+        const perDumbbell = resolveIsPerDumbbell(ex, exLookup.get(ex.exerciseId)?.perDumbbell);
         result[ex.exerciseId] = {
           startedAt: row.started_at,
+          ...(perDumbbell ? { perDumbbell: true } : {}),
           sets: completedSets,
         };
       }

@@ -38,6 +38,11 @@ import { SportBadge } from '@/components/SportBadge';
 import { TogetherBadge, TogetherToggleButton } from '@/components/TogetherControl';
 import { uploadExerciseOrWorkoutImage } from '@/lib/client-image';
 import {
+  calculateStrengthSetVolumeKg,
+  isSingleDumbbellByDefault,
+  resolveIsPerDumbbell,
+} from '@/lib/home-workouts';
+import {
   previewActivityTrim,
   resolveTrimSpecFromInput,
   type TrimInputSpec,
@@ -59,9 +64,67 @@ import {
 } from '@/lib/metrics';
 import { isMyWhooshContext, MYWHOOSH_WORLDS, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
 import { decodePolyline, encodePolyline } from '@/lib/polyline';
-import type { ActivityDetail, ActivityLap, ActivityPoint, AthleteProfile, Exercise, GearItem, SportType } from '@/types';
+import type {
+  ActivityDetail,
+  ActivityLap,
+  ActivityPoint,
+  AthleteProfile,
+  Exercise,
+  GearItem,
+  SportType,
+  StrengthSetLog,
+} from '@/types';
 
 type AnalysisTab = 'splits' | 'efforts' | 'zones' | 'terrain';
+
+interface DraftStrengthExercise {
+  exerciseId: string;
+  exerciseName: string;
+  equipmentUsed: string[];
+  perDumbbell: boolean;
+  sets: Array<{
+    repsText: string;
+    weightText: string;
+    isTimed: boolean;
+  }>;
+}
+
+function parseDecimalInput(raw: string): number {
+  const normalized = raw.replace(',', '.').trim();
+  if (!normalized) return 0;
+  const n = Number(normalized);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+function parsePositiveIntInput(raw: string): number {
+  const n = Number(raw.replace(/[^\d]/g, ''));
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0;
+}
+
+function buildDraftStrengthFromLogs(
+  logs: StrengthSetLog[] | undefined,
+  perDumbbellLookup: Record<string, boolean>
+): DraftStrengthExercise[] {
+  return (logs ?? [])
+    .map((ex) => {
+      const cleanSets = (ex.sets ?? []).filter((s) => s.completed !== false);
+      return {
+        exerciseId: ex.exerciseId,
+        exerciseName: ex.exerciseName,
+        equipmentUsed: ex.equipmentUsed ?? [],
+        perDumbbell: resolveIsPerDumbbell(ex, perDumbbellLookup[ex.exerciseId]),
+        sets: cleanSets.map((s) => {
+          const isTimed = Boolean(s.durationSec && s.durationSec > 0);
+          return {
+            repsText: String(isTimed ? s.durationSec : s.reps),
+            weightText: s.weightKg > 0 ? String(s.weightKg) : '',
+            isTimed,
+          };
+        }),
+      };
+    })
+    .filter((ex) => ex.sets.length > 0);
+}
 
 export default function ActivityDetailPage() {
   const params = useParams<{ id: string }>();
@@ -111,8 +174,13 @@ export default function ActivityDetailPage() {
   const [segStatus, setSegStatus] = useState<string | null>(null);
   const [segBusy, setSegBusy] = useState(false);
 
-  // Imágenes de actividad y ejercicios
+  // Imágenes y metadatos de actividad y ejercicios
+  const [allExercises, setAllExercises] = useState<Exercise[]>([]);
   const [exerciseImageMap, setExerciseImageMap] = useState<Record<string, string | null | undefined>>({});
+  const [exercisePerDumbbellMap, setExercisePerDumbbellMap] = useState<Record<string, boolean>>({});
+  const [draftStrength, setDraftStrength] = useState<DraftStrengthExercise[]>([]);
+  const [addExerciseId, setAddExerciseId] = useState('');
+  const editSectionRef = useRef<HTMLFormElement | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [showPhotoUrlInput, setShowPhotoUrlInput] = useState(false);
@@ -133,12 +201,22 @@ export default function ActivityDetailPage() {
       fetch('/api/gear').then((r) => r.json()),
       fetch('/api/exercises').then((r) => (r.ok ? r.json() : null)),
     ]);
+    let nextPerDbMap: Record<string, boolean> = {};
     if (exRes?.exercises) {
+      const exList = exRes.exercises as Exercise[];
+      setAllExercises(exList);
       const map: Record<string, string | null | undefined> = {};
-      for (const ex of exRes.exercises as Exercise[]) {
+      const perDbMap: Record<string, boolean> = {};
+      for (const ex of exList) {
         map[ex.id] = ex.imageUrl ?? null;
+        perDbMap[ex.id] = Boolean(ex.perDumbbell);
       }
+      nextPerDbMap = perDbMap;
       setExerciseImageMap(map);
+      setExercisePerDumbbellMap(perDbMap);
+      if (exList.length > 0) {
+        setAddExerciseId((prev) => prev || exList[0].id);
+      }
     }
     if (actRes?.activity) {
       setActivity(actRes.activity);
@@ -149,6 +227,7 @@ export default function ActivityDetailPage() {
       setRpe(actRes.activity.rpe ?? 6);
       setDoneTogether(Boolean(actRes.activity.doneTogether));
       setDescription(actRes.activity.description ?? '');
+      setDraftStrength(buildDraftStrengthFromLogs(actRes.activity.strengthLogs, nextPerDbMap));
       const distKm = Number(((actRes.activity.distanceMeters || 1000) / 1000).toFixed(2));
       setSegStartKm(0);
       setSegEndKm(Math.min(distKm, Math.max(0.5, Number((distKm * 0.4).toFixed(2)))));
@@ -179,10 +258,113 @@ export default function ActivityDetailPage() {
     return () => window.removeEventListener('bilifit:activities-reloaded', onReload);
   }, [loadAll]);
 
+  const draftVolumeKg = useMemo(() => {
+    let total = 0;
+    for (const ex of draftStrength) {
+      for (const s of ex.sets) {
+        const weightKg = parseDecimalInput(s.weightText);
+        const repsVal = parsePositiveIntInput(s.repsText);
+        total += calculateStrengthSetVolumeKg(
+          {
+            reps: s.isTimed ? 1 : repsVal,
+            ...(s.isTimed ? { durationSec: Math.max(1, repsVal) } : {}),
+            weightKg,
+          },
+          ex.perDumbbell
+        );
+      }
+    }
+    return Math.round(total);
+  }, [draftStrength]);
+
+  function openEditMode(scrollToEditor = false) {
+    if (activity) {
+      setTitle(activity.title);
+      setSport(activity.sport);
+      setWorldName(activity.worldName ?? '');
+      setGearId(activity.gearId ?? '');
+      setRpe(activity.rpe ?? 6);
+      setDoneTogether(Boolean(activity.doneTogether));
+      setDescription(activity.description ?? '');
+      setDraftStrength(buildDraftStrengthFromLogs(activity.strengthLogs, exercisePerDumbbellMap));
+    }
+    setSaveError(null);
+    setEditing(true);
+    if (scrollToEditor) {
+      window.setTimeout(() => {
+        editSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 60);
+    }
+  }
+
+  function handleDraftChangeExercise(exIdx: number, nextExerciseId: string) {
+    const meta = allExercises.find((e) => e.id === nextExerciseId);
+    if (!meta) return;
+    setDraftStrength((prev) =>
+      prev.map((item, i) =>
+        i === exIdx
+          ? {
+              ...item,
+              exerciseId: meta.id,
+              exerciseName: meta.name,
+              equipmentUsed: meta.requiredEquipment,
+              perDumbbell: Boolean(meta.perDumbbell),
+            }
+          : item
+      )
+    );
+  }
+
+  function handleDraftAddExercise() {
+    const meta = allExercises.find((e) => e.id === addExerciseId) ?? allExercises[0];
+    if (!meta) return;
+    const isTimed = /\bseg\b/i.test(meta.defaultReps);
+    const numMatch = meta.defaultReps.match(/\d+/);
+    const defaultVal = numMatch ? numMatch[0] : '10';
+    const setsCount = Math.max(1, meta.defaultSets || 3);
+    setDraftStrength((prev) => [
+      ...prev,
+      {
+        exerciseId: meta.id,
+        exerciseName: meta.name,
+        equipmentUsed: meta.requiredEquipment,
+        perDumbbell: Boolean(meta.perDumbbell),
+        sets: Array.from({ length: setsCount }, () => ({
+          repsText: defaultVal,
+          weightText: '',
+          isTimed,
+        })),
+      },
+    ]);
+  }
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setSavingEdit(true);
     setSaveError(null);
+    const includeStrength =
+      sport === 'strength' || (activity?.strengthLogs?.length ?? 0) > 0 || draftStrength.length > 0;
+    const serializedLogs: StrengthSetLog[] | undefined = includeStrength
+      ? draftStrength
+          .map((ex) => ({
+            exerciseId: ex.exerciseId,
+            exerciseName: ex.exerciseName,
+            equipmentUsed: ex.equipmentUsed,
+            perDumbbell: ex.perDumbbell,
+            sets: ex.sets.map((s) => {
+              const repsNum = parsePositiveIntInput(s.repsText);
+              const weightKg = parseDecimalInput(s.weightText);
+              return {
+                reps: s.isTimed ? 1 : repsNum,
+                ...(s.isTimed ? { durationSec: Math.max(1, repsNum) } : {}),
+                weightKg,
+                completed: true,
+              };
+            }),
+          }))
+          .filter((ex) => ex.sets.length > 0)
+      : undefined;
+
     try {
       const res = await fetch(`/api/activities/${params.id}`, {
         method: 'PATCH',
@@ -196,6 +378,7 @@ export default function ActivityDetailPage() {
           rpe,
           doneTogether,
           description,
+          ...(serializedLogs !== undefined ? { strengthLogs: serializedLogs } : {}),
         }),
       });
       if (res.ok) {
@@ -596,7 +779,7 @@ export default function ActivityDetailPage() {
           )}
           <button
             type="button"
-            onClick={() => setEditing((v) => !v)}
+            onClick={() => (editing ? setEditing(false) : openEditMode())}
             className="rounded-xl border px-3.5 py-2 text-xs font-semibold hover:bg-sunken"
             style={{ borderColor: 'var(--border-subtle)' }}
           >
@@ -655,7 +838,7 @@ export default function ActivityDetailPage() {
         )}
 
         {editing && (
-          <form onSubmit={handleSave} className="pt-4 border-t grid grid-cols-1 sm:grid-cols-2 gap-4" style={{ borderColor: 'var(--border-subtle)' }}>
+          <form ref={editSectionRef} onSubmit={handleSave} className="pt-4 border-t grid grid-cols-1 sm:grid-cols-2 gap-4" style={{ borderColor: 'var(--border-subtle)' }}>
             <div>
               <label className="block text-xs mb-1" style={{ color: 'var(--text-secondary)' }}>Título</label>
               <input
@@ -741,15 +924,265 @@ export default function ActivityDetailPage() {
                 style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
               />
             </div>
+
+            {(sport === 'strength' || (activity.strengthLogs?.length ?? 0) > 0 || draftStrength.length > 0) && (
+              <div
+                className="sm:col-span-2 rounded-2xl border p-4 space-y-4"
+                style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold">Ejercicios, Pesos y Repeticiones</h3>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      Cambia ejercicios, añade o quita series y ajusta pesos o repeticiones.
+                    </p>
+                  </div>
+                  <div className="text-xs font-semibold tabular-nums text-purple-600 dark:text-purple-300">
+                    Volumen: {draftVolumeKg} kg
+                  </div>
+                </div>
+
+                {draftStrength.length === 0 ? (
+                  <div
+                    className="rounded-xl border border-dashed p-4 text-center text-xs"
+                    style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}
+                  >
+                    No hay ejercicios en este entreno. Añade uno abajo para registrarlo.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {draftStrength.map((ex, exIdx) => {
+                      const hasKnownOption = allExercises.some((opt) => opt.id === ex.exerciseId);
+                      const isDumbbellExercise =
+                        ex.perDumbbell ||
+                        ex.equipmentUsed.includes('dumbbells') ||
+                        isSingleDumbbellByDefault(ex.exerciseId);
+                      return (
+                        <div
+                          key={`${ex.exerciseId}-${exIdx}`}
+                          className="rounded-xl border p-3.5 space-y-3"
+                          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex-1 min-w-[200px]">
+                              <select
+                                value={ex.exerciseId}
+                                onChange={(e) => handleDraftChangeExercise(exIdx, e.target.value)}
+                                aria-label={`Ejercicio ${exIdx + 1}`}
+                                className="w-full rounded-lg border px-2.5 py-2 text-base sm:text-xs font-semibold"
+                                style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
+                              >
+                                {!hasKnownOption && (
+                                  <option value={ex.exerciseId}>{ex.exerciseName}</option>
+                                )}
+                                {allExercises.map((opt) => (
+                                  <option key={opt.id} value={opt.id}>
+                                    {opt.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              {isDumbbellExercise && (
+                                <label className="inline-flex items-center gap-1.5 text-[11px] font-medium cursor-pointer px-2 py-1 rounded-lg border" style={{ borderColor: 'var(--border-subtle)' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={ex.perDumbbell}
+                                    onChange={(e) =>
+                                      setDraftStrength((prev) =>
+                                        prev.map((item, i) =>
+                                          i === exIdx ? { ...item, perDumbbell: e.target.checked } : item
+                                        )
+                                      )
+                                    }
+                                    className="accent-purple-500"
+                                  />
+                                  <span>Por mancuerna (×2)</span>
+                                </label>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setDraftStrength((prev) => prev.filter((_, i) => i !== exIdx))
+                                }
+                                className="inline-flex items-center gap-1 rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 min-h-[34px]"
+                                title="Eliminar ejercicio"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" /> Quitar
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            {ex.sets.map((s, setIdx) => (
+                              <div
+                                key={setIdx}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-2.5 py-2"
+                                style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card-elevated)' }}
+                              >
+                                <span className="text-xs font-bold w-14 shrink-0" style={{ color: 'var(--text-secondary)' }}>
+                                  Serie {setIdx + 1}
+                                </span>
+
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    inputMode="numeric"
+                                    aria-label={`${ex.exerciseName} serie ${setIdx + 1} ${s.isTimed ? 'segundos' : 'repeticiones'}`}
+                                    value={s.repsText}
+                                    onChange={(e) =>
+                                      setDraftStrength((prev) =>
+                                        prev.map((item, i) =>
+                                          i === exIdx
+                                            ? {
+                                                ...item,
+                                                sets: item.sets.map((st, j) =>
+                                                  j === setIdx ? { ...st, repsText: e.target.value } : st
+                                                ),
+                                              }
+                                            : item
+                                        )
+                                      )
+                                    }
+                                    className="w-16 rounded-lg border px-2 py-1.5 text-base sm:text-xs font-semibold text-center tabular-nums"
+                                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
+                                  />
+                                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                    {s.isTimed ? 'seg' : 'reps'}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step="any"
+                                    inputMode="decimal"
+                                    placeholder={ex.perDumbbell ? 'kg c/u' : '0'}
+                                    aria-label={`${ex.exerciseName} serie ${setIdx + 1} ${ex.perDumbbell ? 'peso por mancuerna en kg' : 'peso en kg'}`}
+                                    value={s.weightText}
+                                    onChange={(e) =>
+                                      setDraftStrength((prev) =>
+                                        prev.map((item, i) =>
+                                          i === exIdx
+                                            ? {
+                                                ...item,
+                                                sets: item.sets.map((st, j) =>
+                                                  j === setIdx ? { ...st, weightText: e.target.value } : st
+                                                ),
+                                              }
+                                            : item
+                                        )
+                                      )
+                                    }
+                                    className="w-20 rounded-lg border px-2 py-1.5 text-base sm:text-xs font-semibold text-center tabular-nums"
+                                    style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
+                                  />
+                                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                    {ex.perDumbbell ? 'kg c/u' : 'kg'}
+                                  </span>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setDraftStrength((prev) =>
+                                      prev
+                                        .map((item, i) =>
+                                          i === exIdx
+                                            ? { ...item, sets: item.sets.filter((_, j) => j !== setIdx) }
+                                            : item
+                                        )
+                                        .filter((item) => item.sets.length > 0)
+                                    )
+                                  }
+                                  className="h-9 w-9 shrink-0 rounded-lg border flex items-center justify-center text-rose-500 hover:bg-rose-500/15"
+                                  style={{ borderColor: 'var(--border-subtle)' }}
+                                  title="Eliminar serie"
+                                  aria-label={`Eliminar serie ${setIdx + 1}`}
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDraftStrength((prev) =>
+                                  prev.map((item, i) => {
+                                    if (i !== exIdx) return item;
+                                    const last = item.sets[item.sets.length - 1] ?? {
+                                      repsText: '10',
+                                      weightText: '',
+                                      isTimed: false,
+                                    };
+                                    return { ...item, sets: [...item.sets, { ...last }] };
+                                  })
+                                )
+                              }
+                              className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium hover:bg-sunken min-h-[34px]"
+                              style={{ borderColor: 'var(--border-subtle)' }}
+                            >
+                              <Plus className="h-3.5 w-3.5" /> Añadir serie
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {allExercises.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                    <select
+                      value={addExerciseId}
+                      onChange={(e) => setAddExerciseId(e.target.value)}
+                      className="flex-1 min-w-[200px] rounded-lg border px-2.5 py-2 text-base sm:text-xs"
+                      style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
+                    >
+                      {allExercises.map((opt) => (
+                        <option key={opt.id} value={opt.id}>
+                          {opt.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleDraftAddExercise}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 px-3.5 py-2 text-xs font-semibold text-white min-h-[38px]"
+                    >
+                      <Plus className="h-3.5 w-3.5" /> Añadir ejercicio
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-2">
               {saveError ? <span className="text-xs text-rose-400">{saveError}</span> : <span />}
-              <button
-                type="submit"
-                disabled={savingEdit}
-                className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white"
-              >
-                <Save className="h-4 w-4" /> {savingEdit ? 'Guardando...' : 'Guardar cambios'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={savingEdit}
+                  onClick={() => setEditing(false)}
+                  className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-sunken"
+                  style={{ borderColor: 'var(--border-subtle)' }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEdit}
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 px-4 py-2 text-sm font-semibold text-white"
+                >
+                  <Save className="h-4 w-4" /> {savingEdit ? 'Guardando...' : 'Guardar cambios'}
+                </button>
+              </div>
             </div>
           </form>
         )}
@@ -1984,54 +2417,95 @@ export default function ActivityDetailPage() {
       </div>
 
       {/* Detalle de Fuerza en Casa */}
-      {activity.strengthLogs && activity.strengthLogs.length > 0 && (
-        <div className="card-surface p-4 sm:p-5 space-y-4">
-          <h2 className="text-base font-bold">Ejercicios y Series Registradas</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {activity.strengthLogs.map((ex, idx) => {
-              const exImg = exerciseImageMap[ex.exerciseId] ?? null;
-              return (
-                <div key={`${ex.exerciseId}-${idx}`} className="card-elevated p-4 space-y-2.5">
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setLightbox({
-                          exerciseId: ex.exerciseId,
-                          imageUrl: exImg,
-                          title: ex.exerciseName,
-                          canEdit: true,
-                        })
-                      }
-                      className="relative w-12 h-12 rounded-xl overflow-hidden border shrink-0 bg-[#161b26] flex items-center justify-center"
-                      style={{ borderColor: 'var(--border-subtle)' }}
-                      title="Toca para ampliar o cambiar foto del ejercicio"
-                    >
-                      {exImg ? (
-                        <img src={exImg} alt={ex.exerciseName} className="w-full h-full object-cover" />
-                      ) : (
-                        <Camera className="h-4 w-4 text-purple-400" />
-                      )}
-                    </button>
-                    <div className="font-semibold text-sm min-w-0 flex-1">{ex.exerciseName}</div>
-                  </div>
-                  <div className="space-y-1">
-                    {ex.sets.map((s, sIdx) => (
-                      <div key={sIdx} className="flex justify-between text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>
-                        <span>Serie {sIdx + 1}</span>
-                        <span>
-                          {s.durationSec && s.durationSec > 0 ? `${s.durationSec} seg` : `${s.reps} reps`}{' '}
-                          {s.weightKg > 0 ? `× ${s.weightKg} kg` : '(peso corporal)'}
-                        </span>
+      {(() => {
+        const completedStrengthLogs = (activity.strengthLogs ?? [])
+          .map((ex) => ({
+            ...ex,
+            sets: (ex.sets ?? []).filter((s) => s.completed !== false),
+          }))
+          .filter((ex) => ex.sets.length > 0);
+        if (completedStrengthLogs.length === 0) return null;
+        return (
+          <div className="card-surface p-4 sm:p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-base font-bold">Ejercicios y Series Registradas</h2>
+              {!editing && (
+                <button
+                  type="button"
+                  onClick={() => openEditMode(true)}
+                  className="rounded-xl border px-3 py-1.5 text-xs font-semibold hover:bg-sunken"
+                  style={{ borderColor: 'var(--border-subtle)' }}
+                >
+                  Editar ejercicios
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {completedStrengthLogs.map((ex, idx) => {
+                const exImg = exerciseImageMap[ex.exerciseId] ?? null;
+                const perDb = resolveIsPerDumbbell(ex, exercisePerDumbbellMap[ex.exerciseId]);
+                const isSingleDb =
+                  !perDb &&
+                  (isSingleDumbbellByDefault(ex.exerciseId) || ex.equipmentUsed?.includes('dumbbells'));
+                return (
+                  <div key={`${ex.exerciseId}-${idx}`} className="card-elevated p-4 space-y-2.5">
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setLightbox({
+                            exerciseId: ex.exerciseId,
+                            imageUrl: exImg,
+                            title: ex.exerciseName,
+                            canEdit: true,
+                          })
+                        }
+                        className="relative w-12 h-12 rounded-xl overflow-hidden border shrink-0 bg-[#161b26] flex items-center justify-center"
+                        style={{ borderColor: 'var(--border-subtle)' }}
+                        title="Toca para ampliar o cambiar foto del ejercicio"
+                      >
+                        {exImg ? (
+                          <img src={exImg} alt={ex.exerciseName} className="w-full h-full object-cover" />
+                        ) : (
+                          <Camera className="h-4 w-4 text-purple-400" />
+                        )}
+                      </button>
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <div className="font-semibold text-sm">{ex.exerciseName}</div>
+                        {perDb && (
+                          <span className="inline-flex items-center rounded border border-purple-500/35 bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-purple-700 dark:text-purple-300">
+                            Por mancuerna (×2)
+                          </span>
+                        )}
+                        {isSingleDb && (
+                          <span className="inline-flex items-center rounded border border-cyan-500/35 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700 dark:text-cyan-300">
+                            1 mancuerna
+                          </span>
+                        )}
                       </div>
-                    ))}
+                    </div>
+                    <div className="space-y-1">
+                      {ex.sets.map((s, sIdx) => (
+                        <div key={sIdx} className="flex justify-between text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+                          <span>Serie {sIdx + 1}</span>
+                          <span>
+                            {s.durationSec && s.durationSec > 0 ? `${s.durationSec} seg` : `${s.reps} reps`}{' '}
+                            {s.weightKg > 0
+                              ? perDb
+                                ? `× ${s.weightKg} kg c/u (${Math.round(s.weightKg * 2 * 100) / 100} kg)`
+                                : `× ${s.weightKg} kg`
+                              : '(peso corporal)'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       <ImageLightboxModal
         open={Boolean(lightbox)}

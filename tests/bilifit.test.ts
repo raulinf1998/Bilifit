@@ -56,10 +56,13 @@ import {
   updateHuaweiPreferences,
 } from '../src/lib/huawei-sync';
 import {
+  calculateStrengthSetVolumeKg,
   DEFAULT_EXERCISES,
   generateHomeRoutine,
   getAlternativeExercises,
   isExerciseCompatible,
+  PER_DUMBBELL_EXERCISE_IDS,
+  SINGLE_DUMBBELL_EXERCISE_IDS,
 } from '../src/lib/home-workouts';
 import {
   backfillMismatchedSubSports,
@@ -3475,5 +3478,336 @@ test('Exercise illustrations exist for all exercises and exercise/routine/workou
   assert.equal(patchActRes.status, 200);
   const patchedActJson = (await patchActRes.json()) as { activity: { images?: string[] } };
   assert.deepEqual(patchedActJson.activity.images, []);
+});
+
+test('Per-dumbbell (×2) exercises, preset routines, custom exercises, and volume multiplication work end-to-end', async () => {
+  // 1. Every dumbbell exercise in DEFAULT_EXERCISES is explicitly classified as either 2-dumbbell (perDumbbell: true) or 1-dumbbell
+  const dumbbellExercises = DEFAULT_EXERCISES.filter((ex) => ex.requiredEquipment.includes('dumbbells'));
+  assert.equal(dumbbellExercises.length, 20);
+  for (const ex of dumbbellExercises) {
+    if (PER_DUMBBELL_EXERCISE_IDS.has(ex.id)) {
+      assert.equal(ex.perDumbbell, true, `Expected perDumbbell=true for ${ex.id}`);
+    } else if (SINGLE_DUMBBELL_EXERCISE_IDS.has(ex.id)) {
+      assert.equal(ex.perDumbbell, false, `Expected perDumbbell=false for single-dumbbell ${ex.id}`);
+    } else {
+      assert.fail(`Unclassified dumbbell exercise: ${ex.id}`);
+    }
+  }
+
+  // Volume helper sanity checks
+  assert.equal(calculateStrengthSetVolumeKg({ reps: 10, weightKg: 12 }, true), 240);
+  assert.equal(calculateStrengthSetVolumeKg({ reps: 10, weightKg: 12 }, false), 120);
+  assert.equal(calculateStrengthSetVolumeKg({ reps: 1, durationSec: 40, weightKg: 15 }, true), 30);
+
+  // 2. Preset 5-day routines automatically surface perDumbbell on bilateral dumbbell exercises
+  const routines = listRoutines();
+  const day1 = routines.find((r) => r.id === 'routine_push_a_day1');
+  assert.ok(day1);
+  assert.equal(day1.items.find((i) => i.exerciseId === 'ex_db_incline_press')?.perDumbbell, true);
+  assert.equal(day1.items.find((i) => i.exerciseId === 'ex_db_chest_fly')?.perDumbbell, true);
+  assert.equal(day1.items.find((i) => i.exerciseId === 'ex_db_seated_shoulder_press')?.perDumbbell, true);
+  assert.equal(day1.items.find((i) => i.exerciseId === 'ex_db_lateral_raise')?.perDumbbell, true);
+  assert.equal(day1.items.find((i) => i.exerciseId === 'ex_bb_bench_press')?.perDumbbell, false);
+
+  const day2 = routines.find((r) => r.id === 'routine_pull_a_day2');
+  assert.ok(day2);
+  assert.equal(day2.items.find((i) => i.exerciseId === 'ex_db_rear_delt_fly')?.perDumbbell, true);
+  assert.equal(day2.items.find((i) => i.exerciseId === 'ex_db_hammer_curl_strict')?.perDumbbell, true);
+  assert.equal(day2.items.find((i) => i.exerciseId === 'ex_db_one_arm_row')?.perDumbbell, false);
+
+  const day6 = routines.find((r) => r.id === 'routine_pull_b_day6');
+  assert.ok(day6);
+  assert.equal(day6.items.find((i) => i.exerciseId === 'ex_db_incline_curl')?.perDumbbell, true);
+
+  // 3. Custom exercises persist perDumbbell across SQLite & API
+  const customPerDbRes = await postExercisesRoute(
+    new NextRequest('http://localhost:3000/api/exercises', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Curl concentrado bilateral',
+        muscleGroup: 'brazos',
+        pattern: 'traccion',
+        requiredEquipment: ['dumbbells'],
+        defaultSets: 3,
+        defaultReps: '12',
+        restSeconds: 60,
+        perDumbbell: true,
+      }),
+    })
+  );
+  assert.equal(customPerDbRes.status, 201);
+  const customPerDb = (await customPerDbRes.json()) as { exercise: { id: string; perDumbbell?: boolean } };
+  assert.equal(customPerDb.exercise.perDumbbell, true);
+
+  const customSingleDbRes = await postExercisesRoute(
+    new NextRequest('http://localhost:3000/api/exercises', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Pullover con 1 mancuerna',
+        muscleGroup: 'espalda',
+        pattern: 'traccion',
+        requiredEquipment: ['dumbbells', 'bench'],
+        defaultSets: 3,
+        defaultReps: '12',
+        restSeconds: 75,
+        perDumbbell: false,
+      }),
+    })
+  );
+  assert.equal(customSingleDbRes.status, 201);
+  const customSingleDb = (await customSingleDbRes.json()) as { exercise: { id: string; perDumbbell?: boolean } };
+  assert.equal(customSingleDb.exercise.perDumbbell, false);
+
+  const listExJson = (await (
+    await getExercisesRoute(new NextRequest('http://localhost:3000/api/exercises'))
+  ).json()) as { exercises: Array<{ id: string; perDumbbell?: boolean }> };
+  assert.equal(listExJson.exercises.find((e) => e.id === customPerDb.exercise.id)?.perDumbbell, true);
+  assert.equal(listExJson.exercises.find((e) => e.id === customSingleDb.exercise.id)?.perDumbbell, false);
+
+  // 4. Completing a routine multiplies bilateral dumbbell sets by ×2 while leaving 1-dumbbell & barbell sets at ×1
+  const completeDbRes = await postCompleteRoutineRoute(
+    new NextRequest('http://localhost:3000/api/routines/complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        routineId: 'routine_push_a_day1',
+        title: 'Día 1 – Empuje A (Test Mancuernas)',
+        durationSec: 2400,
+        rpe: 8,
+        strengthLogs: [
+          {
+            // Bilateral 2-dumbbell exercise: 3 * 10 * 12 kg c/u * 2 = 720 kg
+            exerciseId: 'ex_db_bench_press',
+            exerciseName: 'Press de pecho en banco con mancuernas',
+            equipmentUsed: ['dumbbells', 'bench'],
+            sets: [
+              { reps: 10, weightKg: 12, completed: true },
+              { reps: 10, weightKg: 12, completed: true },
+              { reps: 10, weightKg: 12, completed: true },
+            ],
+          },
+          {
+            // Single-dumbbell exercise: 3 * 10 * 16 kg * 1 = 480 kg
+            exerciseId: 'ex_db_one_arm_row',
+            exerciseName: 'Remo a una mano con mancuerna',
+            equipmentUsed: ['dumbbells', 'bench'],
+            sets: [
+              { reps: 10, weightKg: 16, completed: true },
+              { reps: 10, weightKg: 16, completed: true },
+              { reps: 10, weightKg: 16, completed: true },
+            ],
+          },
+          {
+            // Barbell exercise: 2 * 5 * 60 kg * 1 = 600 kg
+            exerciseId: 'ex_bb_bench_press',
+            exerciseName: 'Press de banca con barra',
+            equipmentUsed: ['barbell', 'bench'],
+            sets: [
+              { reps: 5, weightKg: 60, completed: true },
+              { reps: 5, weightKg: 60, completed: true },
+            ],
+          },
+        ],
+      }),
+    })
+  );
+  assert.equal(completeDbRes.status, 201);
+  const completedDb = (await completeDbRes.json()) as {
+    activity: {
+      totalVolumeKg: number;
+      strengthLogs: Array<{ exerciseId: string; perDumbbell?: boolean }>;
+    };
+  };
+  assert.equal(completedDb.activity.totalVolumeKg, 1800);
+  assert.equal(
+    completedDb.activity.strengthLogs.find((l) => l.exerciseId === 'ex_db_bench_press')?.perDumbbell,
+    true
+  );
+
+  // 5. GET /api/routines surfaces perDumbbell in lastExerciseLogs
+  const afterRoutinesJson = (await (
+    await getRoutinesRoute(new NextRequest('http://localhost:3000/api/routines'))
+  ).json()) as {
+    lastExerciseLogs: Record<string, { perDumbbell?: boolean; sets: Array<{ weightKg: number }> }>;
+  };
+  assert.equal(afterRoutinesJson.lastExerciseLogs.ex_db_bench_press?.perDumbbell, true);
+  assert.deepEqual(
+    afterRoutinesJson.lastExerciseLogs.ex_db_bench_press?.sets.map((s) => s.weightKg),
+    [12, 12, 12]
+  );
+  assert.equal(afterRoutinesJson.lastExerciseLogs.ex_db_one_arm_row?.perDumbbell, undefined);
+});
+
+test('Unchecked exercises and uncompleted sets are excluded when finishing a workout', async () => {
+  const res = await postCompleteRoutineRoute(
+    new NextRequest('http://localhost:3000/api/routines/complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        routineId: 'routine_push_a_day1',
+        title: 'Entreno parcial',
+        durationSec: 1500,
+        rpe: 7,
+        strengthLogs: [
+          {
+            exerciseId: 'ex_db_lateral_raise',
+            exerciseName: 'Elevaciones laterales',
+            equipmentUsed: ['dumbbells'],
+            sets: [
+              { reps: 12, weightKg: 8, completed: true },
+              { reps: 12, weightKg: 8, completed: true },
+              { reps: 12, weightKg: 8, completed: false },
+            ],
+          },
+          {
+            exerciseId: 'ex_close_grip_pushup',
+            exerciseName: 'Flexiones agarre cerrado',
+            equipmentUsed: [],
+            sets: [
+              { reps: 12, weightKg: 0, completed: false },
+              { reps: 12, weightKg: 0, completed: false },
+            ],
+          },
+        ],
+      }),
+    })
+  );
+  assert.equal(res.status, 201);
+  const payload = (await res.json()) as {
+    activity: {
+      id: string;
+      description: string | null;
+      totalVolumeKg: number;
+      strengthLogs: Array<{ exerciseId: string; sets: Array<{ completed: boolean; weightKg: number }> }>;
+    };
+  };
+
+  // Solo debe guardarse ex_db_lateral_raise (con sus 2 series marcadas), NO ex_close_grip_pushup
+  assert.equal(payload.activity.strengthLogs.length, 1);
+  assert.equal(payload.activity.strengthLogs[0].exerciseId, 'ex_db_lateral_raise');
+  assert.equal(payload.activity.strengthLogs[0].sets.length, 2);
+  assert.ok(payload.activity.strengthLogs[0].sets.every((s) => s.completed));
+  // 2 * 12 * 8 * 2 (perDumbbell) = 384 kg
+  assert.equal(payload.activity.totalVolumeKg, 384);
+  assert.ok(payload.activity.description?.includes('1 ejercicio'));
+
+  // Y el ejercicio no hecho no debe aparecer en lastExerciseLogs
+  const rtJson = (await (
+    await getRoutinesRoute(new NextRequest('http://localhost:3000/api/routines'))
+  ).json()) as {
+    lastExerciseLogs: Record<string, { sets: Array<{ weightKg: number }> }>;
+  };
+  assert.equal(rtJson.lastExerciseLogs.ex_close_grip_pushup, undefined);
+  assert.equal(rtJson.lastExerciseLogs.ex_db_lateral_raise?.sets.length, 2);
+});
+
+test('Editing a finished strength workout updates exercises, weights, reps, totalVolumeKg, and preserves logs on unrelated PATCH', async () => {
+  const createRes = await postCompleteRoutineRoute(
+    new NextRequest('http://localhost:3000/api/routines/complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        routineId: 'routine_push_a_day1',
+        title: 'Entreno editable',
+        durationSec: 2100,
+        rpe: 7,
+        strengthLogs: [
+          {
+            exerciseId: 'ex_db_incline_press',
+            exerciseName: 'Press inclinado con mancuernas',
+            equipmentUsed: ['dumbbells', 'bench'],
+            sets: [
+              { reps: 10, weightKg: 10, completed: true },
+              { reps: 10, weightKg: 10, completed: true },
+            ],
+          },
+        ],
+      }),
+    })
+  );
+  assert.equal(createRes.status, 201);
+  const created = (await createRes.json()) as { activity: { id: string; totalVolumeKg: number } };
+  assert.equal(created.activity.totalVolumeKg, 400);
+
+  // Editar ejercicio, series, pesos (decimales) y añadir un segundo ejercicio con barra
+  const editRes = await patchActivityRoute(
+    new NextRequest(`http://localhost:3000/api/activities/${created.activity.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Entreno editado',
+        strengthLogs: [
+          {
+            exerciseId: 'ex_db_bench_press',
+            exerciseName: 'Press de pecho en banco con mancuernas',
+            equipmentUsed: ['dumbbells', 'bench'],
+            perDumbbell: true,
+            sets: [
+              { reps: 10, weightKg: 12.5, completed: true },
+              { reps: 10, weightKg: 12.5, completed: true },
+              { reps: 10, weightKg: 12.5, completed: true },
+            ],
+          },
+          {
+            exerciseId: 'ex_bb_row',
+            exerciseName: 'Remo con barra',
+            equipmentUsed: ['barbell'],
+            perDumbbell: false,
+            sets: [
+              { reps: 8, weightKg: 50, completed: true },
+              { reps: 8, weightKg: 50, completed: true },
+            ],
+          },
+        ],
+      }),
+    }),
+    { params: Promise.resolve({ id: created.activity.id }) }
+  );
+  assert.equal(editRes.status, 200);
+  const edited = (await editRes.json()) as {
+    activity: {
+      title: string;
+      description: string | null;
+      totalVolumeKg: number;
+      strengthLogs: Array<{
+        exerciseId: string;
+        perDumbbell?: boolean;
+        sets: Array<{ reps: number; weightKg: number }>;
+      }>;
+    };
+  };
+
+  // 3 * 10 * 12.5 * 2 = 750 + 2 * 8 * 50 = 800 -> 1550 kg
+  assert.equal(edited.activity.title, 'Entreno editado');
+  assert.equal(edited.activity.totalVolumeKg, 1550);
+  assert.equal(edited.activity.strengthLogs.length, 2);
+  assert.equal(edited.activity.strengthLogs[0].exerciseId, 'ex_db_bench_press');
+  assert.equal(edited.activity.strengthLogs[0].perDumbbell, true);
+  assert.deepEqual(
+    edited.activity.strengthLogs[0].sets.map((s) => s.weightKg),
+    [12.5, 12.5, 12.5]
+  );
+  assert.equal(edited.activity.strengthLogs[1].exerciseId, 'ex_bb_row');
+  assert.ok(edited.activity.description?.includes('2 ejercicios'));
+  assert.ok(edited.activity.description?.includes('1550 kg'));
+
+  // Un PATCH no relacionado (doneTogether) no debe borrar ni alterar los strengthLogs
+  const patchTogetherRes = await patchActivityRoute(
+    new NextRequest(`http://localhost:3000/api/activities/${created.activity.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ doneTogether: true }),
+    }),
+    { params: Promise.resolve({ id: created.activity.id }) }
+  );
+  assert.equal(patchTogetherRes.status, 200);
+  const afterTogether = (await patchTogetherRes.json()) as {
+    activity: { totalVolumeKg: number; strengthLogs: Array<{ exerciseId: string }>; doneTogether?: boolean };
+  };
+  assert.equal(afterTogether.activity.doneTogether, true);
+  assert.equal(afterTogether.activity.totalVolumeKg, 1550);
+  assert.equal(afterTogether.activity.strengthLogs.length, 2);
 });
 

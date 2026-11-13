@@ -942,10 +942,11 @@ export function buildSeedActivities(): SeedActivitySpec[] {
       exerciseId: 'ex_db_bulgarian_split',
       exerciseName: 'Sentadilla búlgara con mancuernas',
       equipmentUsed: ['dumbbells'],
+      perDumbbell: true,
       sets: [
-        { reps: 10, weightKg: 20, completed: true },
-        { reps: 10, weightKg: 20, completed: true },
-        { reps: 10, weightKg: 20, completed: true },
+        { reps: 10, weightKg: 10, completed: true },
+        { reps: 10, weightKg: 10, completed: true },
+        { reps: 10, weightKg: 10, completed: true },
       ],
     },
     {
