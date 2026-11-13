@@ -15,6 +15,10 @@ process.env.BILIFIT_SECRET = 'bilifit-test-secret';
 process.env.BILIFIT_DISABLE_SCHEDULER = '1';
 
 import {
+  mapClientXToSvgViewBoxX,
+  resolveTelemetryPointIndexFromSvgX,
+} from '../src/components/Charts';
+import {
   calculateCyclingTSS,
   calculateNormalizedPower,
   calculatePMC,
@@ -88,6 +92,7 @@ import {
 } from '../src/app/api/settings/custom-palettes/[id]/route';
 import { GET as getActivitiesRoute, POST as postActivitiesRoute } from '../src/app/api/activities/route';
 import { PATCH as patchActivityRoute } from '../src/app/api/activities/[id]/route';
+import { POST as postReloadActivitiesRoute } from '../src/app/api/activities/reload/route';
 import { POST as postTrimActivityRoute } from '../src/app/api/activities/[id]/trim/route';
 import { GET as getDashboardRoute } from '../src/app/api/dashboard/route';
 import { GET as getProfileRoute } from '../src/app/api/profile/route';
@@ -2583,4 +2588,471 @@ test('Map attribution removal, theme-toned dark maps, and Huawei/FIT/GPX custom 
   assert.equal(hsBatch.activities[0].laps?.[0].name, 'Segmento 1');
 });
 
+test('Settings reload endpoint reprocesses all activities, refreshes sources safely, and discovers/matches segments', async () => {
+  const ajustesSource = fs.readFileSync(path.join(process.cwd(), 'src', 'app', 'ajustes', 'page.tsx'), 'utf8');
+  const settingsMenuSource = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'SettingsMenu.tsx'), 'utf8');
+  assert.ok(ajustesSource.includes('/api/activities/reload'));
+  assert.ok(settingsMenuSource.includes('/api/activities/reload'));
 
+  // Prepare an isolated local Huawei folder in temp dir with a FIT + sibling TCX containing 2 custom laps
+  const tmpWatchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bilifit-reload-watch-'));
+  try {
+    const prevHw = getHuaweiStatus();
+    const fitDate = new Date('2026-08-29T07:30:00Z');
+    const fitTs = FitEncoder.toFitTimestamp(fitDate);
+    const toSemi = (d: number) => Math.round((d * 2147483648) / 180);
+
+    const enc = new FitEncoder();
+    enc.writeMessage(0, [
+      { number: 0, size: 1, baseType: FitBaseType.Enum, value: 4 },
+      { number: 4, size: 4, baseType: FitBaseType.Uint32, value: fitTs },
+    ], 0);
+    enc.writeMessage(18, [
+      { number: 253, size: 4, baseType: FitBaseType.Uint32, value: fitTs + 360 },
+      { number: 2, size: 4, baseType: FitBaseType.Uint32, value: fitTs },
+      { number: 5, size: 1, baseType: FitBaseType.Enum, value: 1 },
+      { number: 7, size: 4, baseType: FitBaseType.Uint32, value: 360 * 1000 },
+      { number: 8, size: 4, baseType: FitBaseType.Uint32, value: 360 * 1000 },
+      { number: 9, size: 4, baseType: FitBaseType.Uint32, value: 1000 * 100 },
+    ], 1);
+    enc.writeMessage(20, [
+      { number: 253, size: 4, baseType: FitBaseType.Uint32, value: fitTs },
+      { number: 0, size: 4, baseType: FitBaseType.Sint32, value: toSemi(43.400) },
+      { number: 1, size: 4, baseType: FitBaseType.Sint32, value: toSemi(-5.900) },
+      { number: 2, size: 2, baseType: FitBaseType.Uint16, value: (120 + 500) * 5 },
+    ], 2);
+    enc.writeMessage(20, [
+      { number: 253, size: 4, baseType: FitBaseType.Uint32, value: fitTs + 360 },
+      { number: 0, size: 4, baseType: FitBaseType.Sint32, value: toSemi(43.409) },
+      { number: 1, size: 4, baseType: FitBaseType.Sint32, value: toSemi(-5.900) },
+      { number: 2, size: 2, baseType: FitBaseType.Uint16, value: (140 + 500) * 5 },
+    ], 2);
+    const fitBytes = enc.close();
+    fs.writeFileSync(
+      path.join(tmpWatchDir, '2026.08.29 09.30-RUNNING.fit'),
+      Buffer.from(fitBytes.buffer, fitBytes.byteOffset, fitBytes.byteLength)
+    );
+
+    // Import first WITHOUT sibling TCX
+    updateHuaweiPreferences({ watchDir: tmpWatchDir });
+    const firstSync = await syncHuaweiActivities({ mode: 'folder' });
+    assert.equal(firstSync.imported, 1);
+
+    const syncedBefore = listActivities({ sport: 'running' }).find((a) => a.startedAt.startsWith('2026-08-29'));
+    assert.ok(syncedBefore);
+    // Simulate legacy generic title & manual user RPE before reload
+    getDb().prepare("UPDATE activities SET title = 'Carrera al aire libre · 29 ago', rpe = 8 WHERE id = ?").run(syncedBefore.id);
+
+    // Now place sibling TCX with 2 manual laps into folder to test source refresh
+    const siblingTcx = `<?xml version="1.0" encoding="UTF-8"?>
+    <TrainingCenterDatabase>
+      <Activities>
+        <Activity Sport="Running">
+          <Id>2026-08-29T07:30:00Z</Id>
+          <Lap StartTime="2026-08-29T07:30:00Z">
+            <TotalTimeSeconds>180</TotalTimeSeconds>
+            <DistanceMeters>500</DistanceMeters>
+            <TriggerMethod>Manual</TriggerMethod>
+            <Track>
+              <Trackpoint><Time>2026-08-29T07:30:00Z</Time><Position><LatitudeDegrees>43.400</LatitudeDegrees><LongitudeDegrees>-5.900</LongitudeDegrees></Position><AltitudeMeters>120</AltitudeMeters></Trackpoint>
+              <Trackpoint><Time>2026-08-29T07:33:00Z</Time><Position><LatitudeDegrees>43.4045</LatitudeDegrees><LongitudeDegrees>-5.900</LongitudeDegrees></Position><AltitudeMeters>130</AltitudeMeters></Trackpoint>
+            </Track>
+          </Lap>
+          <Lap StartTime="2026-08-29T07:33:00Z">
+            <TotalTimeSeconds>180</TotalTimeSeconds>
+            <DistanceMeters>500</DistanceMeters>
+            <TriggerMethod>Manual</TriggerMethod>
+            <Track>
+              <Trackpoint><Time>2026-08-29T07:33:00Z</Time><Position><LatitudeDegrees>43.4045</LatitudeDegrees><LongitudeDegrees>-5.900</LongitudeDegrees></Position><AltitudeMeters>130</AltitudeMeters></Trackpoint>
+              <Trackpoint><Time>2026-08-29T07:36:00Z</Time><Position><LatitudeDegrees>43.409</LatitudeDegrees><LongitudeDegrees>-5.900</LongitudeDegrees></Position><AltitudeMeters>140</AltitudeMeters></Trackpoint>
+            </Track>
+          </Lap>
+        </Activity>
+      </Activities>
+    </TrainingCenterDatabase>`;
+    fs.writeFileSync(path.join(tmpWatchDir, '2026.08.29 09.30-RUNNING.tcx'), siblingTcx, 'utf8');
+
+    // Create two distinct GPS activities climbing the exact same unique hill (far from Naranco seed),
+    // with one containing a stationary pause and stale movingTimeSec === durationSec.
+    const makeHillPoints = (totalDurSec: number, withPause = false) =>
+      Array.from({ length: 15 }, (_, idx) => {
+        const paused = withPause && idx >= 5 && idx <= 6;
+        const stepIdx = withPause && idx > 6 ? idx - 2 : paused ? 4 : idx;
+        const t = Math.round((idx / 14) * totalDurSec);
+        const lat = 43.520 + stepIdx * 0.0008;
+        const lon = -5.650;
+        const ele = idx >= 13 ? 210 - (idx - 12) * 15 : 100 + stepIdx * 9;
+        return {
+          t,
+          lat,
+          lon,
+          ele,
+          hr: 145 + idx,
+          speed: paused ? 0 : 2.8,
+          dist: stepIdx * 90,
+        };
+      });
+
+    const climb1Pts = makeHillPoints(700, true);
+    const climb2Pts = makeHillPoints(560, false);
+
+    const climbAct1 = createActivity({
+      id: 'act_reload_climb_1',
+      externalId: null,
+      source: 'gpx',
+      sport: 'running',
+      subSport: 'Correr',
+      title: '2026.10.01 09.00-RUNNING.gpx',
+      description: null,
+      startedAt: '2026-10-01T07:00:00Z',
+      durationSec: 700,
+      movingTimeSec: 700, // stale: should recover paused interval on reload
+      distanceMeters: climb1Pts[climb1Pts.length - 1].dist ?? 1080,
+      elevationGain: 100,
+      elevationLoss: 20,
+      avgSpeedMs: 1.54,
+      maxSpeedMs: 3.0,
+      avgHr: 152,
+      maxHr: 165,
+      avgWatts: null,
+      normalizedPower: null,
+      maxWatts: null,
+      avgCadence: 170,
+      calories: 140,
+      tss: 25,
+      rpe: null,
+      gearId: null,
+      worldName: null,
+      polyline: encodePolyline(climb1Pts.map((p) => [p.lat, p.lon])),
+      startLat: climb1Pts[0].lat,
+      startLon: climb1Pts[0].lon,
+      points: climb1Pts,
+      strengthLogs: [],
+      totalVolumeKg: null,
+      laps: [],
+      createdAt: '2026-10-01T08:00:00Z',
+    });
+
+    const climbAct2 = createActivity({
+      id: 'act_reload_climb_2',
+      externalId: null,
+      source: 'gpx',
+      sport: 'running',
+      subSport: 'Correr',
+      title: 'Subida Somió Rápida',
+      description: null,
+      startedAt: '2026-10-05T07:00:00Z',
+      durationSec: 560,
+      movingTimeSec: 560,
+      distanceMeters: climb2Pts[climb2Pts.length - 1].dist ?? 1260,
+      elevationGain: 110,
+      elevationLoss: 25,
+      avgSpeedMs: 2.25,
+      maxSpeedMs: 3.4,
+      avgHr: 162,
+      maxHr: 178,
+      avgWatts: null,
+      normalizedPower: null,
+      maxWatts: null,
+      avgCadence: 178,
+      calories: 135,
+      tss: 28,
+      rpe: null,
+      gearId: null,
+      worldName: null,
+      polyline: encodePolyline(climb2Pts.map((p) => [p.lat, p.lon])),
+      startLat: climb2Pts[0].lat,
+      startLon: climb2Pts[0].lon,
+      points: climb2Pts,
+      strengthLogs: [],
+      totalVolumeKg: null,
+      laps: [],
+      createdAt: '2026-10-05T08:00:00Z',
+    });
+
+    // Verify trimmed activity title & trimmed distance stay protected
+    const trimmedCustom = getActivityById('act_trim_paused_test');
+    assert.ok(trimmedCustom?.trimmed);
+    const trimmedDistBefore = trimmedCustom.distanceMeters;
+
+    const countBefore = listActivities().length;
+
+    const reloadRes1 = await postReloadActivitiesRoute(
+      new NextRequest('http://localhost:3000/api/activities/reload', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ reloadSources: true, detectClimbs: true }),
+      })
+    );
+    assert.equal(reloadRes1.status, 200);
+    const json1 = (await reloadRes1.json()) as {
+      ok: boolean;
+      totalActivities: number;
+      reprocessedActivities: number;
+      sources: { huawei: { status: string; imported: number; updated: number } };
+      segments: { before: number; created: number; total: number; effortsMatched: number };
+    };
+
+    assert.equal(json1.ok, true);
+    assert.equal(json1.totalActivities, countBefore);
+    assert.equal(json1.reprocessedActivities, countBefore);
+    assert.equal(json1.sources.huawei.status, 'ok');
+    assert.equal(json1.sources.huawei.imported, 0);
+    assert.equal(json1.sources.huawei.updated, 1);
+
+    // Check Huawei activity refreshed laps, fixed generic title, and kept user RPE=8
+    const syncedAfter = getActivityById(syncedBefore.id)!;
+    assert.equal(syncedAfter.title, 'Correr · 29 ago 2026');
+    assert.equal(syncedAfter.rpe, 8);
+    assert.equal(syncedAfter.laps?.length, 2);
+
+    // Check generic GPX title normalized, concrete title preserved, stationary pause recovered
+    const climb1After = getActivityById(climbAct1.id)!;
+    const climb2After = getActivityById(climbAct2.id)!;
+    assert.equal(climb1After.title, 'Correr · 01 oct 2026');
+    assert.ok(climb1After.movingTimeSec < climb1After.durationSec);
+    assert.equal(climb2After.title, 'Subida Somió Rápida');
+    assert.equal(getActivityById('act_trim_paused_test')?.distanceMeters, trimmedDistBefore);
+
+    // Climb discovery creates 1 deduplicated segment for the Somió hill (shared by both climbAct1 & climbAct2)
+    assert.ok(json1.segments.created >= 1);
+    const somioSegments = listSegments('running').filter(
+      (s) => Math.abs(s.startLat - 43.52) < 0.01 && Math.abs(s.startLon - -5.65) < 0.01
+    );
+    assert.equal(somioSegments.length, 1);
+    assert.equal(climb1After.segmentEfforts?.length, 1);
+    assert.equal(climb2After.segmentEfforts?.length, 1);
+    assert.equal(climb1After.segmentEfforts?.[0].segmentId, somioSegments[0].id);
+    assert.equal(climb2After.segmentEfforts?.[0].segmentId, somioSegments[0].id);
+    assert.equal(climb2After.segmentEfforts?.[0].prRank, 1);
+    assert.equal(climb1After.segmentEfforts?.[0].prRank, 2);
+
+    // Re-running reload a second time is idempotent (no duplicate segments or activities)
+    const reloadRes2 = await postReloadActivitiesRoute(
+      new NextRequest('http://localhost:3000/api/activities/reload', { method: 'POST' })
+    );
+    assert.equal(reloadRes2.status, 200);
+    const json2 = (await reloadRes2.json()) as typeof json1;
+    assert.equal(json2.totalActivities, countBefore);
+    assert.equal(json2.segments.created, 0);
+    assert.equal(json2.segments.total, json1.segments.total);
+
+    // Account isolation: reloading on pequenaja only affects pequenaja's DB
+    const peqReloadRes = await postReloadActivitiesRoute(
+      new NextRequest('http://localhost:3000/api/activities/reload', {
+        method: 'POST',
+        headers: { cookie: `${ACCOUNT_COOKIE_NAME}=pequenaja` },
+      })
+    );
+    assert.equal(peqReloadRes.status, 200);
+    const peqJson = (await peqReloadRes.json()) as typeof json1;
+    assert.ok(peqJson.totalActivities < json1.totalActivities);
+
+    // Restore watchDir pref
+    updateHuaweiPreferences({ watchDir: prevHw.watchDir });
+  } finally {
+    fs.rmSync(tmpWatchDir, { recursive: true, force: true });
+  }
+});
+
+test('Telemetry chart pointer mapping syncs accurately and excludePausedTime updates splits, laps, zones, terrain and extras', async () => {
+  // 1. Telemetry chart coordinate & index sync (both desktop letterboxing & non-uniform paused points)
+  // Desktop wide container (1200x240) with viewBox (780x250) -> scale=0.96, renderedW=748.8, offsetX=225.6
+  const leftEdgeSvgX = mapClientXToSvgViewBoxX(225.6 + 44 * 0.96, { left: 0, width: 1200, height: 240 }, 780, 250);
+  const rightEdgeSvgX = mapClientXToSvgViewBoxX(225.6 + 764 * 0.96, { left: 0, width: 1200, height: 240 }, 780, 250);
+  assert.ok(Math.abs(leftEdgeSvgX - 44) < 0.01);
+  assert.ok(Math.abs(rightEdgeSvgX - 764) < 0.01);
+
+  // Build points where first half has 20 points over 1 km (t=0..200) and a 300s pause at km 1.0, then 10 points up to km 2.0 (t=500..700)
+  const syncPts = [
+    ...Array.from({ length: 20 }, (_, i) => ({
+      t: i * 10,
+      dist: Math.round((i / 19) * 1000),
+      lat: 43.36 + i * 0.0004,
+      lon: -5.85,
+      ele: 100 + i * 2,
+    })),
+    ...Array.from({ length: 15 }, (_, i) => ({
+      t: 210 + i * 20,
+      dist: 1000,
+      lat: 43.36 + 19 * 0.0004,
+      lon: -5.85,
+      ele: 138,
+    })),
+    ...Array.from({ length: 10 }, (_, i) => ({
+      t: 520 + i * 20,
+      dist: 1000 + Math.round(((i + 1) / 10) * 1000),
+      lat: 43.36 + (20 + i) * 0.0004,
+      lon: -5.85,
+      ele: 138 + i * 3,
+    })),
+  ];
+
+  // In distance mode, clicking exactly at 50% of chart width (1.0 km) must resolve to the 1.0 km points, NOT index 50% (which would be fine here, wait: 75% width = 1.5 km must resolve to ~1500m, NOT index 75% which is still at 1000m!)
+  const padL = 46;
+  const innerW = 900;
+  const idxAt75PctDist = resolveTelemetryPointIndexFromSvgX(padL + innerW * 0.75, padL, innerW, syncPts, 'dist');
+  assert.ok(Math.abs((syncPts[idxAt75PctDist].dist ?? 0) - 1500) <= 120);
+
+  // In time mode, clicking at 50% of time (350s) must resolve to ~t=350s inside the pause
+  const idxAt50PctTime = resolveTelemetryPointIndexFromSvgX(padL + innerW * 0.5, padL, innerW, syncPts, 'time');
+  assert.ok(Math.abs(syncPts[idxAt50PctTime].t - 350) <= 25);
+
+  // Non-zero starting dist/t (after start trim): 0% maps to start, 100% maps to end
+  const trimmedPts = syncPts.slice(10).map((p) => ({ ...p }));
+  assert.equal(resolveTelemetryPointIndexFromSvgX(padL, padL, innerW, trimmedPts, 'dist'), 0);
+  assert.equal(resolveTelemetryPointIndexFromSvgX(padL + innerW, padL, innerW, trimmedPts, 'dist'), trimmedPts.length - 1);
+
+  // 2. excludePausedTime updates splits, laps, zones, terrain and extras consistently
+  const runPausePoints = [
+    // Km 1: 1000m in 300s (all moving, ascending slightly)
+    ...Array.from({ length: 61 }, (_, i) => ({
+      t: i * 5,
+      lat: 43.4 + i * 0.0001495,
+      lon: -5.8,
+      ele: 100 + i * 0.4,
+      hr: 155,
+      cad: 174,
+      dist: Math.round((i / 60) * 1000),
+    })),
+    // Km 2: 500m moving (150s), then 180s stopped at source (same lat/lon, lower HR 95 ppm), then 500m moving (150s) => 480s total, 300s moving
+    ...Array.from({ length: 30 }, (_, i) => ({
+      t: 300 + (i + 1) * 5,
+      lat: 43.4 + 60 * 0.0001495 + (i + 1) * 0.0001495,
+      lon: -5.8,
+      ele: 124 + (i + 1) * 0.5,
+      hr: 162,
+      cad: 174,
+      dist: 1000 + Math.round(((i + 1) / 30) * 500),
+    })),
+    ...Array.from({ length: 36 }, (_, i) => ({
+      t: 450 + (i + 1) * 5,
+      lat: 43.4 + 90 * 0.0001495,
+      lon: -5.8,
+      ele: 139,
+      hr: 98,
+      cad: 0,
+      dist: 1500,
+    })),
+    ...Array.from({ length: 30 }, (_, i) => ({
+      t: 630 + (i + 1) * 5,
+      lat: 43.4 + 90 * 0.0001495 + (i + 1) * 0.0001495,
+      lon: -5.8,
+      ele: 139 - (i + 1) * 0.3,
+      hr: 164,
+      cad: 176,
+      dist: 1500 + Math.round(((i + 1) / 30) * 500),
+    })),
+  ];
+
+  const pauseAct = createActivity({
+    id: 'act_pause_tables_test',
+    externalId: null,
+    source: 'huawei',
+    sport: 'running',
+    subSport: 'Correr',
+    title: 'Rodaje con Pausa en Fuente',
+    description: null,
+    startedAt: '2026-10-05T08:00:00Z',
+    durationSec: 780,
+    movingTimeSec: 600,
+    distanceMeters: 2000,
+    elevationGain: 45,
+    elevationLoss: 15,
+    avgSpeedMs: 2.56,
+    maxSpeedMs: 3.6,
+    avgHr: 145,
+    maxHr: 168,
+    avgWatts: null,
+    normalizedPower: null,
+    maxWatts: null,
+    avgCadence: 174,
+    calories: 150,
+    tss: 25,
+    rpe: 5,
+    gearId: null,
+    worldName: null,
+    polyline: encodePolyline(runPausePoints.map((p) => [p.lat, p.lon])),
+    startLat: runPausePoints[0].lat,
+    startLon: runPausePoints[0].lon,
+    points: runPausePoints,
+    strengthLogs: [],
+    totalVolumeKg: null,
+    // Deliberately save laps WITHOUT separate movingTimeSec (like Huawei/TCX/FIT exports without auto-pause)
+    laps: [
+      {
+        lapNumber: 1,
+        name: 'Vuelta 1',
+        startDistM: 0,
+        endDistM: 1000,
+        distanceMeters: 1000,
+        durationSec: 300,
+        movingTimeSec: 300,
+        avgSpeedMs: 3.33,
+        elevationGain: 24,
+        elevationLoss: 0,
+        trigger: 'auto',
+      },
+      {
+        lapNumber: 2,
+        name: 'Vuelta 2',
+        startDistM: 1000,
+        endDistM: 2000,
+        distanceMeters: 1000,
+        durationSec: 480,
+        movingTimeSec: 480,
+        avgSpeedMs: 2.08,
+        elevationGain: 15,
+        elevationLoss: 9,
+        trigger: 'auto',
+      },
+    ],
+    excludePausedTime: false,
+    createdAt: new Date().toISOString(),
+  });
+
+  // Before excluding paused time: Km 2 & Lap 2 show elapsed speed (~2.08 m/s) and Lap 2 detected movingTimeSec (~300s)
+  assert.ok(pauseAct.kmSplits && pauseAct.kmSplits.length >= 2);
+  const km2Before = pauseAct.kmSplits[1];
+  assert.ok(km2Before.durationSec >= 470);
+  assert.ok(km2Before.movingTimeSec <= 320);
+  assert.ok((km2Before.avgSpeedMs ?? 0) < 2.3);
+
+  assert.ok(pauseAct.laps && pauseAct.laps.length === 2);
+  const lap2Before = pauseAct.laps[1];
+  assert.ok(lap2Before.movingTimeSec <= 320, `Lap 2 should detect paused time (${lap2Before.movingTimeSec})`);
+  assert.ok((lap2Before.avgSpeedMs ?? 0) < 2.3);
+
+  const terrainBeforeSec = (pauseAct.terrainBreakdown ?? []).reduce((s, t) => s + t.durationSec, 0);
+  const hrBeforeSec = (pauseAct.hrZones ?? []).reduce((s, z) => s + z.seconds, 0);
+  const z1BeforeSec = pauseAct.hrZones?.[0]?.seconds ?? 0;
+
+  // Toggle excludePausedTime = true via PATCH /api/activities/[id]
+  const toggleRes = await patchActivityRoute(
+    new NextRequest(`http://localhost:3000/api/activities/${pauseAct.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ excludePausedTime: true }),
+    }),
+    { params: Promise.resolve({ id: pauseAct.id }) }
+  );
+  assert.equal(toggleRes.status, 200);
+  const toggleJson = (await toggleRes.json()) as { activity: typeof pauseAct };
+  const after = toggleJson.activity;
+  assert.equal(after.excludePausedTime, true);
+
+  // Km 2 split & Lap 2 speed + GAP + terrain + HR zones must all update!
+  const km2After = after.kmSplits![1];
+  const lap2After = after.laps![1];
+  assert.ok((km2After.avgSpeedMs ?? 0) > (km2Before.avgSpeedMs ?? 0) + 0.8);
+  assert.ok((km2After.gapSpeedMs ?? 0) > (km2Before.gapSpeedMs ?? 0) + 0.5);
+  assert.ok((lap2After.avgSpeedMs ?? 0) > (lap2Before.avgSpeedMs ?? 0) + 0.8);
+
+  const terrainAfterSec = (after.terrainBreakdown ?? []).reduce((s, t) => s + t.durationSec, 0);
+  const hrAfterSec = (after.hrZones ?? []).reduce((s, z) => s + z.seconds, 0);
+  const z1AfterSec = after.hrZones?.[0]?.seconds ?? 0;
+  assert.ok(terrainAfterSec < terrainBeforeSec - 120);
+  assert.ok(hrAfterSec < hrBeforeSec - 120);
+  assert.ok(z1AfterSec < z1BeforeSec);
+  assert.ok((after.extras?.gapSpeedMs ?? 0) > (pauseAct.extras?.gapSpeedMs ?? 0) + 0.4);
+});

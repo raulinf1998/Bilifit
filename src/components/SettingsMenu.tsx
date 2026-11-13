@@ -1,10 +1,11 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
   ChevronRight,
+  Flag,
   Moon,
   Palette,
   RefreshCw,
@@ -15,6 +16,7 @@ import {
   Users,
 } from 'lucide-react';
 import type { SettingsSyncStatus } from '@/hooks/useServerSettings';
+import type { ReloadActivitiesResult } from '@/lib/reprocess';
 import { THEMES, type ThemeId } from '@/lib/themes';
 import { Modal, cx } from '@/components/ui';
 
@@ -33,6 +35,7 @@ interface SettingsMenuProps {
   onAppearance: () => void;
   onGoConnections: () => void;
   onGoAthleteSettings: () => void;
+  onActivitiesReloaded?: () => void;
   onClose: () => void;
 }
 
@@ -51,8 +54,49 @@ export function SettingsMenu({
   onAppearance,
   onGoConnections,
   onGoAthleteSettings,
+  onActivitiesReloaded,
   onClose,
 }: SettingsMenuProps) {
+  const [reloading, setReloading] = useState(false);
+  const [reloadSummary, setReloadSummary] = useState<string | null>(null);
+  const [reloadErr, setReloadErr] = useState<string | null>(null);
+
+  async function handleReloadActivitiesAndSegments() {
+    if (reloading) return;
+    setReloading(true);
+    setReloadErr(null);
+    setReloadSummary(null);
+    try {
+      const res = await fetch('/api/activities/reload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reloadSources: true, detectClimbs: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setReloadErr(data.error || 'Error recargando actividades y segmentos.');
+      } else {
+        const summary = data as ReloadActivitiesResult;
+        const newlyAdded =
+          summary.sources.huawei.imported + summary.sources.mywhoosh.imported + summary.sources.strava.imported;
+        const refreshed =
+          summary.sources.huawei.updated + summary.sources.mywhoosh.updated + summary.sources.strava.updated;
+        const parts = [`${summary.reprocessedActivities} actividades reprocesadas`];
+        if (newlyAdded > 0) parts.push(`${newlyAdded} nuevas`);
+        if (refreshed > 0) parts.push(`${refreshed} actualizadas desde fuente`);
+        parts.push(
+          `+${summary.segments.created} seg. nuevos (${summary.segments.total} totales, ${summary.segments.effortsMatched} PRs/pasadas)`
+        );
+        setReloadSummary(parts.join(' · '));
+        window.dispatchEvent(new CustomEvent('bilifit:activities-reloaded'));
+        onActivitiesReloaded?.();
+      }
+    } catch (err) {
+      setReloadErr(err instanceof Error ? err.message : 'Error de red al recargar.');
+    } finally {
+      setReloading(false);
+    }
+  }
   const themeLabel = THEMES.find((item) => item.id === theme)?.label || theme;
   const appearanceSummary = activePaletteName
     ? `Paleta «${activePaletteName}» · ${dark ? 'oscuro' : 'claro'}`
@@ -129,6 +173,30 @@ export function SettingsMenu({
           description="Peso, FTP, zonas de pulso y objetivos"
           onClick={onGoAthleteSettings}
         />
+
+        <button
+          type="button"
+          disabled={reloading}
+          onClick={handleReloadActivitiesAndSegments}
+          className="w-full flex items-center gap-3 rounded-btn border border-line bg-sunken/55 px-3.5 py-3 text-left transition-all hover:border-line2 hover:bg-sunken active:scale-[0.99] disabled:opacity-60"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-btn bg-accent/10 text-accent">
+            {reloading ? <RefreshCw size={19} className="animate-spin" /> : <Flag size={19} />}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-bold text-ink">
+              {reloading ? 'Recargando actividades y segmentos…' : 'Recargar actividades y segmentos'}
+            </span>
+            <span className="mt-0.5 block text-xs text-ink3">
+              {reloadErr
+                ? reloadErr
+                : reloadSummary
+                  ? reloadSummary
+                  : 'Refresca sesiones conectadas, recalcula métricas y busca segmentos/PRs'}
+            </span>
+          </span>
+          <RefreshCw size={16} className={cx('shrink-0 text-ink3', reloading && 'animate-spin')} aria-hidden />
+        </button>
       </div>
 
       <div

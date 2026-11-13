@@ -185,6 +185,7 @@ export interface Activity {
   totalVolumeKg?: number | null;
   doneTogether?: boolean;
   excludePausedTime?: boolean;
+  trimmed?: boolean;
   laps?: ActivityLap[];
   extras?: ActivityExtras | null;
   createdAt: string;
@@ -369,6 +370,7 @@ export interface MyWhooshConnectionStatus {
 
 export interface MyWhooshSyncResult {
   imported: number;
+  updated?: number;
   skipped: number;
   failed: number;
   totalFetched: number;
@@ -414,6 +416,7 @@ export interface HuaweiConnectionStatus {
 
 export interface HuaweiSyncResult {
   imported: number;
+  updated?: number;
   skipped: number;
   failed: number;
   scanned: number;

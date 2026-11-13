@@ -42,6 +42,9 @@ export default function CyclingMyWhooshPage() {
 
   useEffect(() => {
     load();
+    const onReload = () => load();
+    window.addEventListener('bilifit:activities-reloaded', onReload);
+    return () => window.removeEventListener('bilifit:activities-reloaded', onReload);
   }, [load]);
 
   async function saveFtp(e: React.FormEvent) {

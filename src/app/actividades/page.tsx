@@ -72,6 +72,9 @@ export default function ActivitiesPage() {
 
   useEffect(() => {
     load();
+    const onReload = () => load();
+    window.addEventListener('bilifit:activities-reloaded', onReload);
+    return () => window.removeEventListener('bilifit:activities-reloaded', onReload);
   }, [load]);
 
   async function handleCreateManual(e: React.FormEvent) {

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Activity as ActivityIcon,
   ArrowRight,
@@ -65,12 +65,19 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardPayload | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetch('/api/dashboard')
+  const loadDashboard = useCallback(() => {
+    fetch('/api/dashboard', { cache: 'no-store' })
       .then((r) => r.json())
       .then((d) => setData(d))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    loadDashboard();
+    const onReload = () => loadDashboard();
+    window.addEventListener('bilifit:activities-reloaded', onReload);
+    return () => window.removeEventListener('bilifit:activities-reloaded', onReload);
+  }, [loadDashboard]);
 
   if (loading || !data) {
     return (

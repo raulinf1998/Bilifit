@@ -6,10 +6,11 @@ import { hasConcreteActivityName, resolveActivityTitle } from '@/lib/activity-na
 import { decryptSecret, encryptSecret } from '@/lib/crypto';
 import {
   createActivity,
+  findActivityIdByExternalId,
   findDuplicateActivityId,
   getAthleteProfile,
   getDb,
-  hasActivityWithExternalId,
+  refreshActivityFromSource,
 } from '@/lib/db';
 import { estimateActivityTSS } from '@/lib/metrics';
 import { resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
@@ -776,6 +777,7 @@ export async function syncMyWhooshActivities(
     maxPages?: number;
     syncAll?: boolean;
     retryFailed?: boolean;
+    refreshExisting?: boolean;
     fetchImpl?: FetchLike;
   } = {}
 ): Promise<MyWhooshSyncResult> {
@@ -817,8 +819,10 @@ export async function syncMyWhooshActivities(
     const maxPages = options.syncAll ? 50 : Math.max(1, Math.min(50, options.maxPages ?? 5));
     const maxImports = options.syncAll ? 500 : Math.max(1, Math.min(500, options.limit ?? 30));
     const retryFailed = options.retryFailed ?? true;
+    const refreshExisting = options.refreshExisting ?? false;
 
     let imported = 0;
+    let updated = 0;
     let skipped = 0;
     let failed = 0;
     let totalFetched = 0;
@@ -843,7 +847,8 @@ export async function syncMyWhooshActivities(
           totalFetched++;
 
           const externalId = `mywhoosh_${remote.activityId}`;
-          if (hasActivityWithExternalId(externalId)) {
+          const existingByExt = findActivityIdByExternalId(externalId);
+          if (existingByExt && !refreshExisting) {
             skipped++;
             continue;
           }
@@ -857,11 +862,11 @@ export async function syncMyWhooshActivities(
             .prepare('SELECT status, local_activity_id FROM mywhoosh_imports WHERE activity_id = ?')
             .get(remote.activityId) as { status: string; local_activity_id: string | null } | undefined;
 
-          if (prevLog?.status === 'failed' && !retryFailed) {
+          if (prevLog?.status === 'failed' && !retryFailed && !refreshExisting) {
             skipped++;
             continue;
           }
-          if (prevLog?.status === 'skipped' && prevLog.local_activity_id && !options.syncAll) {
+          if (prevLog?.status === 'skipped' && prevLog.local_activity_id && !options.syncAll && !refreshExisting) {
             const dupStillExists = db.prepare('SELECT id FROM activities WHERE id = ?').get(prevLog.local_activity_id);
             if (dupStillExists) {
               skipped++;
@@ -881,8 +886,8 @@ export async function syncMyWhooshActivities(
             }
 
             const startedAt = pickSafeStartedAt(parsed.startedAt, remote.startedAt);
-            const duplicateId = findDuplicateActivityId(startedAt, 'mywhoosh', parsed.distanceMeters, externalId);
-            if (duplicateId) {
+            const duplicateId = existingByExt ?? findDuplicateActivityId(startedAt, 'mywhoosh', parsed.distanceMeters, externalId);
+            if (duplicateId && !refreshExisting) {
               upsertImportLog({
                 activityId: remote.activityId,
                 activityFileId: remote.activityFileId,
@@ -941,6 +946,52 @@ export async function syncMyWhooshActivities(
               profile
             );
 
+            if (duplicateId && refreshExisting) {
+              const refreshed = refreshActivityFromSource(duplicateId, {
+                externalId,
+                sport: 'mywhoosh',
+                subSport: 'MyWhoosh Indoor',
+                title: finalTitle,
+                description: parsed.description ?? 'Importado directamente desde MyWhoosh.',
+                startedAt,
+                durationSec: parsed.durationSec,
+                movingTimeSec: parsed.movingTimeSec,
+                distanceMeters: parsed.distanceMeters,
+                elevationGain: parsed.elevationGain,
+                elevationLoss: parsed.elevationLoss,
+                avgSpeedMs: parsed.avgSpeedMs ?? null,
+                maxSpeedMs: parsed.maxSpeedMs ?? null,
+                avgHr: parsed.avgHr ?? null,
+                maxHr: parsed.maxHr ?? null,
+                avgWatts: parsed.avgWatts ?? null,
+                normalizedPower: parsed.normalizedPower ?? null,
+                maxWatts: parsed.maxWatts ?? null,
+                avgCadence: parsed.avgCadence ?? null,
+                calories: parsed.calories ?? Math.round((parsed.durationSec / 60) * 10),
+                tss,
+                worldName,
+                polyline: parsed.polyline ?? null,
+                startLat: parsed.startLat ?? null,
+                startLon: parsed.startLon ?? null,
+                points: parsed.points,
+                laps: parsed.laps ?? [],
+                extras: parsed.extras ?? null,
+              });
+              upsertImportLog({
+                activityId: remote.activityId,
+                activityFileId: remote.activityFileId,
+                localActivityId: duplicateId,
+                title: refreshed?.title ?? finalTitle,
+                startedAt: refreshed?.startedAt ?? startedAt,
+                status: 'imported',
+                error: null,
+                importedAt: new Date().toISOString(),
+              });
+              updated++;
+              if (imported + updated >= maxImports) break;
+              continue;
+            }
+
             const created = createActivity({
               id: `act_mw_${remote.activityId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 20) || crypto.randomUUID().slice(0, 12)}`,
               externalId,
@@ -990,7 +1041,7 @@ export async function syncMyWhooshActivities(
               importedAt: new Date().toISOString(),
             });
             imported++;
-            if (imported >= maxImports) break;
+            if (imported + updated >= maxImports) break;
           } catch (actErr) {
             const msg = actErr instanceof Error ? actErr.message : 'Error importando sesión de MyWhoosh';
             failed++;
@@ -1008,7 +1059,7 @@ export async function syncMyWhooshActivities(
           }
         }
 
-        if (imported >= maxImports || !parsedPage.hasMore) {
+        if (imported + updated >= maxImports || !parsedPage.hasMore) {
           break;
         }
       }
@@ -1023,11 +1074,11 @@ export async function syncMyWhooshActivities(
         WHERE id = 1
       `).run(
         new Date().toISOString(),
-        failed > 0 && imported === 0 ? 'error' : 'ok',
+        failed > 0 && imported === 0 && updated === 0 ? 'error' : 'ok',
         errors.length > 0 ? errors.slice(0, 3).join(' | ') : null
       );
 
-      return { imported, skipped, failed, totalFetched, errors };
+      return { imported, updated, skipped, failed, totalFetched, errors };
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Error sincronizando MyWhoosh';
       const currentStatus = (ensureMyWhooshConfigRow().last_sync_status === 'needs_reconnect' ? 'needs_reconnect' : 'error');

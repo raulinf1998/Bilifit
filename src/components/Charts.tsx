@@ -1,15 +1,103 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { formatDurationClock, formatPaceMinKm, formatSpeedKmh } from '@/lib/metrics';
 import type { ActivityPoint, FitnessDayPoint, SportType, ZoneBucket } from '@/types';
 import type { PowerZoneSummary } from '@/lib/metrics';
 
+export function mapClientXToSvgViewBoxX(
+  clientX: number,
+  rect: Pick<DOMRect, 'left' | 'width' | 'height'>,
+  viewBoxWidth: number,
+  viewBoxHeight: number
+): number {
+  if (rect.width <= 0 || rect.height <= 0) return 0;
+  const scale = Math.min(rect.width / viewBoxWidth, rect.height / viewBoxHeight);
+  const renderedWidth = viewBoxWidth * scale;
+  const offsetX = (rect.width - renderedWidth) / 2;
+  return (clientX - rect.left - offsetX) / Math.max(0.0001, scale);
+}
+
+export function findNearestTelemetryPointIndex(
+  points: ActivityPoint[],
+  targetVal: number,
+  mode: 'dist' | 'time'
+): number {
+  if (points.length <= 1) return 0;
+  const valAt = (idx: number) => (mode === 'dist' ? points[idx]?.dist ?? 0 : points[idx]?.t ?? 0);
+
+  let lo = 0;
+  let hi = points.length - 1;
+  if (targetVal <= valAt(lo)) return lo;
+  if (targetVal >= valAt(hi)) return hi;
+
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (valAt(mid) < targetVal) lo = mid + 1;
+    else hi = mid;
+  }
+
+  if (lo > 0 && Math.abs(valAt(lo - 1) - targetVal) <= Math.abs(valAt(lo) - targetVal)) {
+    return lo - 1;
+  }
+  return lo;
+}
+
+export function resolveTelemetryPointIndexFromSvgX(
+  svgX: number,
+  padL: number,
+  innerW: number,
+  points: ActivityPoint[],
+  mode: 'dist' | 'time'
+): number {
+  if (points.length <= 1 || innerW <= 0) return 0;
+  const valAt = (idx: number) => (mode === 'dist' ? points[idx]?.dist ?? 0 : points[idx]?.t ?? 0);
+  const xMin = valAt(0);
+  const xMax = Math.max(xMin + 1, valAt(points.length - 1));
+  const pct = Math.min(1, Math.max(0, (svgX - padL) / innerW));
+  const targetVal = xMin + pct * (xMax - xMin);
+  return findNearestTelemetryPointIndex(points, targetVal, mode);
+}
+
+function resolvePointWithNearestGps(points: ActivityPoint[], idx: number): ActivityPoint {
+  const pt = points[idx];
+  if (!pt || (typeof pt.lat === 'number' && typeof pt.lon === 'number')) {
+    return pt;
+  }
+  for (let d = 1; d < points.length; d++) {
+    const left = idx - d >= 0 ? points[idx - d] : null;
+    if (left && typeof left.lat === 'number' && typeof left.lon === 'number') {
+      return { ...pt, lat: left.lat, lon: left.lon };
+    }
+    const right = idx + d < points.length ? points[idx + d] : null;
+    if (right && typeof right.lat === 'number' && typeof right.lon === 'number') {
+      return { ...pt, lat: right.lat, lon: right.lon };
+    }
+  }
+  return pt;
+}
+
 export function FitnessPMCChart({ data }: { data: FitnessDayPoint[] }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [boxWidth, setBoxWidth] = useState(720);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const sync = () => {
+      const next = Math.round(el.clientWidth);
+      if (next >= 280) setBoxWidth(next);
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [data?.length]);
+
   if (!data || data.length === 0) return null;
 
-  const w = 720;
+  const w = Math.max(320, boxWidth);
   const h = 230;
   const padL = 36;
   const padR = 16;
@@ -62,10 +150,11 @@ export function FitnessPMCChart({ data }: { data: FitnessDayPoint[] }) {
         </span>
       </div>
 
-      <div className="relative w-full overflow-hidden">
+      <div ref={wrapRef} className="relative w-full overflow-hidden">
         <svg
           viewBox={`0 0 ${w} ${h}`}
-          className="w-full h-56 select-none"
+          style={{ height: `${h}px` }}
+          className="w-full block select-none"
           onMouseLeave={() => setHoverIdx(null)}
         >
           {/* Grid lines */}
@@ -271,6 +360,23 @@ export function TelemetryChart({
   const [showWatts, setShowWatts] = useState(true);
   const [showCad, setShowCad] = useState(false);
 
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [svgWidth, setSvgWidth] = useState(780);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const updateWidth = () => {
+      const next = Math.round(el.clientWidth);
+      if (next >= 280) setSvgWidth(next);
+    };
+    updateWidth();
+    const ro = new ResizeObserver(updateWidth);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [points?.length]);
+
   if (!points || points.length < 3) return null;
 
   const isPaceSport =
@@ -280,15 +386,17 @@ export function TelemetryChart({
   const hasWatts = points.some((p) => typeof p.watts === 'number');
   const hasHr = points.some((p) => typeof p.hr === 'number');
   const hasCad = points.some((p) => typeof p.cad === 'number' && p.cad > 0);
-  const hasDist = (points[points.length - 1]?.dist ?? 0) > 100;
+  const hasDist =
+    (points[points.length - 1]?.dist ?? 0) - (points[0]?.dist ?? 0) > 100;
+  const activeAxisMode: 'dist' | 'time' = xAxisMode === 'dist' && hasDist ? 'dist' : 'time';
 
-  const w = 780;
+  const w = Math.max(320, svgWidth);
   const h = 250;
-  const padL = 44;
+  const padL = 46;
   const padR = 16;
   const padT = 16;
   const padB = 28;
-  const innerW = w - padL - padR;
+  const innerW = Math.max(100, w - padL - padR);
   const innerH = h - padT - padB;
 
   const minEle = hasEle ? Math.min(...points.map((p) => p.ele ?? 0)) : 0;
@@ -305,14 +413,12 @@ export function TelemetryChart({
   const minCad = hasCad ? Math.min(...points.filter((p) => p.cad).map((p) => p.cad!)) : 40;
   const maxCad = hasCad ? Math.max(minCad + 20, ...points.filter((p) => p.cad).map((p) => p.cad!)) : 200;
 
-  const maxDist = Math.max(1, points[points.length - 1]?.dist ?? 1);
-  const maxTime = Math.max(1, points[points.length - 1]?.t ?? 1);
-  const toX = (idx: number) => {
-    if (xAxisMode === 'dist' && hasDist) {
-      return padL + ((points[idx]?.dist ?? 0) / maxDist) * innerW;
-    }
-    return padL + ((points[idx]?.t ?? 0) / maxTime) * innerW;
-  };
+  const getXVal = (idx: number) =>
+    activeAxisMode === 'dist' ? points[idx]?.dist ?? 0 : points[idx]?.t ?? 0;
+  const minXVal = getXVal(0);
+  const maxXVal = Math.max(minXVal + 1, getXVal(points.length - 1));
+  const xSpan = maxXVal - minXVal;
+  const toX = (idx: number) => padL + ((getXVal(idx) - minXVal) / xSpan) * innerW;
 
   const eleY = (e: number) => padT + ((maxEle - e) / eleRange) * innerH;
   const spdY = (s: number) => padT + ((maxSpd - s) / Math.max(0.5, maxSpd - minSpd)) * innerH;
@@ -331,16 +437,46 @@ export function TelemetryChart({
     return d.trim();
   };
 
+  let firstEleIdx = -1;
+  let lastEleIdx = -1;
+  if (hasEle) {
+    for (let i = 0; i < points.length; i++) {
+      if (typeof points[i].ele === 'number') {
+        if (firstEleIdx < 0) firstEleIdx = i;
+        lastEleIdx = i;
+      }
+    }
+  }
   const eleLine = hasEle ? buildPath((p) => typeof p.ele === 'number', (p) => eleY(p.ele!)) : '';
-  const eleArea = hasEle && eleLine
-    ? `${eleLine} L ${toX(points.length - 1).toFixed(1)} ${padT + innerH} L ${padL} ${padT + innerH} Z`
-    : '';
+  const eleArea =
+    hasEle && eleLine && firstEleIdx >= 0 && lastEleIdx >= firstEleIdx
+      ? `${eleLine} L ${toX(lastEleIdx).toFixed(1)} ${padT + innerH} L ${toX(firstEleIdx).toFixed(1)} ${padT + innerH} Z`
+      : '';
   const speedLine = hasSpeed ? buildPath((p) => typeof p.speed === 'number' && p.speed > 0.3, (p) => spdY(p.speed!)) : '';
   const wattsLine = hasWatts ? buildPath((p) => typeof p.watts === 'number', (p) => wattsY(p.watts!)) : '';
   const hrLine = hasHr ? buildPath((p) => typeof p.hr === 'number', (p) => hrY(p.hr!)) : '';
   const cadLine = hasCad ? buildPath((p) => typeof p.cad === 'number' && p.cad > 0, (p) => cadY(p.cad!)) : '';
 
-  const hovered = hoverIdx !== null ? points[hoverIdx] : null;
+  const safeHoverIdx = hoverIdx !== null && hoverIdx >= 0 && hoverIdx < points.length ? hoverIdx : null;
+  const hovered = safeHoverIdx !== null ? points[safeHoverIdx] : null;
+
+  const updatePointerAtClientX = (clientX: number) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    let svgX: number;
+    const ctm = typeof svg.getScreenCTM === 'function' ? svg.getScreenCTM() : null;
+    if (ctm && typeof svg.createSVGPoint === 'function') {
+      const pt = svg.createSVGPoint();
+      pt.x = clientX;
+      pt.y = 0;
+      svgX = pt.matrixTransform(ctm.inverse()).x;
+    } else {
+      svgX = mapClientXToSvgViewBoxX(clientX, svg.getBoundingClientRect(), w, h);
+    }
+    const idx = resolveTelemetryPointIndexFromSvgX(svgX, padL, innerW, points, activeAxisMode);
+    setHoverIdx(idx);
+    onHoverPoint?.(resolvePointWithNearestGps(points, idx));
+  };
 
   return (
     <div className="space-y-3">
@@ -419,14 +555,14 @@ export function TelemetryChart({
               <button
                 type="button"
                 onClick={() => setXAxisMode('dist')}
-                className={`px-2 py-0.5 ${xAxisMode === 'dist' ? 'bg-primary text-onprimary' : ''}`}
+                className={`px-2 py-0.5 ${activeAxisMode === 'dist' ? 'bg-primary text-onprimary' : ''}`}
               >
                 Km
               </button>
               <button
                 type="button"
                 onClick={() => setXAxisMode('time')}
-                className={`px-2 py-0.5 ${xAxisMode === 'time' ? 'bg-primary text-onprimary' : ''}`}
+                className={`px-2 py-0.5 ${activeAxisMode === 'time' ? 'bg-primary text-onprimary' : ''}`}
               >
                 Tiempo
               </button>
@@ -437,85 +573,118 @@ export function TelemetryChart({
 
       {hovered && (
         <div
-          className="rounded-lg px-3 py-1.5 text-xs tabular-nums flex flex-wrap gap-x-4 gap-y-1 border"
+          className="rounded-lg px-3 py-1.5 text-xs tabular-nums flex flex-wrap items-center justify-between gap-2 border"
           style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
         >
-          <span><strong>Tiempo:</strong> {formatDurationClock(hovered.t)}</span>
-          {typeof hovered.dist === 'number' && <span><strong>Dist:</strong> {(hovered.dist / 1000).toFixed(2)} km</span>}
-          {typeof hovered.speed === 'number' && hovered.speed > 0.3 && (
-            <span className="text-primary">
-              <strong>{isPaceSport ? 'Ritmo:' : 'Vel:'}</strong>{' '}
-              {isPaceSport ? formatPaceMinKm(hovered.speed) : formatSpeedKmh(hovered.speed)}
-            </span>
-          )}
-          {typeof hovered.grade === 'number' && <span><strong>Pendiente:</strong> {hovered.grade > 0 ? `+${hovered.grade}` : hovered.grade}%</span>}
-          {typeof hovered.cad === 'number' && hovered.cad > 0 && <span><strong>Cad:</strong> {hovered.cad} {isPaceSport ? 'spm' : 'rpm'}</span>}
-          {typeof hovered.temp === 'number' && <span><strong>Temp:</strong> {hovered.temp} °C</span>}
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            <span><strong>Tiempo:</strong> {formatDurationClock(hovered.t)}</span>
+            {typeof hovered.dist === 'number' && <span><strong>Dist:</strong> {(hovered.dist / 1000).toFixed(2)} km</span>}
+            {typeof hovered.speed === 'number' && hovered.speed > 0.3 && (
+              <span className="text-primary">
+                <strong>{isPaceSport ? 'Ritmo:' : 'Vel:'}</strong>{' '}
+                {isPaceSport ? formatPaceMinKm(hovered.speed) : formatSpeedKmh(hovered.speed)}
+              </span>
+            )}
+            {typeof hovered.grade === 'number' && <span><strong>Pendiente:</strong> {hovered.grade > 0 ? `+${hovered.grade}` : hovered.grade}%</span>}
+            {typeof hovered.cad === 'number' && hovered.cad > 0 && <span><strong>Cad:</strong> {hovered.cad} {isPaceSport ? 'spm' : 'rpm'}</span>}
+            {typeof hovered.temp === 'number' && <span><strong>Temp:</strong> {hovered.temp} °C</span>}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setHoverIdx(null);
+              onHoverPoint?.(null);
+            }}
+            className="text-[11px] opacity-65 hover:opacity-100 px-1.5"
+            aria-label="Limpiar selección"
+          >
+            ✕
+          </button>
         </div>
       )}
 
-      <svg
-        viewBox={`0 0 ${w} ${h}`}
-        className="w-full h-60 select-none cursor-crosshair"
-        onMouseLeave={() => {
-          setHoverIdx(null);
-          onHoverPoint?.(null);
-        }}
-        onMouseMove={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
-          const relX = ((e.clientX - rect.left) / rect.width) * w;
-          const pct = Math.min(1, Math.max(0, (relX - padL) / innerW));
-          const idx = Math.min(points.length - 1, Math.round(pct * (points.length - 1)));
-          setHoverIdx(idx);
-          onHoverPoint?.(points[idx]);
-        }}
-      >
-        <line x1={padL} y1={padT} x2={w - padR} y2={padT} stroke="rgba(148,163,184,0.12)" />
-        <line x1={padL} y1={padT + innerH / 2} x2={w - padR} y2={padT + innerH / 2} stroke="rgba(148,163,184,0.12)" />
-        <line x1={padL} y1={padT + innerH} x2={w - padR} y2={padT + innerH} stroke="rgba(148,163,184,0.22)" />
+      <div ref={containerRef} className="relative w-full overflow-hidden">
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${w} ${h}`}
+          style={{ height: `${h}px` }}
+          className="w-full block select-none cursor-crosshair touch-pan-y"
+          onPointerLeave={(e) => {
+            if (e.pointerType === 'mouse') {
+              setHoverIdx(null);
+              onHoverPoint?.(null);
+            }
+          }}
+          onPointerMove={(e) => updatePointerAtClientX(e.clientX)}
+          onPointerDown={(e) => updatePointerAtClientX(e.clientX)}
+          onClick={(e) => updatePointerAtClientX(e.clientX)}
+        >
+          <line x1={padL} y1={padT} x2={w - padR} y2={padT} stroke="rgba(148,163,184,0.12)" />
+          <line x1={padL} y1={padT + innerH / 2} x2={w - padR} y2={padT + innerH / 2} stroke="rgba(148,163,184,0.12)" />
+          <line x1={padL} y1={padT + innerH} x2={w - padR} y2={padT + innerH} stroke="rgba(148,163,184,0.22)" />
 
-        {hasEle && showEle && (
-          <>
-            <path d={eleArea} fill="rgba(16, 185, 129, 0.14)" />
-            <path d={eleLine} fill="none" stroke="#10b981" strokeWidth={1.8} />
-            <text x={4} y={padT + 8} fontSize="10" fill="#10b981">
-              {Math.round(maxEle)}m
-            </text>
-            <text x={4} y={padT + innerH} fontSize="10" fill="#64748b">
-              {Math.round(minEle)}m
-            </text>
-          </>
-        )}
+          {hasEle && showEle && (
+            <>
+              <path d={eleArea} fill="rgba(16, 185, 129, 0.14)" />
+              <path d={eleLine} fill="none" stroke="#10b981" strokeWidth={1.8} />
+              <text x={4} y={padT + 8} fontSize="10" fill="#10b981">
+                {Math.round(maxEle)}m
+              </text>
+              <text x={4} y={padT + innerH} fontSize="10" fill="#64748b">
+                {Math.round(minEle)}m
+              </text>
+            </>
+          )}
 
-        {hasSpeed && showPace && <path d={speedLine} fill="none" stroke="rgb(var(--primary))" strokeWidth={1.8} strokeOpacity={0.92} />}
-        {hasWatts && showWatts && <path d={wattsLine} fill="none" stroke="#06b6d4" strokeWidth={1.9} />}
-        {hasHr && showHr && <path d={hrLine} fill="none" stroke="#f43f5e" strokeWidth={1.6} strokeOpacity={0.85} />}
-        {hasCad && showCad && <path d={cadLine} fill="none" stroke="#a855f7" strokeWidth={1.5} strokeOpacity={0.8} />}
+          {hasSpeed && showPace && <path d={speedLine} fill="none" stroke="rgb(var(--primary))" strokeWidth={1.8} strokeOpacity={0.92} />}
+          {hasWatts && showWatts && <path d={wattsLine} fill="none" stroke="#06b6d4" strokeWidth={1.9} />}
+          {hasHr && showHr && <path d={hrLine} fill="none" stroke="#f43f5e" strokeWidth={1.6} strokeOpacity={0.85} />}
+          {hasCad && showCad && <path d={cadLine} fill="none" stroke="#a855f7" strokeWidth={1.5} strokeOpacity={0.8} />}
 
-        {hoverIdx !== null && (
-          <line
-            x1={toX(hoverIdx)}
-            y1={padT}
-            x2={toX(hoverIdx)}
-            y2={padT + innerH}
-            stroke="rgb(var(--ink) / 0.45)"
-            strokeDasharray="3 3"
-          />
-        )}
+          {safeHoverIdx !== null && hovered && (
+            <g pointerEvents="none">
+              <line
+                x1={toX(safeHoverIdx)}
+                y1={padT}
+                x2={toX(safeHoverIdx)}
+                y2={padT + innerH}
+                stroke="rgb(var(--ink) / 0.5)"
+                strokeDasharray="3 3"
+              />
+              {hasEle && showEle && typeof hovered.ele === 'number' && (
+                <circle cx={toX(safeHoverIdx)} cy={eleY(hovered.ele)} r={3.5} fill="#10b981" stroke="white" strokeWidth={1.2} />
+              )}
+              {hasSpeed && showPace && typeof hovered.speed === 'number' && hovered.speed > 0.3 && (
+                <circle cx={toX(safeHoverIdx)} cy={spdY(hovered.speed)} r={3.5} fill="rgb(var(--primary))" stroke="white" strokeWidth={1.2} />
+              )}
+              {hasWatts && showWatts && typeof hovered.watts === 'number' && (
+                <circle cx={toX(safeHoverIdx)} cy={wattsY(hovered.watts)} r={3.5} fill="#06b6d4" stroke="white" strokeWidth={1.2} />
+              )}
+              {hasHr && showHr && typeof hovered.hr === 'number' && (
+                <circle cx={toX(safeHoverIdx)} cy={hrY(hovered.hr)} r={3.5} fill="#f43f5e" stroke="white" strokeWidth={1.2} />
+              )}
+              {hasCad && showCad && typeof hovered.cad === 'number' && hovered.cad > 0 && (
+                <circle cx={toX(safeHoverIdx)} cy={cadY(hovered.cad)} r={3.5} fill="#a855f7" stroke="white" strokeWidth={1.2} />
+              )}
+            </g>
+          )}
 
-        {[0, 0.25, 0.5, 0.75, 1].map((f) => {
-          const idx = Math.round(f * (points.length - 1));
-          const label =
-            xAxisMode === 'dist' && hasDist
-              ? `${((points[idx]?.dist ?? 0) / 1000).toFixed(1)} km`
-              : formatDurationClock(points[idx]?.t ?? 0);
-          return (
-            <text key={f} x={toX(idx)} y={h - 6} fontSize="10" textAnchor="middle" fill="#64748b">
-              {label}
-            </text>
-          );
-        })}
-      </svg>
+          {[0, 0.25, 0.5, 0.75, 1].map((f) => {
+            const targetVal = minXVal + f * xSpan;
+            const xPos = padL + f * innerW;
+            const label =
+              activeAxisMode === 'dist'
+                ? `${(targetVal / 1000).toFixed(1)} km`
+                : formatDurationClock(Math.round(targetVal));
+            const anchor = f === 0 ? 'start' : f === 1 ? 'end' : 'middle';
+            return (
+              <text key={f} x={xPos} y={h - 6} fontSize="10" textAnchor={anchor} fill="#64748b">
+                {label}
+              </text>
+            );
+          })}
+        </svg>
+      </div>
     </div>
   );
 }

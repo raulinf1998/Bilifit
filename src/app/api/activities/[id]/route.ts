@@ -61,7 +61,8 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       if (!updated) {
         return NextResponse.json({ error: 'Actividad no encontrada' }, { status: 404 });
       }
-      return NextResponse.json({ activity: updated });
+      const powerCurve = updated.avgWatts ? computePowerCurve(updated.points) : [];
+      return NextResponse.json({ activity: { ...updated, powerCurve } });
     } catch (err) {
       return NextResponse.json({ error: err instanceof Error ? err.message : 'Error al actualizar' }, { status: 400 });
     }

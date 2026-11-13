@@ -39,21 +39,31 @@ function SegmentsContent() {
     }
   }, [sportFilter, selectedId]);
 
+  const loadSelected = useCallback(async () => {
+    if (!selectedId) return;
+    const data = await fetch(`/api/segments/${selectedId}`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null));
+    if (data?.segment) {
+      setSelectedSegment(data.segment);
+      setEfforts(data.efforts ?? []);
+    }
+  }, [selectedId]);
+
   useEffect(() => {
     loadList();
   }, [loadList]);
 
   useEffect(() => {
-    if (!selectedId) return;
-    fetch(`/api/segments/${selectedId}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (data?.segment) {
-          setSelectedSegment(data.segment);
-          setEfforts(data.efforts ?? []);
-        }
-      });
-  }, [selectedId]);
+    loadSelected();
+  }, [loadSelected]);
+
+  useEffect(() => {
+    const onReload = () => {
+      loadList();
+      loadSelected();
+    };
+    window.addEventListener('bilifit:activities-reloaded', onReload);
+    return () => window.removeEventListener('bilifit:activities-reloaded', onReload);
+  }, [loadList, loadSelected]);
 
   async function handleDeleteSegment(id: string) {
     await fetch(`/api/segments/${id}`, { method: 'DELETE' });
