@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity as ActivityIcon,
   ArrowLeft,
   Award,
+  Camera,
   Compass,
   Download,
   Flag,
@@ -14,6 +15,9 @@ import {
   Gauge,
   Globe,
   HeartPulse,
+  Image as ImageIcon,
+  Link2,
+  Loader2,
   Mountain,
   PauseCircle,
   Plus,
@@ -25,11 +29,14 @@ import {
   Trash2,
   X,
   Zap,
+  ZoomIn,
 } from 'lucide-react';
 import ActivityMap from '@/components/ActivityMap';
 import { PowerZonesChart, TelemetryChart, ZoneBarsChart } from '@/components/Charts';
+import ImageLightboxModal from '@/components/ImageLightboxModal';
 import { SportBadge } from '@/components/SportBadge';
 import { TogetherBadge, TogetherToggleButton } from '@/components/TogetherControl';
+import { uploadExerciseOrWorkoutImage } from '@/lib/client-image';
 import {
   previewActivityTrim,
   resolveTrimSpecFromInput,
@@ -52,7 +59,7 @@ import {
 } from '@/lib/metrics';
 import { isMyWhooshContext, MYWHOOSH_WORLDS, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
 import { decodePolyline, encodePolyline } from '@/lib/polyline';
-import type { ActivityDetail, ActivityLap, ActivityPoint, AthleteProfile, GearItem, SportType } from '@/types';
+import type { ActivityDetail, ActivityLap, ActivityPoint, AthleteProfile, Exercise, GearItem, SportType } from '@/types';
 
 type AnalysisTab = 'splits' | 'efforts' | 'zones' | 'terrain';
 
@@ -104,12 +111,35 @@ export default function ActivityDetailPage() {
   const [segStatus, setSegStatus] = useState<string | null>(null);
   const [segBusy, setSegBusy] = useState(false);
 
+  // Imágenes de actividad y ejercicios
+  const [exerciseImageMap, setExerciseImageMap] = useState<Record<string, string | null | undefined>>({});
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const [showPhotoUrlInput, setShowPhotoUrlInput] = useState(false);
+  const [photoUrlDraft, setPhotoUrlDraft] = useState('');
+  const activityPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const [lightbox, setLightbox] = useState<{
+    exerciseId?: string;
+    imageUrl: string | null | undefined;
+    title: string;
+    subtitle?: string;
+    canEdit?: boolean;
+  } | null>(null);
+
   const loadAll = useCallback(async () => {
-    const [actRes, profRes, gearRes] = await Promise.all([
+    const [actRes, profRes, gearRes, exRes] = await Promise.all([
       fetch(`/api/activities/${params.id}`).then((r) => (r.ok ? r.json() : null)),
       fetch('/api/profile').then((r) => r.json()),
       fetch('/api/gear').then((r) => r.json()),
+      fetch('/api/exercises').then((r) => (r.ok ? r.json() : null)),
     ]);
+    if (exRes?.exercises) {
+      const map: Record<string, string | null | undefined> = {};
+      for (const ex of exRes.exercises as Exercise[]) {
+        map[ex.id] = ex.imageUrl ?? null;
+      }
+      setExerciseImageMap(map);
+    }
     if (actRes?.activity) {
       setActivity(actRes.activity);
       setTitle(actRes.activity.title);
@@ -1789,30 +1819,263 @@ export default function ActivityDetailPage() {
         </div>
       )}
 
-      {/* Detalle de Fuerza en Casa */}
-      {activity.strengthLogs && activity.strengthLogs.length > 0 && (
-        <div className="card-surface p-5 space-y-4">
-          <h2 className="text-base font-bold">Ejercicios y Series Registradas</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {activity.strengthLogs.map((ex, idx) => (
-              <div key={`${ex.exerciseId}-${idx}`} className="card-elevated p-4 space-y-2">
-                <div className="font-semibold text-sm">{ex.exerciseName}</div>
-                <div className="space-y-1">
-                  {ex.sets.map((s, sIdx) => (
-                    <div key={sIdx} className="flex justify-between text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>
-                      <span>Serie {sIdx + 1}</span>
-                      <span>
-                        {s.durationSec && s.durationSec > 0 ? `${s.durationSec} seg` : `${s.reps} reps`}{' '}
-                        {s.weightKg > 0 ? `× ${s.weightKg} kg` : '(peso corporal)'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+      {/* Imágenes del Entrenamiento */}
+      <div className="card-surface p-4 sm:p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2.5">
+          <div>
+            <h2 className="text-base font-bold flex items-center gap-2">
+              <ImageIcon className="h-4 w-4 text-purple-400" />
+              Imágenes del Entrenamiento ({activity.images?.length ?? 0})
+            </h2>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              Adjunta fotos desde la cámara o galería del teléfono (máquinas, pizarra o resumen).
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={activityPhotoInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={async (e) => {
+                const files = Array.from(e.target.files ?? []);
+                e.target.value = '';
+                if (files.length === 0) return;
+                setPhotoError(null);
+                setUploadingPhoto(true);
+                try {
+                  const uploaded: string[] = [];
+                  for (const file of files.slice(0, 6)) {
+                    uploaded.push(await uploadExerciseOrWorkoutImage(file));
+                  }
+                  const nextImages = Array.from(new Set([...(activity.images ?? []), ...uploaded])).slice(0, 12);
+                  const res = await fetch(`/api/activities/${activity.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ images: nextImages }),
+                  });
+                  if (res.ok) {
+                    const data = await res.json();
+                    setActivity((prev) => (prev ? { ...prev, images: data.activity.images ?? nextImages } : prev));
+                  }
+                } catch (err) {
+                  setPhotoError(err instanceof Error ? err.message : 'No se pudo subir la imagen.');
+                } finally {
+                  setUploadingPhoto(false);
+                }
+              }}
+            />
+            <button
+              type="button"
+              disabled={uploadingPhoto}
+              onClick={() => activityPhotoInputRef.current?.click()}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 px-3.5 py-2 text-xs font-semibold text-white min-h-[40px]"
+            >
+              {uploadingPhoto ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}
+              {uploadingPhoto ? 'Subiendo...' : 'Añadir foto'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowPhotoUrlInput((v) => !v)}
+              className="inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold hover:bg-sunken min-h-[40px]"
+              style={{ borderColor: 'var(--border-subtle)' }}
+            >
+              <Link2 className="h-3.5 w-3.5" /> URL
+            </button>
+          </div>
+        </div>
+
+        {showPhotoUrlInput && (
+          <div className="flex items-center gap-2">
+            <input
+              type="url"
+              value={photoUrlDraft}
+              onChange={(e) => setPhotoUrlDraft(e.target.value)}
+              placeholder="https://... enlace de imagen"
+              className="flex-1 min-w-0 rounded-xl border px-3 py-2 text-base sm:text-xs"
+              style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                const trimmed = photoUrlDraft.trim();
+                if (!/^(\/|https?:\/\/|data:image\/)/i.test(trimmed)) {
+                  setPhotoError('Introduce una URL válida (https://... o /...).');
+                  return;
+                }
+                setPhotoError(null);
+                const nextImages = Array.from(new Set([...(activity.images ?? []), trimmed])).slice(0, 12);
+                const res = await fetch(`/api/activities/${activity.id}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ images: nextImages }),
+                });
+                if (res.ok) {
+                  const data = await res.json();
+                  setActivity((prev) => (prev ? { ...prev, images: data.activity.images ?? nextImages } : prev));
+                  setPhotoUrlDraft('');
+                  setShowPhotoUrlInput(false);
+                }
+              }}
+              className="rounded-xl bg-purple-600 px-3.5 py-2 text-xs font-semibold text-white min-h-[40px]"
+            >
+              Añadir
+            </button>
+          </div>
+        )}
+
+        {photoError && <p className="text-xs text-rose-400">{photoError}</p>}
+
+        {activity.images && activity.images.length > 0 ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            {activity.images.map((imgUrl, idx) => (
+              <div
+                key={`${imgUrl}-${idx}`}
+                className="relative aspect-square rounded-2xl overflow-hidden border bg-[#161b26] group"
+                style={{ borderColor: 'var(--border-subtle)' }}
+              >
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLightbox({
+                      imageUrl: imgUrl,
+                      title: `${activity.title} · Foto ${idx + 1}`,
+                    })
+                  }
+                  className="w-full h-full block"
+                >
+                  <img src={imgUrl} alt={`Foto ${idx + 1}`} className="w-full h-full object-cover" />
+                  <span className="absolute bottom-2 left-2 h-6 w-6 rounded-lg bg-black/70 text-white flex items-center justify-center">
+                    <ZoomIn className="h-3.5 w-3.5" />
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const nextImages = (activity.images ?? []).filter((_, i) => i !== idx);
+                    const res = await fetch(`/api/activities/${activity.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ images: nextImages }),
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      setActivity((prev) => (prev ? { ...prev, images: data.activity.images ?? nextImages } : prev));
+                    }
+                  }}
+                  className="absolute top-2 right-2 h-8 w-8 rounded-xl bg-black/75 text-white hover:bg-rose-600 flex items-center justify-center transition-colors"
+                  aria-label="Eliminar imagen"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
               </div>
             ))}
           </div>
+        ) : (
+          <div
+            className="rounded-xl border border-dashed p-5 text-center text-xs"
+            style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}
+          >
+            Todavía no hay fotos adjuntas en esta sesión.
+          </div>
+        )}
+      </div>
+
+      {/* Detalle de Fuerza en Casa */}
+      {activity.strengthLogs && activity.strengthLogs.length > 0 && (
+        <div className="card-surface p-4 sm:p-5 space-y-4">
+          <h2 className="text-base font-bold">Ejercicios y Series Registradas</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {activity.strengthLogs.map((ex, idx) => {
+              const exImg = exerciseImageMap[ex.exerciseId] ?? null;
+              return (
+                <div key={`${ex.exerciseId}-${idx}`} className="card-elevated p-4 space-y-2.5">
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setLightbox({
+                          exerciseId: ex.exerciseId,
+                          imageUrl: exImg,
+                          title: ex.exerciseName,
+                          canEdit: true,
+                        })
+                      }
+                      className="relative w-12 h-12 rounded-xl overflow-hidden border shrink-0 bg-[#161b26] flex items-center justify-center"
+                      style={{ borderColor: 'var(--border-subtle)' }}
+                      title="Toca para ampliar o cambiar foto del ejercicio"
+                    >
+                      {exImg ? (
+                        <img src={exImg} alt={ex.exerciseName} className="w-full h-full object-cover" />
+                      ) : (
+                        <Camera className="h-4 w-4 text-purple-400" />
+                      )}
+                    </button>
+                    <div className="font-semibold text-sm min-w-0 flex-1">{ex.exerciseName}</div>
+                  </div>
+                  <div className="space-y-1">
+                    {ex.sets.map((s, sIdx) => (
+                      <div key={sIdx} className="flex justify-between text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+                        <span>Serie {sIdx + 1}</span>
+                        <span>
+                          {s.durationSec && s.durationSec > 0 ? `${s.durationSec} seg` : `${s.reps} reps`}{' '}
+                          {s.weightKg > 0 ? `× ${s.weightKg} kg` : '(peso corporal)'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
+
+      <ImageLightboxModal
+        open={Boolean(lightbox)}
+        imageUrl={lightbox?.imageUrl}
+        title={lightbox?.title ?? ''}
+        subtitle={lightbox?.subtitle}
+        canEdit={Boolean(lightbox?.canEdit)}
+        canReset={Boolean(lightbox?.canEdit && lightbox.exerciseId && !lightbox.exerciseId.startsWith('ex_custom_'))}
+        onClose={() => setLightbox(null)}
+        onImageUpdated={
+          lightbox?.exerciseId
+            ? async (nextUrl) => {
+                const res = await fetch(`/api/exercises/${encodeURIComponent(lightbox.exerciseId!)}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ imageUrl: nextUrl }),
+                });
+                if (res.ok) {
+                  const data = await res.json();
+                  const resolved = data?.exercise?.imageUrl ?? nextUrl;
+                  setExerciseImageMap((prev) => ({ ...prev, [lightbox.exerciseId!]: resolved }));
+                  setLightbox((prev) => (prev ? { ...prev, imageUrl: resolved } : null));
+                }
+              }
+            : undefined
+        }
+        onResetImage={
+          lightbox?.exerciseId
+            ? async () => {
+                const res = await fetch(`/api/exercises/${encodeURIComponent(lightbox.exerciseId!)}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ imageUrl: null }),
+                });
+                if (res.ok) {
+                  const data = await res.json();
+                  const resolved = data?.exercise?.imageUrl ?? null;
+                  setExerciseImageMap((prev) => ({ ...prev, [lightbox.exerciseId!]: resolved }));
+                  setLightbox((prev) => (prev ? { ...prev, imageUrl: resolved } : null));
+                }
+              }
+            : undefined
+        }
+      />
     </div>
   );
 }

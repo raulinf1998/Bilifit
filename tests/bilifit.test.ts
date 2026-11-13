@@ -11,6 +11,7 @@ import { FitBaseType, FitEncoder } from 'fit-file-parser/encoder';
 // Usar una DB temporal aislada durante los tests
 const tmpDb = path.join(os.tmpdir(), `bilifit-test-${Date.now()}.db`);
 process.env.BILIFIT_DB_PATH = tmpDb;
+process.env.BILIFIT_UPLOADS_DIR = path.join(os.tmpdir(), `bilifit-test-uploads-${Date.now()}`);
 process.env.BILIFIT_SECRET = 'bilifit-test-secret';
 process.env.BILIFIT_DISABLE_SCHEDULER = '1';
 
@@ -78,6 +79,7 @@ import {
   getDbPath,
   getSegmentWithEfforts,
   listActivities,
+  listAllExercises,
   listHomeEquipment,
   listRoutines,
   listSegments,
@@ -95,15 +97,20 @@ import {
   PUT as putPaletteRoute,
 } from '../src/app/api/settings/custom-palettes/[id]/route';
 import { GET as getActivitiesRoute, POST as postActivitiesRoute } from '../src/app/api/activities/route';
-import { PATCH as patchActivityRoute } from '../src/app/api/activities/[id]/route';
+import { GET as getActivityByIdRoute, PATCH as patchActivityRoute } from '../src/app/api/activities/[id]/route';
 import { POST as postReloadActivitiesRoute } from '../src/app/api/activities/reload/route';
 import { POST as postTrimActivityRoute } from '../src/app/api/activities/[id]/trim/route';
 import { GET as getDashboardRoute } from '../src/app/api/dashboard/route';
 import { GET as getProfileRoute } from '../src/app/api/profile/route';
 import { GET as getHuaweiGoogleAuthRoute } from '../src/app/api/huawei/google/auth/route';
 import { GET as getStravaAuthRoute } from '../src/app/api/strava/auth/route';
-import { GET as getRoutinesRoute } from '../src/app/api/routines/route';
+import { GET as getExercisesRoute, POST as postExercisesRoute } from '../src/app/api/exercises/route';
+import { PATCH as patchExerciseRoute } from '../src/app/api/exercises/[id]/route';
+import { GET as getRoutinesRoute, POST as postRoutinesRoute } from '../src/app/api/routines/route';
+import { PATCH as patchRoutineRoute } from '../src/app/api/routines/[id]/route';
 import { POST as postCompleteRoutineRoute } from '../src/app/api/routines/complete/route';
+import { POST as postUploadRoute } from '../src/app/api/uploads/route';
+import { GET as getUploadedFileRoute } from '../src/app/api/uploads/[filename]/route';
 import {
   calculateMinettiGapFactor,
   computeBestEfforts,
@@ -3245,3 +3252,226 @@ test('5-day strength split routines preserve exact names, exercises, sets, reps 
     [30, 32.5, 32.5, 35]
   );
 });
+
+test('Exercise illustrations exist for all exercises and exercise/routine/workout image attachments persist across APIs', async () => {
+  // 1. Every default exercise has a mapped imageUrl whose static asset exists in public/exercises/
+  const publicDir = path.join(process.cwd(), 'public');
+  assert.ok(DEFAULT_EXERCISES.length >= 77);
+  for (const ex of DEFAULT_EXERCISES) {
+    assert.ok(ex.imageUrl && ex.imageUrl.startsWith('/exercises/'), `Missing imageUrl for ${ex.id}`);
+    const assetPath = path.join(publicDir, ex.imageUrl.replace(/^\//, ''));
+    assert.ok(fs.existsSync(assetPath), `Missing exercise asset on disk: ${assetPath}`);
+  }
+
+  // 2. listAllExercises & listRoutines surface imageUrl on built-in exercises and routine items
+  const allExercises = listAllExercises();
+  assert.ok(allExercises.every((ex) => Boolean(ex.imageUrl)));
+  const routines = listRoutines();
+  assert.ok(routines.length > 0);
+  for (const rt of routines) {
+    for (const item of rt.items) {
+      assert.ok(item.imageUrl, `Missing item imageUrl for ${item.exerciseId} in ${rt.id}`);
+    }
+  }
+
+  // 3. Generate a real 16x16 PNG buffer via sharp and upload via FormData to POST /api/uploads
+  const pngBuf = await sharp({
+    create: { width: 16, height: 16, channels: 3, background: { r: 22, g: 27, b: 38 } },
+  })
+    .png()
+    .toBuffer();
+
+  const form = new FormData();
+  form.append('file', new File([new Uint8Array(pngBuf)], 'bench-photo.png', { type: 'image/png' }));
+  const uploadRes = await postUploadRoute(
+    new NextRequest('http://localhost:3000/api/uploads', {
+      method: 'POST',
+      body: form,
+    })
+  );
+  assert.equal(uploadRes.status, 201);
+  const uploadJson = (await uploadRes.json()) as { url: string; filename: string; mime: string };
+  assert.ok(uploadJson.url.startsWith('/api/uploads/'));
+  assert.equal(uploadJson.mime, 'image/png');
+
+  // Verify serving uploaded file back via GET /api/uploads/[filename]
+  const serveRes = await getUploadedFileRoute(
+    new NextRequest(`http://localhost:3000${uploadJson.url}`),
+    { params: Promise.resolve({ filename: uploadJson.filename }) }
+  );
+  assert.equal(serveRes.status, 200);
+  assert.equal(serveRes.headers.get('content-type'), 'image/png');
+  const servedBytes = Buffer.from(await serveRes.arrayBuffer());
+  assert.deepEqual(servedBytes, pngBuf);
+
+  // Reject spoofed/non-image upload payloads even with image/png mime claim
+  const badForm = new FormData();
+  badForm.append('file', new File(['<script>alert(1)</script>'], 'xss.png', { type: 'image/png' }));
+  const badUploadRes = await postUploadRoute(
+    new NextRequest('http://localhost:3000/api/uploads', {
+      method: 'POST',
+      body: badForm,
+    })
+  );
+  assert.equal(badUploadRes.status, 400);
+
+  // 4. Built-in exercise override via PATCH /api/exercises/[id] + reset to default guide
+  const patchBuiltInRes = await patchExerciseRoute(
+    new NextRequest('http://localhost:3000/api/exercises/ex_bb_bench_press', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ imageUrl: uploadJson.url }),
+    }),
+    { params: Promise.resolve({ id: 'ex_bb_bench_press' }) }
+  );
+  assert.equal(patchBuiltInRes.status, 200);
+  const patchedBuiltIn = (await patchBuiltInRes.json()) as { exercise: { imageUrl: string } };
+  assert.equal(patchedBuiltIn.exercise.imageUrl, uploadJson.url);
+
+  const resetBuiltInRes = await patchExerciseRoute(
+    new NextRequest('http://localhost:3000/api/exercises/ex_bb_bench_press', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ imageUrl: null }),
+    }),
+    { params: Promise.resolve({ id: 'ex_bb_bench_press' }) }
+  );
+  assert.equal(resetBuiltInRes.status, 200);
+  const resetBuiltIn = (await resetBuiltInRes.json()) as { exercise: { imageUrl: string } };
+  assert.equal(resetBuiltIn.exercise.imageUrl, '/exercises/ex_bb_bench_press.jpg');
+
+  // 5. Custom exercise create with imageUrl & update
+  const customExRes = await postExercisesRoute(
+    new NextRequest('http://localhost:3000/api/exercises', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Prensa inclinada custom',
+        muscleGroup: 'piernas',
+        pattern: 'rodilla',
+        requiredEquipment: [],
+        defaultSets: 4,
+        defaultReps: '10',
+        restSeconds: 90,
+        instructions: 'Bajada controlada.',
+        imageUrl: uploadJson.url,
+      }),
+    })
+  );
+  assert.equal(customExRes.status, 201);
+  const customExPayload = (await customExRes.json()) as { exercise: { id: string; imageUrl: string } };
+  assert.equal(customExPayload.exercise.imageUrl, uploadJson.url);
+
+  const getExListRes = await getExercisesRoute(new NextRequest('http://localhost:3000/api/exercises'));
+  assert.equal(getExListRes.status, 200);
+  const getExListJson = (await getExListRes.json()) as { exercises: Array<{ id: string; imageUrl?: string | null }> };
+  assert.equal(
+    getExListJson.exercises.find((e) => e.id === customExPayload.exercise.id)?.imageUrl,
+    uploadJson.url
+  );
+
+  // 6. Routine coverImageUrl + per-item imageUrl on POST /api/routines and PATCH /api/routines/[id]
+  const createRtRes = await postRoutinesRoute(
+    new NextRequest('http://localhost:3000/api/routines', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Rutina con portada',
+        goal: 'fuerza_general',
+        level: 'intermedio',
+        estimatedMinutes: 35,
+        equipmentIds: ['barbell'],
+        coverImageUrl: uploadJson.url,
+        items: [
+          {
+            exerciseId: customExPayload.exercise.id,
+            exerciseName: 'Prensa inclinada custom',
+            muscleGroup: 'piernas',
+            requiredEquipment: [],
+            sets: 3,
+            reps: '10',
+            restSeconds: 90,
+            imageUrl: uploadJson.url,
+          },
+        ],
+      }),
+    })
+  );
+  assert.equal(createRtRes.status, 201);
+  const createdRt = (await createRtRes.json()) as {
+    routine: { id: string; coverImageUrl: string | null; items: Array<{ imageUrl?: string | null }> };
+  };
+  assert.equal(createdRt.routine.coverImageUrl, uploadJson.url);
+  assert.equal(createdRt.routine.items[0].imageUrl, uploadJson.url);
+
+  const patchRtRes = await patchRoutineRoute(
+    new NextRequest(`http://localhost:3000/api/routines/${createdRt.routine.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        coverImageUrl: 'javascript:alert(1)', // must be sanitized out
+      }),
+    }),
+    { params: Promise.resolve({ id: createdRt.routine.id }) }
+  );
+  assert.equal(patchRtRes.status, 200);
+  const patchedRt = (await patchRtRes.json()) as { routine: { coverImageUrl: string | null } };
+  assert.equal(patchedRt.routine.coverImageUrl, null);
+
+  // 7. Workout completion & manual activity create/patch with images
+  const completeImgRes = await postCompleteRoutineRoute(
+    new NextRequest('http://localhost:3000/api/routines/complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        routineId: createdRt.routine.id,
+        title: 'Entreno con foto',
+        durationSec: 1800,
+        rpe: 8,
+        images: [uploadJson.url, 'javascript:alert(1)'],
+        strengthLogs: [],
+      }),
+    })
+  );
+  assert.equal(completeImgRes.status, 201);
+  const completedImg = (await completeImgRes.json()) as { activity: { id: string; images?: string[] } };
+  assert.deepEqual(completedImg.activity.images, [uploadJson.url]);
+
+  const manualActRes = await postActivitiesRoute(
+    new NextRequest('http://localhost:3000/api/activities', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sport: 'running',
+        title: 'Rodaje con foto',
+        durationSec: 1800,
+        distanceMeters: 5000,
+        images: [uploadJson.url],
+      }),
+    })
+  );
+  assert.equal(manualActRes.status, 201);
+  const manualAct = (await manualActRes.json()) as { activity: { id: string; images?: string[] } };
+  assert.deepEqual(manualAct.activity.images, [uploadJson.url]);
+
+  const getActRes = await getActivityByIdRoute(
+    new NextRequest(`http://localhost:3000/api/activities/${manualAct.activity.id}`),
+    { params: Promise.resolve({ id: manualAct.activity.id }) }
+  );
+  assert.equal(getActRes.status, 200);
+  const getActJson = (await getActRes.json()) as { activity: { images?: string[] } };
+  assert.deepEqual(getActJson.activity.images, [uploadJson.url]);
+
+  const patchActRes = await patchActivityRoute(
+    new NextRequest(`http://localhost:3000/api/activities/${manualAct.activity.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ images: [] }),
+    }),
+    { params: Promise.resolve({ id: manualAct.activity.id }) }
+  );
+  assert.equal(patchActRes.status, 200);
+  const patchedActJson = (await patchActRes.json()) as { activity: { images?: string[] } };
+  assert.deepEqual(patchedActJson.activity.images, []);
+});
+

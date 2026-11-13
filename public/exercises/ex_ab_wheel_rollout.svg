@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="studioBg" cx="50%" cy="46%" r="58%">
+      <stop offset="0%" stop-color="#212b3d"/>
+      <stop offset="100%" stop-color="#161b26"/>
+    </radialGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <linearGradient id="muscleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff9370"/>
+      <stop offset="100%" stop-color="#ff633d"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#studioBg)"/>
+  
+      <ellipse cx="256" cy="426" rx="190" ry="14" fill="#0b1019" opacity="0.6"/>
+  <line x1="48" y1="418" x2="464" y2="418" stroke="#2f3c52" stroke-width="3" stroke-linecap="round"/>
+      <rect x="64" y="406" width="384" height="12" rx="6" fill="#2c3a4f" stroke="#0b1019" stroke-width="2"/>
+      <line x1="138" y1="396" x2="198" y2="334" stroke="#0b1019" stroke-width="29" stroke-linecap="round"/>
+  <line x1="138" y1="396" x2="198" y2="334" stroke="#475871" stroke-width="24" stroke-linecap="round"/>
+      <line x1="198" y1="334" x2="306" y2="314" stroke="#0b1019" stroke-width="43" stroke-linecap="round"/>
+  <line x1="198" y1="334" x2="306" y2="314" stroke="#3b4a60" stroke-width="38" stroke-linecap="round"/>
+      <line x1="306" y1="314" x2="376" y2="378" stroke="#0b1019" stroke-width="22" stroke-linecap="round"/>
+  <line x1="306" y1="314" x2="376" y2="378" stroke="#8da0ba" stroke-width="17" stroke-linecap="round"/>
+      <circle cx="328" cy="282" r="21" fill="#8da0ba" stroke="#0b1019" stroke-width="3"/>
+  <path d="M 311 278 Q 328 255 345 278" fill="#2c3749"/>
+      <circle cx="384" cy="384" r="24" fill="#566780" stroke="#0b1019" stroke-width="3"/>
+      <circle cx="384" cy="384" r="8" fill="#38bdf8"/>
+      <polygon points="234,328 296,320 294,340 232,348" fill="url(#muscleGrad)" filter="url(#glow)" opacity="0.93"/>
+    
+</svg>

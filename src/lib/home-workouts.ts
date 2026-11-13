@@ -120,7 +120,23 @@ export const DEFAULT_HOME_EQUIPMENT: HomeEquipment[] = [
   },
 ];
 
-export const DEFAULT_EXERCISES: Exercise[] = [
+const AI_EXERCISE_IMAGE_IDS = new Set([
+  'ex_bb_bench_press',
+  'ex_db_incline_press',
+  'ex_db_chest_fly',
+  'ex_db_seated_shoulder_press',
+  'ex_db_lateral_raise',
+  'ex_cable_triceps_pushdown',
+  'ex_close_grip_pushup',
+  'ex_pullups',
+  'ex_bb_row',
+]);
+
+export function defaultExerciseImageUrl(id: string): string {
+  return AI_EXERCISE_IMAGE_IDS.has(id) ? `/exercises/${id}.jpg` : `/exercises/${id}.svg`;
+}
+
+const RAW_DEFAULT_EXERCISES: Exercise[] = [
   // === PESO CORPORAL / ESTERILLA ===
   {
     id: 'ex_pushup',
@@ -1220,6 +1236,11 @@ export const DEFAULT_EXERCISES: Exercise[] = [
   },
 ];
 
+export const DEFAULT_EXERCISES: Exercise[] = RAW_DEFAULT_EXERCISES.map((ex) => ({
+  ...ex,
+  imageUrl: ex.imageUrl ?? defaultExerciseImageUrl(ex.id),
+}));
+
 export const ROUTINE_GOAL_LABELS: Record<RoutineGoal, { label: string; description: string }> = {
   fuerza_general: {
     label: 'Fuerza General en Casa',
@@ -1466,6 +1487,7 @@ export function generateHomeRoutine(params: {
       suggestedWeightKg,
       restSeconds,
       notes: chosen.instructions,
+      imageUrl: chosen.imageUrl ?? defaultExerciseImageUrl(chosen.id),
     });
   }
 

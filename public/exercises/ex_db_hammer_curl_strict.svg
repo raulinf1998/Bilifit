@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="studioBg" cx="50%" cy="46%" r="58%">
+      <stop offset="0%" stop-color="#212b3d"/>
+      <stop offset="100%" stop-color="#161b26"/>
+    </radialGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <linearGradient id="muscleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff9370"/>
+      <stop offset="100%" stop-color="#ff633d"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#studioBg)"/>
+  
+    <ellipse cx="256" cy="440" rx="190" ry="14" fill="#0b1019" opacity="0.6"/>
+  <line x1="48" y1="432" x2="464" y2="432" stroke="#2f3c52" stroke-width="3" stroke-linecap="round"/>
+    <line x1="238" y1="268" x2="232" y2="350" stroke="#0b1019" stroke-width="29" stroke-linecap="round"/>
+  <line x1="238" y1="268" x2="232" y2="350" stroke="#475871" stroke-width="24" stroke-linecap="round"/>
+    <line x1="232" y1="350" x2="228" y2="420" stroke="#0b1019" stroke-width="25" stroke-linecap="round"/>
+  <line x1="232" y1="350" x2="228" y2="420" stroke="#8da0ba" stroke-width="20" stroke-linecap="round"/>
+    <path d="M 236 416 L 208 422 Q 202 430 210 432 L 238 432 Q 242 426 236 416 Z" fill="#2c3749" stroke="#0b1019" stroke-width="2.5"/>
+    <line x1="274" y1="268" x2="280" y2="350" stroke="#0b1019" stroke-width="29" stroke-linecap="round"/>
+  <line x1="274" y1="268" x2="280" y2="350" stroke="#475871" stroke-width="24" stroke-linecap="round"/>
+    <line x1="280" y1="350" x2="284" y2="420" stroke="#0b1019" stroke-width="25" stroke-linecap="round"/>
+  <line x1="280" y1="350" x2="284" y2="420" stroke="#8da0ba" stroke-width="20" stroke-linecap="round"/>
+    <path d="M 276 416 L 304 422 Q 310 430 302 432 L 274 432 Q 270 426 276 416 Z" fill="#2c3749" stroke="#0b1019" stroke-width="2.5"/>
+    <line x1="256" y1="264" x2="256" y2="164" stroke="#0b1019" stroke-width="49" stroke-linecap="round"/>
+  <line x1="256" y1="264" x2="256" y2="164" stroke="#3b4a60" stroke-width="44" stroke-linecap="round"/>
+    <circle cx="256" cy="122" r="23" fill="#8da0ba" stroke="#0b1019" stroke-width="3"/>
+  <path d="M 237 118 Q 256 93 275 118" fill="#2c3749"/>
+    <line x1="228" y1="166" x2="218" y2="236" stroke="#0b1019" stroke-width="24" stroke-linecap="round"/>
+  <line x1="228" y1="166" x2="218" y2="236" stroke="#8da0ba" stroke-width="19" stroke-linecap="round"/>
+    <line x1="218" y1="236" x2="208" y2="188" stroke="#0b1019" stroke-width="22" stroke-linecap="round"/>
+  <line x1="218" y1="236" x2="208" y2="188" stroke="#8da0ba" stroke-width="17" stroke-linecap="round"/>
+    <line x1="284" y1="166" x2="294" y2="236" stroke="#0b1019" stroke-width="24" stroke-linecap="round"/>
+  <line x1="284" y1="166" x2="294" y2="236" stroke="#8da0ba" stroke-width="19" stroke-linecap="round"/>
+    <line x1="294" y1="236" x2="304" y2="286" stroke="#0b1019" stroke-width="22" stroke-linecap="round"/>
+  <line x1="294" y1="236" x2="304" y2="286" stroke="#8da0ba" stroke-width="17" stroke-linecap="round"/>
+    <g transform="translate(204,182) rotate(90) scale(0.9)">
+    <rect x="-26" y="-5" width="52" height="10" rx="3" fill="#b0c0d4" stroke="#0b1019" stroke-width="2"/>
+    <rect x="-32" y="-17" width="12" height="34" rx="4" fill="#566780" stroke="#0b1019" stroke-width="2.5"/>
+    <rect x="20" y="-17" width="12" height="34" rx="4" fill="#566780" stroke="#0b1019" stroke-width="2.5"/>
+  </g>
+    <g transform="translate(306,292) rotate(90) scale(0.9)">
+    <rect x="-26" y="-5" width="52" height="10" rx="3" fill="#b0c0d4" stroke="#0b1019" stroke-width="2"/>
+    <rect x="-32" y="-17" width="12" height="34" rx="4" fill="#566780" stroke="#0b1019" stroke-width="2.5"/>
+    <rect x="20" y="-17" width="12" height="34" rx="4" fill="#566780" stroke="#0b1019" stroke-width="2.5"/>
+  </g>
+    <ellipse cx="222" cy="204" rx="10" ry="19" transform="rotate(-6 222 204)" fill="url(#muscleGrad)" filter="url(#glow)" opacity="0.93"/>
+    <ellipse cx="214" cy="214" rx="7" ry="16" transform="rotate(14 214 214)" fill="url(#muscleGrad)" filter="url(#glow)" opacity="0.93"/>
+    <ellipse cx="290" cy="204" rx="9" ry="18" transform="rotate(6 290 204)" fill="url(#muscleGrad)" filter="url(#glow)" opacity="0.93"/>
+    <path d="M 176 250 Q 162 214 182 184" fill="none" stroke="#38bdf8" stroke-width="4" stroke-dasharray="7 6" stroke-linecap="round" opacity="0.9"/>
+  
+</svg>

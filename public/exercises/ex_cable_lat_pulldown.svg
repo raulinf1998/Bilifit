@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="studioBg" cx="50%" cy="46%" r="58%">
+      <stop offset="0%" stop-color="#212b3d"/>
+      <stop offset="100%" stop-color="#161b26"/>
+    </radialGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <linearGradient id="muscleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff9370"/>
+      <stop offset="100%" stop-color="#ff633d"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#studioBg)"/>
+  
+    <ellipse cx="256" cy="442" rx="190" ry="14" fill="#0b1019" opacity="0.6"/>
+  <line x1="48" y1="434" x2="464" y2="434" stroke="#2f3c52" stroke-width="3" stroke-linecap="round"/>
+    <rect x="238" y="54" width="16" height="380" rx="4" fill="#2c3749" stroke="#0b1019" stroke-width="2.5"/>
+    <rect x="130" y="54" width="230" height="14" rx="4" fill="#566780" stroke="#0b1019" stroke-width="2.5"/>
+    <rect x="295" y="120" width="44" height="190" rx="4" fill="#2c3749" stroke="#0b1019" stroke-width="2"/>
+    <rect x="299" y="155" width="36" height="13" rx="2" fill="#566780"/><rect x="299" y="175" width="36" height="13" rx="2" fill="#566780"/><rect x="299" y="195" width="36" height="13" rx="2" fill="#566780"/><rect x="299" y="215" width="36" height="13" rx="2" fill="#566780"/><rect x="299" y="235" width="36" height="13" rx="2" fill="#566780"/><rect x="299" y="255" width="36" height="13" rx="2" fill="#566780"/><rect x="299" y="275" width="36" height="13" rx="2" fill="#566780"/>
+    <rect x="152" y="328" width="76" height="18" rx="6" fill="#3b4a60" stroke="#0b1019" stroke-width="2.5"/>
+    <rect x="182" y="346" width="14" height="86" fill="#2c3749"/>
+    <rect x="148" y="286" width="38" height="14" rx="7" fill="#566780" stroke="#0b1019" stroke-width="2"/>
+    <line x1="205" y1="68" x2="205" y2="128" stroke="#b0c0d4" stroke-width="3"/>
+    <line x1="190" y1="324" x2="146" y2="326" stroke="#0b1019" stroke-width="29" stroke-linecap="round"/>
+  <line x1="190" y1="324" x2="146" y2="326" stroke="#475871" stroke-width="24" stroke-linecap="round"/>
+    <line x1="146" y1="326" x2="146" y2="422" stroke="#0b1019" stroke-width="25" stroke-linecap="round"/>
+  <line x1="146" y1="326" x2="146" y2="422" stroke="#8da0ba" stroke-width="20" stroke-linecap="round"/>
+    <path d="M 154 416 L 126 422 Q 120 430 128 432 L 156 432 Q 160 426 154 416 Z" fill="#2c3749" stroke="#0b1019" stroke-width="2.5"/>
+    <line x1="198" y1="320" x2="204" y2="212" stroke="#0b1019" stroke-width="47" stroke-linecap="round"/>
+  <line x1="198" y1="320" x2="204" y2="212" stroke="#3b4a60" stroke-width="42" stroke-linecap="round"/>
+    <circle cx="205" cy="178" r="22" fill="#8da0ba" stroke="#0b1019" stroke-width="3"/>
+  <path d="M 187 174 Q 205 150 223 174" fill="#2c3749"/>
+    <path d="M 118 148 L 154 128 L 256 128 L 292 148" fill="none" stroke="#b0c0d4" stroke-width="6" stroke-linecap="round"/>
+    <line x1="188" y1="216" x2="144" y2="182" stroke="#0b1019" stroke-width="23" stroke-linecap="round"/>
+  <line x1="188" y1="216" x2="144" y2="182" stroke="#8da0ba" stroke-width="18" stroke-linecap="round"/>
+    <line x1="144" y1="182" x2="134" y2="144" stroke="#0b1019" stroke-width="21" stroke-linecap="round"/>
+  <line x1="144" y1="182" x2="134" y2="144" stroke="#8da0ba" stroke-width="16" stroke-linecap="round"/>
+    <line x1="220" y1="216" x2="266" y2="182" stroke="#0b1019" stroke-width="23" stroke-linecap="round"/>
+  <line x1="220" y1="216" x2="266" y2="182" stroke="#8da0ba" stroke-width="18" stroke-linecap="round"/>
+    <line x1="266" y1="182" x2="276" y2="144" stroke="#0b1019" stroke-width="21" stroke-linecap="round"/>
+  <line x1="266" y1="182" x2="276" y2="144" stroke="#8da0ba" stroke-width="16" stroke-linecap="round"/>
+    <polygon points="182,216 226,216 218,286 190,286" fill="url(#muscleGrad)" filter="url(#glow)" opacity="0.93"/>
+    <ellipse cx="164" cy="198" rx="16" ry="9" transform="rotate(-35 164 198)" fill="url(#muscleGrad)" filter="url(#glow)" opacity="0.93"/>
+    <ellipse cx="244" cy="198" rx="16" ry="9" transform="rotate(35 244 198)" fill="url(#muscleGrad)" filter="url(#glow)" opacity="0.93"/>
+    <line x1="105" y1="142" x2="105" y2="215" stroke="#38bdf8" stroke-width="4" stroke-dasharray="6 5" stroke-linecap="round" opacity="0.9"/>
+  <polyline points="97,205 105,215 113,205" fill="none" stroke="#38bdf8" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+  
+</svg>

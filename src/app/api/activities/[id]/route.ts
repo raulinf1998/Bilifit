@@ -3,6 +3,7 @@ import { withAccount } from '@/lib/account-context';
 import { deleteActivity, getActivityById, updateActivity } from '@/lib/db';
 import { computePowerCurve } from '@/lib/metrics';
 import { generateGpxString } from '@/lib/parsers/gpx';
+import { sanitizeImageList } from '@/lib/uploads';
 import type { SportType } from '@/types';
 
 const VALID_SPORTS = new Set<SportType>([
@@ -57,6 +58,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         worldName: body.worldName,
         doneTogether: typeof body.doneTogether === 'boolean' ? body.doneTogether : undefined,
         excludePausedTime: typeof body.excludePausedTime === 'boolean' ? body.excludePausedTime : undefined,
+        images: Array.isArray(body.images) ? sanitizeImageList(body.images) : undefined,
       });
       if (!updated) {
         return NextResponse.json({ error: 'Actividad no encontrada' }, { status: 404 });

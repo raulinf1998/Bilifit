@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="studioBg" cx="50%" cy="46%" r="58%">
+      <stop offset="0%" stop-color="#212b3d"/>
+      <stop offset="100%" stop-color="#161b26"/>
+    </radialGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <linearGradient id="muscleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff9370"/>
+      <stop offset="100%" stop-color="#ff633d"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#studioBg)"/>
+  
+      <ellipse cx="256" cy="426" rx="190" ry="14" fill="#0b1019" opacity="0.6"/>
+  <line x1="48" y1="418" x2="464" y2="418" stroke="#2f3c52" stroke-width="3" stroke-linecap="round"/>
+      <rect x="336" y="346" width="96" height="68" rx="6" fill="#566780"/>
+      <line x1="148" y1="308" x2="376" y2="326" stroke="#0b1019" stroke-width="41" stroke-linecap="round"/>
+  <line x1="148" y1="308" x2="376" y2="326" stroke="#3b4a60" stroke-width="36" stroke-linecap="round"/>
+      <line x1="376" y1="326" x2="418" y2="396" stroke="#0b1019" stroke-width="25" stroke-linecap="round"/>
+  <line x1="376" y1="326" x2="418" y2="396" stroke="#475871" stroke-width="20" stroke-linecap="round"/>
+      <line x1="156" y1="312" x2="146" y2="404" stroke="#0b1019" stroke-width="23" stroke-linecap="round"/>
+  <line x1="156" y1="312" x2="146" y2="404" stroke="#8da0ba" stroke-width="18" stroke-linecap="round"/>
+      <circle cx="114" cy="286" r="21" fill="#8da0ba" stroke="#0b1019" stroke-width="3"/>
+  <path d="M 97 282 Q 114 259 131 282" fill="#2c3749"/>
+      
+      <ellipse cx="178" cy="322" rx="22" ry="12" transform="rotate(8 178 322)" fill="url(#muscleGrad)" filter="url(#glow)" opacity="0.93"/>
+      <ellipse cx="164" cy="344" rx="10" ry="18" transform="rotate(12 164 344)" fill="url(#muscleGrad)" filter="url(#glow)" opacity="0.93"/>
+    
+</svg>

@@ -1,20 +1,27 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeftRight,
   BookmarkPlus,
+  Camera,
   Check,
   Dumbbell,
   Flame,
+  Image as ImageIcon,
   ListChecks,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
   Sparkles,
   Trash2,
   Wrench,
+  X,
+  ZoomIn,
 } from 'lucide-react';
+import ImageLightboxModal from '@/components/ImageLightboxModal';
+import ImageUploadControl from '@/components/ImageUploadControl';
 import WorkoutPlayer, { type LastExerciseLogRef } from '@/components/WorkoutPlayer';
 import { ROUTINE_GOAL_LABELS } from '@/lib/home-workouts';
 import type {
@@ -73,6 +80,7 @@ export default function HomeWorkoutsPage() {
   // Estado Constructor Manual + Ejercicio Personalizado
   const [builderName, setBuilderName] = useState('Mi Rutina Personalizada en Casa');
   const [builderGoal, setBuilderGoal] = useState<RoutineGoal>('fuerza_general');
+  const [builderCoverImageUrl, setBuilderCoverImageUrl] = useState<string | null>(null);
   const [builderItems, setBuilderItems] = useState<RoutineExerciseItem[]>([]);
   const [onlyCompatibleLib, setOnlyCompatibleLib] = useState(true);
   const [muscleFilter, setMuscleFilter] = useState<string>('all');
@@ -83,6 +91,21 @@ export default function HomeWorkoutsPage() {
   const [newExEquip, setNewExEquip] = useState<string[]>([]);
   const [newExReps, setNewExReps] = useState('10-12');
   const [newExInstructions, setNewExInstructions] = useState('');
+  const [newExImageUrl, setNewExImageUrl] = useState<string | null>(null);
+
+  // Modal de edición de rutina e imágenes
+  const [editingRoutine, setEditingRoutine] = useState<Routine | null>(null);
+  const [savingRoutineEdit, setSavingRoutineEdit] = useState(false);
+
+  // Modal lightbox de imagen ampliada / cambio de foto
+  const [lightbox, setLightbox] = useState<{
+    exerciseId?: string;
+    imageUrl: string | null | undefined;
+    title: string;
+    subtitle?: string;
+    description?: string;
+    canEdit?: boolean;
+  } | null>(null);
 
   // Reproductor en vivo
   const [activeWorkout, setActiveWorkout] = useState<{
@@ -126,10 +149,69 @@ export default function HomeWorkoutsPage() {
 
   const ownedEquipment = equipment.filter((e) => e.owned);
   const ownedSet = new Set(ownedEquipment.map((e) => e.id));
-
   const equipmentNameMap = new Map(equipment.map((e) => [e.id, e.name]));
 
+  const exerciseImagesMap = useMemo(() => {
+    const map: Record<string, string | null | undefined> = {};
+    for (const ex of exercises) {
+      map[ex.id] = ex.imageUrl ?? null;
+    }
+    return map;
+  }, [exercises]);
+
+  const resolveItemImage = useCallback(
+    (exerciseId: string, itemImageUrl?: string | null): string | null => {
+      return itemImageUrl || exerciseImagesMap[exerciseId] || null;
+    },
+    [exerciseImagesMap]
+  );
+
   const compatibleCount = exercises.filter((ex) => ex.requiredEquipment.every((id) => ownedSet.has(id))).length;
+
+  async function updateExerciseImage(exerciseId: string, nextUrl: string | null) {
+    const res = await fetch(`/api/exercises/${encodeURIComponent(exerciseId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageUrl: nextUrl }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const updatedEx: Exercise | undefined = data.exercise;
+      if (updatedEx) {
+        setExercises((prev) => prev.map((e) => (e.id === exerciseId ? updatedEx : e)));
+        setLightbox((prev) =>
+          prev && prev.exerciseId === exerciseId ? { ...prev, imageUrl: updatedEx.imageUrl ?? null } : prev
+        );
+      }
+    }
+  }
+
+  async function saveEditingRoutine(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingRoutine) return;
+    setSavingRoutineEdit(true);
+    try {
+      const res = await fetch(`/api/routines/${editingRoutine.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editingRoutine.name.trim() || 'Rutina',
+          notes: editingRoutine.notes ?? null,
+          coverImageUrl: editingRoutine.coverImageUrl ?? null,
+          items: editingRoutine.items,
+        }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setRoutines((prev) => prev.map((r) => (r.id === d.routine.id ? d.routine : r)));
+        setEditingRoutine(null);
+        setSavedBanner('Rutina e imágenes actualizadas.');
+        setTimeout(() => setSavedBanner(null), 3500);
+      }
+    } finally {
+      setSavingRoutineEdit(false);
+    }
+  }
 
   async function toggleEquipmentOwned(item: HomeEquipment) {
     const nextOwned = !item.owned;
@@ -239,6 +321,7 @@ export default function HomeWorkoutsPage() {
             suggestedWeightKg: ex.requiredEquipment.includes('dumbbells') ? 12 : undefined,
             restSeconds: ex.restSeconds,
             notes: ex.instructions,
+            imageUrl: ex.imageUrl ?? null,
           }
         : item
     );
@@ -283,6 +366,7 @@ export default function HomeWorkoutsPage() {
         estimatedMinutes: Math.max(15, builderItems.length * 6),
         equipmentIds: eqIds,
         items: builderItems,
+        coverImageUrl: builderCoverImageUrl,
         notes: 'Creada manualmente en Bilifit.',
       }),
     });
@@ -290,6 +374,7 @@ export default function HomeWorkoutsPage() {
       const d = await res.json();
       setRoutines((prev) => [d.routine, ...prev]);
       setBuilderItems([]);
+      setBuilderCoverImageUrl(null);
       setTab('routines');
     }
   }
@@ -309,6 +394,7 @@ export default function HomeWorkoutsPage() {
         defaultReps: newExReps,
         restSeconds: 60,
         instructions: newExInstructions || 'Ejecución controlada manteniendo buena técnica.',
+        imageUrl: newExImageUrl,
       }),
     });
     if (res.ok) {
@@ -317,6 +403,7 @@ export default function HomeWorkoutsPage() {
       setNewExName('');
       setNewExInstructions('');
       setNewExEquip([]);
+      setNewExImageUrl(null);
       setShowNewEx(false);
     }
   }
@@ -335,32 +422,32 @@ export default function HomeWorkoutsPage() {
   return (
     <div className="space-y-6">
       {/* Cabecera */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2.5">
-            <Dumbbell className="h-6 w-6 text-purple-400" />
-            Entrenamiento en Casa y Material Propio
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight flex items-center gap-2.5">
+            <Dumbbell className="h-6 w-6 text-purple-400 shrink-0" />
+            <span>Entrenamiento en Casa y Rutinas</span>
           </h1>
-          <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
-            Selecciona el material que tienes en casa, genera rutinas adaptadas al instante o crea las tuyas con temporizador en vivo.
+          <p className="text-xs sm:text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
+            Guía visual de cada ejercicio, rutinas listas para usar en el teléfono y seguimiento de pesos diarios.
           </p>
         </div>
 
-        <div className="flex items-center gap-2 text-xs font-semibold px-3.5 py-2 rounded-xl border" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
-          <Wrench className="h-4 w-4 text-purple-400" />
-          <span>{ownedEquipment.length} materiales activos</span>
+        <div className="flex items-center gap-2 text-xs font-semibold px-3.5 py-2 rounded-xl border w-fit" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+          <Wrench className="h-4 w-4 text-purple-400 shrink-0" />
+          <span>{ownedEquipment.length} materiales</span>
           <span style={{ color: 'var(--text-muted)' }}>·</span>
-          <span className="text-emerald-400">{compatibleCount} ejercicios compatibles</span>
+          <span className="text-emerald-400">{compatibleCount} ejercicios</span>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex flex-wrap gap-2 border-b pb-3" style={{ borderColor: 'var(--border-subtle)' }}>
+      {/* Tabs adaptadas a móvil y PC */}
+      <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 border-b pb-3" style={{ borderColor: 'var(--border-subtle)' }}>
         {[
-          { id: 'generator', label: 'Generar Rutina por Material', icon: Sparkles },
-          { id: 'equipment', label: `Mi Material en Casa (${ownedEquipment.length})`, icon: Wrench },
-          { id: 'routines', label: `Mis Rutinas (${routines.length})`, icon: ListChecks },
-          { id: 'builder', label: 'Crear Rutina y Ejercicios', icon: Plus },
+          { id: 'generator', label: 'Generar Rutina', fullLabel: 'Generar Rutina por Material', icon: Sparkles },
+          { id: 'equipment', label: `Material (${ownedEquipment.length})`, fullLabel: `Mi Material en Casa (${ownedEquipment.length})`, icon: Wrench },
+          { id: 'routines', label: `Mis Rutinas (${routines.length})`, fullLabel: `Mis Rutinas (${routines.length})`, icon: ListChecks },
+          { id: 'builder', label: 'Crear y Fotos', fullLabel: 'Crear Rutina y Ejercicios', icon: Plus },
         ].map((t) => {
           const Icon = t.icon;
           const active = tab === t.id;
@@ -369,24 +456,25 @@ export default function HomeWorkoutsPage() {
               key={t.id}
               type="button"
               onClick={() => setTab(t.id as CasaTab)}
-              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-colors ${
+              className={`inline-flex items-center justify-center sm:justify-start gap-2 px-3 sm:px-4 py-2.5 sm:py-2 rounded-xl text-xs sm:text-sm font-semibold transition-colors min-h-[42px] ${
                 active
                   ? 'bg-purple-600 text-white shadow-sm shadow-purple-600/30'
                   : 'border hover:bg-sunken'
               }`}
               style={!active ? { borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' } : undefined}
             >
-              <Icon className="h-4 w-4" />
-              {t.label}
+              <Icon className="h-4 w-4 shrink-0" />
+              <span className="sm:hidden truncate">{t.label}</span>
+              <span className="hidden sm:inline">{t.fullLabel}</span>
             </button>
           );
         })}
       </div>
 
       {savedBanner && (
-        <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
+        <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300 flex items-center justify-between gap-3">
           <span>{savedBanner}</span>
-          <button type="button" onClick={() => setTab('routines')} className="underline font-semibold text-xs">
+          <button type="button" onClick={() => setTab('routines')} className="underline font-semibold text-xs shrink-0">
             Ir a Mis Rutinas
           </button>
         </div>
@@ -395,7 +483,7 @@ export default function HomeWorkoutsPage() {
       {/* TAB 1: GENERADOR INTELIGENTE */}
       {tab === 'generator' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-5 card-surface p-5 space-y-5">
+          <div className="lg:col-span-5 card-surface p-4 sm:p-5 space-y-5">
             <div>
               <h2 className="text-base font-bold flex items-center gap-2">
                 <Sparkles className="h-4 w-4 text-purple-400" />
@@ -413,7 +501,7 @@ export default function HomeWorkoutsPage() {
               <select
                 value={goal}
                 onChange={(e) => setGoal(e.target.value as RoutineGoal)}
-                className="w-full rounded-xl border px-3 py-2.5 text-sm"
+                className="w-full rounded-xl border px-3 py-2.5 text-base sm:text-sm"
                 style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
               >
                 {(Object.keys(ROUTINE_GOAL_LABELS) as RoutineGoal[]).map((g) => (
@@ -438,7 +526,7 @@ export default function HomeWorkoutsPage() {
                       key={m}
                       type="button"
                       onClick={() => setDurationMin(m)}
-                      className={`py-2 rounded-lg text-xs font-semibold border ${
+                      className={`py-2 rounded-lg text-xs font-semibold border min-h-[38px] ${
                         durationMin === m ? 'bg-purple-600 text-white border-purple-600' : ''
                       }`}
                       style={durationMin !== m ? { borderColor: 'var(--border-subtle)' } : undefined}
@@ -514,7 +602,7 @@ export default function HomeWorkoutsPage() {
             <button
               type="button"
               onClick={() => handleGenerate(1)}
-              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 to-primary hover:opacity-95 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-purple-600/20"
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 to-primary hover:opacity-95 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-purple-600/20 min-h-[46px]"
             >
               <Sparkles className="h-4 w-4" />
               Generar Rutina con mi Material
@@ -522,9 +610,9 @@ export default function HomeWorkoutsPage() {
           </div>
 
           {/* Resultado generado */}
-          <div className="lg:col-span-7 card-surface p-5">
+          <div className="lg:col-span-7 card-surface p-4 sm:p-5">
             {!generatedPlan ? (
-              <div className="h-full min-h-[320px] flex flex-col items-center justify-center text-center p-6 space-y-3">
+              <div className="h-full min-h-[280px] flex flex-col items-center justify-center text-center p-4 sm:p-6 space-y-3">
                 <div className="h-14 w-14 rounded-2xl bg-purple-500/15 text-purple-400 flex items-center justify-center">
                   <Dumbbell className="h-7 w-7" />
                 </div>
@@ -537,7 +625,7 @@ export default function HomeWorkoutsPage() {
                   <button
                     type="button"
                     onClick={() => setTab('routines')}
-                    className="inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold hover:bg-sunken"
+                    className="inline-flex items-center gap-1.5 rounded-xl border px-4 py-2.5 text-xs font-semibold hover:bg-sunken min-h-[42px]"
                     style={{ borderColor: 'var(--border-subtle)' }}
                   >
                     <ListChecks className="h-3.5 w-3.5 text-purple-400" />
@@ -555,11 +643,11 @@ export default function HomeWorkoutsPage() {
                     <h3 className="text-lg font-bold">{generatedPlan.name}</h3>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                     <button
                       type="button"
                       onClick={() => handleGenerate(1)}
-                      className="inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold hover:bg-sunken"
+                      className="inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold hover:bg-sunken min-h-[38px]"
                       style={{ borderColor: 'var(--border-subtle)' }}
                     >
                       <RefreshCw className="h-3.5 w-3.5" /> Regenerar
@@ -567,9 +655,9 @@ export default function HomeWorkoutsPage() {
                     <button
                       type="button"
                       onClick={saveGeneratedRoutine}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-purple-500/40 bg-purple-500/15 px-3 py-2 text-xs font-semibold text-purple-700 dark:text-purple-300 hover:bg-purple-500/25"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-purple-500/40 bg-purple-500/15 px-3 py-2 text-xs font-semibold text-purple-700 dark:text-purple-300 hover:bg-purple-500/25 min-h-[38px]"
                     >
-                      <BookmarkPlus className="h-3.5 w-3.5" /> Guardar Rutina
+                      <BookmarkPlus className="h-3.5 w-3.5" /> Guardar
                     </button>
                     <button
                       type="button"
@@ -579,7 +667,7 @@ export default function HomeWorkoutsPage() {
                           items: generatedPlan.items,
                         })
                       }
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 px-4 py-2 text-xs font-bold text-white"
+                      className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 px-4 py-2 text-xs font-bold text-white min-h-[40px]"
                     >
                       <Play className="h-3.5 w-3.5" /> Empezar Ahora
                     </button>
@@ -587,89 +675,129 @@ export default function HomeWorkoutsPage() {
                 </div>
 
                 <div className="space-y-3">
-                  {generatedPlan.items.map((item, idx) => (
-                    <div
-                      key={`${item.exerciseId}-${idx}`}
-                      className="rounded-xl border p-4 space-y-2"
-                      style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
-                    >
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-xs font-bold text-purple-400">#{idx + 1}</span>
-                            <span className="font-semibold text-sm">{item.exerciseName}</span>
-                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-sunken" style={{ color: 'var(--text-secondary)' }}>
-                              {MUSCLE_LABELS[item.muscleGroup]}
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                            {item.requiredEquipment.length === 0 ? (
-                              <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
-                                Sin material (peso corporal)
+                  {generatedPlan.items.map((item, idx) => {
+                    const imgUrl = resolveItemImage(item.exerciseId, item.imageUrl);
+                    return (
+                      <div
+                        key={`${item.exerciseId}-${idx}`}
+                        className="rounded-xl border p-3.5 sm:p-4 space-y-2"
+                        style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
+                      >
+                        <div className="flex items-start gap-3">
+                          {imgUrl && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setLightbox({
+                                  exerciseId: item.exerciseId,
+                                  imageUrl: imgUrl,
+                                  title: `${idx + 1}. ${item.exerciseName}`,
+                                  subtitle: `${item.sets} × ${item.reps}`,
+                                  description: item.notes,
+                                  canEdit: true,
+                                })
+                              }
+                              className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-xl overflow-hidden border shrink-0 bg-[#161b26]"
+                              style={{ borderColor: 'var(--border-subtle)' }}
+                              title="Toca para ampliar imagen"
+                            >
+                              <img src={imgUrl} alt={item.exerciseName} className="w-full h-full object-cover" />
+                              <span className="absolute bottom-0.5 right-0.5 h-4 w-4 rounded bg-black/70 text-white flex items-center justify-center">
+                                <ZoomIn className="h-2.5 w-2.5" />
                               </span>
-                            ) : (
-                              item.requiredEquipment.map((eqId) => (
-                                <span key={eqId} className="text-[11px] px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-700 dark:text-cyan-300">
-                                  {equipmentNameMap.get(eqId) ?? eqId}
-                                </span>
-                              ))
+                            </button>
+                          )}
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="text-xs font-bold text-purple-400">#{idx + 1}</span>
+                                  <span className="font-semibold text-sm">{item.exerciseName}</span>
+                                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-sunken" style={{ color: 'var(--text-secondary)' }}>
+                                    {MUSCLE_LABELS[item.muscleGroup]}
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                  {item.requiredEquipment.length === 0 ? (
+                                    <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+                                      Sin material (peso corporal)
+                                    </span>
+                                  ) : (
+                                    item.requiredEquipment.map((eqId) => (
+                                      <span key={eqId} className="text-[11px] px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-700 dark:text-cyan-300">
+                                        {equipmentNameMap.get(eqId) ?? eqId}
+                                      </span>
+                                    ))
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2 shrink-0">
+                                <div className="text-right text-xs tabular-nums">
+                                  <div className="font-bold">
+                                    {item.sets} × {item.reps}
+                                    {item.suggestedWeightKg ? ` (${item.suggestedWeightKg} kg)` : ''}
+                                  </div>
+                                  <div style={{ color: 'var(--text-muted)' }}>Descanso {item.restSeconds}s</div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => openSwapModal(idx)}
+                                  className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium hover:bg-sunken min-h-[34px]"
+                                  style={{ borderColor: 'var(--border-subtle)' }}
+                                  title="Cambiar por otro ejercicio compatible con tu material"
+                                >
+                                  <ArrowLeftRight className="h-3.5 w-3.5" /> Cambiar
+                                </button>
+                              </div>
+                            </div>
+
+                            {item.notes && (
+                              <p className="text-xs leading-relaxed mt-1.5" style={{ color: 'var(--text-secondary)' }}>
+                                {item.notes}
+                              </p>
                             )}
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-3">
-                          <div className="text-right text-xs tabular-nums">
-                            <div className="font-bold">
-                              {item.sets} × {item.reps}
-                              {item.suggestedWeightKg ? ` (${item.suggestedWeightKg} kg)` : ''}
+                        {swapIndex === idx && (
+                          <div className="pt-2 border-t space-y-2" style={{ borderColor: 'var(--border-subtle)' }}>
+                            <div className="text-xs font-semibold text-purple-700 dark:text-purple-300">
+                              Alternativas compatibles con tu material seleccionado:
                             </div>
-                            <div style={{ color: 'var(--text-muted)' }}>Descanso {item.restSeconds}s</div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {swapOptions.map((alt) => (
+                                <button
+                                  key={alt.id}
+                                  type="button"
+                                  onClick={() => applySwap(idx, alt)}
+                                  className="flex items-center gap-2.5 text-left rounded-lg border p-2 text-xs hover:border-purple-400 transition-colors"
+                                  style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}
+                                >
+                                  {alt.imageUrl && (
+                                    <img
+                                      src={alt.imageUrl}
+                                      alt={alt.name}
+                                      className="w-10 h-10 rounded-lg object-cover bg-[#161b26] shrink-0"
+                                    />
+                                  )}
+                                  <div className="min-w-0">
+                                    <div className="font-semibold truncate">{alt.name}</div>
+                                    <div className="truncate" style={{ color: 'var(--text-muted)' }}>
+                                      {alt.requiredEquipment.length === 0
+                                        ? 'Peso corporal'
+                                        : alt.requiredEquipment.map((id) => equipmentNameMap.get(id) ?? id).join(' + ')}
+                                    </div>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => openSwapModal(idx)}
-                            className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium hover:bg-sunken"
-                            style={{ borderColor: 'var(--border-subtle)' }}
-                            title="Cambiar por otro ejercicio compatible con tu material"
-                          >
-                            <ArrowLeftRight className="h-3.5 w-3.5" /> Cambiar
-                          </button>
-                        </div>
+                        )}
                       </div>
-
-                      {item.notes && (
-                        <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                          {item.notes}
-                        </p>
-                      )}
-
-                      {swapIndex === idx && (
-                        <div className="pt-2 border-t space-y-2" style={{ borderColor: 'var(--border-subtle)' }}>
-                          <div className="text-xs font-semibold text-purple-700 dark:text-purple-300">
-                            Alternativas compatibles con tu material seleccionado:
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            {swapOptions.map((alt) => (
-                              <button
-                                key={alt.id}
-                                type="button"
-                                onClick={() => applySwap(idx, alt)}
-                                className="text-left rounded-lg border p-2.5 text-xs hover:border-purple-400 transition-colors"
-                                style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}
-                              >
-                                <div className="font-semibold">{alt.name}</div>
-                                <div style={{ color: 'var(--text-muted)' }}>
-                                  {alt.requiredEquipment.length === 0
-                                    ? 'Peso corporal'
-                                    : alt.requiredEquipment.map((id) => equipmentNameMap.get(id) ?? id).join(' + ')}
-                                </div>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -680,7 +808,7 @@ export default function HomeWorkoutsPage() {
       {/* TAB 2: INVENTARIO DE MATERIAL EN CASA */}
       {tab === 'equipment' && (
         <div className="space-y-6">
-          <div className="card-surface p-5 space-y-4">
+          <div className="card-surface p-4 sm:p-5 space-y-4">
             <div>
               <h2 className="text-base font-bold">Selecciona el Material que Tienes en Casa</h2>
               <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
@@ -747,7 +875,7 @@ export default function HomeWorkoutsPage() {
           </div>
 
           {/* Añadir material propio personalizado */}
-          <form onSubmit={addCustomEquipment} className="card-surface p-5 space-y-4">
+          <form onSubmit={addCustomEquipment} className="card-surface p-4 sm:p-5 space-y-4">
             <h3 className="text-base font-bold">Añadir Otro Material Propio</h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <input
@@ -755,13 +883,13 @@ export default function HomeWorkoutsPage() {
                 value={newEqName}
                 onChange={(e) => setNewEqName(e.target.value)}
                 placeholder="Ej. Chaleco lastrado 10 kg / Paralelas"
-                className="rounded-xl border px-3 py-2 text-sm"
+                className="rounded-xl border px-3 py-2 text-base sm:text-sm"
                 style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
               />
               <select
                 value={newEqCategory}
                 onChange={(e) => setNewEqCategory(e.target.value as HomeEquipment['category'])}
-                className="rounded-xl border px-3 py-2 text-sm"
+                className="rounded-xl border px-3 py-2 text-base sm:text-sm"
                 style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
               >
                 <option value="peso_libre">Peso libre</option>
@@ -775,12 +903,12 @@ export default function HomeWorkoutsPage() {
                   value={newEqDetails}
                   onChange={(e) => setNewEqDetails(e.target.value)}
                   placeholder="Peso o detalle (opcional)"
-                  className="flex-1 rounded-xl border px-3 py-2 text-sm"
+                  className="flex-1 min-w-0 rounded-xl border px-3 py-2 text-base sm:text-sm"
                   style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
                 />
                 <button
                   type="submit"
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 px-4 py-2 text-sm font-semibold text-white"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 px-4 py-2 text-sm font-semibold text-white shrink-0"
                 >
                   <Plus className="h-4 w-4" /> Añadir
                 </button>
@@ -794,8 +922,30 @@ export default function HomeWorkoutsPage() {
       {tab === 'routines' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {routines.map((rt) => (
-            <div key={rt.id} className="card-surface p-5 flex flex-col justify-between space-y-4">
-              <div className="space-y-2.5">
+            <div key={rt.id} className="card-surface p-4 sm:p-5 flex flex-col justify-between space-y-4">
+              <div className="space-y-3">
+                {rt.coverImageUrl && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setLightbox({
+                        imageUrl: rt.coverImageUrl,
+                        title: rt.name,
+                        subtitle: ROUTINE_GOAL_LABELS[rt.goal]?.label ?? rt.goal,
+                        description: rt.notes ?? undefined,
+                        canEdit: false,
+                      })
+                    }
+                    className="relative w-full h-36 sm:h-44 rounded-xl overflow-hidden border bg-[#161b26] block"
+                    style={{ borderColor: 'var(--border-subtle)' }}
+                  >
+                    <img src={rt.coverImageUrl} alt={rt.name} className="w-full h-full object-cover" />
+                    <span className="absolute bottom-2 right-2 h-7 w-7 rounded-lg bg-black/70 text-white flex items-center justify-center">
+                      <ZoomIn className="h-4 w-4" />
+                    </span>
+                  </button>
+                )}
+
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/30">
                     {ROUTINE_GOAL_LABELS[rt.goal]?.label ?? rt.goal}
@@ -827,35 +977,74 @@ export default function HomeWorkoutsPage() {
                   ))}
                 </div>
 
-                <div className="space-y-1.5 pt-2">
-                  {rt.items.map((item, idx) => (
-                    <div
-                      key={`${item.exerciseId}-${idx}`}
-                      className="flex items-center justify-between text-xs rounded-lg px-3 py-1.5"
-                      style={{ background: 'var(--bg-card-elevated)' }}
-                    >
-                      <span className="font-medium truncate pr-2">
-                        {idx + 1}. {item.exerciseName}
-                      </span>
-                      <span className="tabular-nums shrink-0" style={{ color: 'var(--text-muted)' }}>
-                        {item.sets} × {item.reps}
-                        {typeof item.suggestedWeightKg === 'number' && item.suggestedWeightKg > 0
-                          ? ` (${item.suggestedWeightKg} kg)`
-                          : ''}
-                      </span>
-                    </div>
-                  ))}
+                {/* Lista de ejercicios con miniatura visual clicable */}
+                <div className="space-y-1.5 pt-1">
+                  {rt.items.map((item, idx) => {
+                    const thumbUrl = resolveItemImage(item.exerciseId, item.imageUrl);
+                    return (
+                      <div
+                        key={`${item.exerciseId}-${idx}`}
+                        className="flex items-center gap-2.5 text-xs rounded-xl px-2.5 py-2"
+                        style={{ background: 'var(--bg-card-elevated)' }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setLightbox({
+                              exerciseId: item.exerciseId,
+                              imageUrl: thumbUrl,
+                              title: `${idx + 1}. ${item.exerciseName}`,
+                              subtitle: `${item.sets} × ${item.reps} · Descanso ${item.restSeconds}s`,
+                              description: item.notes,
+                              canEdit: true,
+                            })
+                          }
+                          className="relative w-11 h-11 rounded-lg overflow-hidden border shrink-0 bg-[#161b26] flex items-center justify-center"
+                          style={{ borderColor: 'var(--border-subtle)' }}
+                          title="Toca para ver la imagen en grande o subir foto"
+                        >
+                          {thumbUrl ? (
+                            <img src={thumbUrl} alt={item.exerciseName} className="w-full h-full object-cover" />
+                          ) : (
+                            <Camera className="h-4 w-4 text-purple-400" />
+                          )}
+                        </button>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="font-semibold text-xs sm:text-[13px] truncate">
+                            {idx + 1}. {item.exerciseName}
+                          </div>
+                          <div className="text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                            {item.sets} × {item.reps}
+                            {typeof item.suggestedWeightKg === 'number' && item.suggestedWeightKg > 0
+                              ? ` (${item.suggestedWeightKg} kg)`
+                              : ''}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-2 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
-                <button
-                  type="button"
-                  onClick={() => deleteRoutine(rt.id)}
-                  className="inline-flex items-center gap-1 text-xs text-rose-400 hover:underline"
-                >
-                  <Trash2 className="h-3.5 w-3.5" /> Eliminar
-                </button>
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setEditingRoutine({ ...rt, items: rt.items.map((it) => ({ ...it })) })}
+                    className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold hover:bg-sunken min-h-[36px]"
+                    style={{ borderColor: 'var(--border-subtle)' }}
+                  >
+                    <Pencil className="h-3.5 w-3.5 text-purple-400" /> Imágenes / Editar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteRoutine(rt.id)}
+                    className="inline-flex items-center gap-1 text-xs text-rose-400 hover:underline min-h-[36px]"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Eliminar
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={() =>
@@ -865,7 +1054,7 @@ export default function HomeWorkoutsPage() {
                       items: rt.items,
                     })
                   }
-                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 px-4 py-2 text-xs font-bold text-white"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white min-h-[44px]"
                 >
                   <Play className="h-3.5 w-3.5" /> Empezar Entreno
                 </button>
@@ -878,13 +1067,13 @@ export default function HomeWorkoutsPage() {
       {/* TAB 4: CONSTRUCTOR MANUAL Y BIBLIOTECA */}
       {tab === 'builder' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-7 card-surface p-5 space-y-4">
+          <div className="lg:col-span-7 card-surface p-4 sm:p-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-base font-bold">Biblioteca de Ejercicios ({libraryExercises.length})</h2>
               <button
                 type="button"
                 onClick={() => setShowNewEx((v) => !v)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-3.5 py-2 text-xs font-semibold text-white min-h-[38px]"
               >
                 <Plus className="h-3.5 w-3.5" /> Nuevo Ejercicio
               </button>
@@ -903,13 +1092,13 @@ export default function HomeWorkoutsPage() {
                     value={newExName}
                     onChange={(e) => setNewExName(e.target.value)}
                     placeholder="Nombre del ejercicio"
-                    className="rounded-lg border px-3 py-2 text-xs"
+                    className="rounded-lg border px-3 py-2 text-base sm:text-xs"
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
                   />
                   <select
                     value={newExMuscle}
                     onChange={(e) => setNewExMuscle(e.target.value as MuscleGroup)}
-                    className="rounded-lg border px-3 py-2 text-xs"
+                    className="rounded-lg border px-3 py-2 text-base sm:text-xs"
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
                   >
                     {(Object.keys(MUSCLE_LABELS) as MuscleGroup[]).map((m) => (
@@ -921,7 +1110,7 @@ export default function HomeWorkoutsPage() {
                   <select
                     value={newExPattern}
                     onChange={(e) => setNewExPattern(e.target.value as Exercise['pattern'])}
-                    className="rounded-lg border px-3 py-2 text-xs"
+                    className="rounded-lg border px-3 py-2 text-base sm:text-xs"
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
                   >
                     <option value="rodilla">Patrón: Rodilla / Sentadilla</option>
@@ -937,7 +1126,7 @@ export default function HomeWorkoutsPage() {
                     value={newExReps}
                     onChange={(e) => setNewExReps(e.target.value)}
                     placeholder="Reps (ej. 10-12 o 40 seg)"
-                    className="rounded-lg border px-3 py-2 text-xs"
+                    className="rounded-lg border px-3 py-2 text-base sm:text-xs"
                     style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
                   />
                 </div>
@@ -972,11 +1161,22 @@ export default function HomeWorkoutsPage() {
                   value={newExInstructions}
                   onChange={(e) => setNewExInstructions(e.target.value)}
                   placeholder="Instrucciones o notas técnicas..."
-                  className="w-full rounded-lg border px-3 py-2 text-xs"
+                  className="w-full rounded-lg border px-3 py-2 text-base sm:text-xs"
                   style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
                 />
+                <div className="space-y-1.5">
+                  <div className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                    Imagen del ejercicio (opcional)
+                  </div>
+                  <ImageUploadControl
+                    label="Foto del ejercicio"
+                    value={newExImageUrl}
+                    onChange={setNewExImageUrl}
+                    compact
+                  />
+                </div>
                 <div className="flex justify-end">
-                  <button type="submit" className="rounded-lg bg-emerald-500 px-4 py-1.5 text-xs font-semibold text-white">
+                  <button type="submit" className="rounded-xl bg-emerald-500 px-4 py-2 text-xs font-semibold text-white min-h-[38px]">
                     Guardar Ejercicio
                   </button>
                 </div>
@@ -987,7 +1187,7 @@ export default function HomeWorkoutsPage() {
               <select
                 value={muscleFilter}
                 onChange={(e) => setMuscleFilter(e.target.value)}
-                className="rounded-lg border px-3 py-1.5 text-xs"
+                className="rounded-lg border px-3 py-2 text-base sm:text-xs"
                 style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
               >
                 <option value="all">Todos los músculos</option>
@@ -1009,32 +1209,57 @@ export default function HomeWorkoutsPage() {
               </label>
             </div>
 
-            <div className="space-y-2 max-h-[520px] overflow-y-auto pr-1">
+            <div className="space-y-2 max-h-[540px] overflow-y-auto pr-1">
               {libraryExercises.map((ex) => {
                 const compatible = ex.requiredEquipment.every((id) => ownedSet.has(id));
                 return (
                   <div
                     key={ex.id}
-                    className="rounded-xl border p-3 flex items-center justify-between gap-3"
+                    className="rounded-xl border p-2.5 sm:p-3 flex items-center justify-between gap-2.5"
                     style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
                   >
-                    <div className="space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-semibold text-sm">{ex.name}</span>
-                        <span className="text-[11px] px-2 py-0.5 rounded bg-sunken" style={{ color: 'var(--text-secondary)' }}>
-                          {MUSCLE_LABELS[ex.muscleGroup]}
-                        </span>
-                        {!compatible && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300">
-                            Falta material
-                          </span>
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setLightbox({
+                            exerciseId: ex.id,
+                            imageUrl: ex.imageUrl,
+                            title: ex.name,
+                            subtitle: `${MUSCLE_LABELS[ex.muscleGroup]} · ${ex.defaultSets} × ${ex.defaultReps}`,
+                            description: ex.instructions,
+                            canEdit: true,
+                          })
+                        }
+                        className="relative w-12 h-12 rounded-xl overflow-hidden border shrink-0 bg-[#161b26] flex items-center justify-center"
+                        style={{ borderColor: 'var(--border-subtle)' }}
+                        title="Toca para ampliar o cambiar foto"
+                      >
+                        {ex.imageUrl ? (
+                          <img src={ex.imageUrl} alt={ex.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <Camera className="h-4 w-4 text-purple-400" />
                         )}
-                      </div>
-                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        {ex.requiredEquipment.length === 0
-                          ? 'Sin material'
-                          : ex.requiredEquipment.map((id) => equipmentNameMap.get(id) ?? id).join(' + ')}{' '}
-                        · {ex.defaultSets} × {ex.defaultReps}
+                      </button>
+
+                      <div className="space-y-0.5 min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-semibold text-xs sm:text-sm truncate">{ex.name}</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-sunken" style={{ color: 'var(--text-secondary)' }}>
+                            {MUSCLE_LABELS[ex.muscleGroup]}
+                          </span>
+                          {!compatible && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                              Falta material
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                          {ex.requiredEquipment.length === 0
+                            ? 'Sin material'
+                            : ex.requiredEquipment.map((id) => equipmentNameMap.get(id) ?? id).join(' + ')}{' '}
+                          · {ex.defaultSets} × {ex.defaultReps}
+                        </div>
                       </div>
                     </div>
 
@@ -1053,10 +1278,11 @@ export default function HomeWorkoutsPage() {
                             suggestedWeightKg: ex.requiredEquipment.includes('dumbbells') ? 10 : undefined,
                             restSeconds: ex.restSeconds,
                             notes: ex.instructions,
+                            imageUrl: ex.imageUrl ?? null,
                           },
                         ])
                       }
-                      className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-purple-600/20 text-purple-700 dark:text-purple-300 border border-purple-500/30 px-3 py-1.5 text-xs font-semibold hover:bg-purple-600/30"
+                      className="shrink-0 inline-flex items-center gap-1 rounded-xl bg-purple-600/20 text-purple-700 dark:text-purple-300 border border-purple-500/30 px-3 py-2 text-xs font-semibold hover:bg-purple-600/30 min-h-[38px]"
                     >
                       <Plus className="h-3.5 w-3.5" /> Añadir
                     </button>
@@ -1067,7 +1293,7 @@ export default function HomeWorkoutsPage() {
           </div>
 
           {/* Borrador de rutina manual */}
-          <form onSubmit={saveManualRoutine} className="lg:col-span-5 card-surface p-5 space-y-4 h-fit">
+          <form onSubmit={saveManualRoutine} className="lg:col-span-5 card-surface p-4 sm:p-5 space-y-4 h-fit">
             <h2 className="text-base font-bold flex items-center gap-2">
               <Flame className="h-4 w-4 text-primary" />
               Tu Rutina en Construcción ({builderItems.length})
@@ -1078,13 +1304,13 @@ export default function HomeWorkoutsPage() {
                 required
                 value={builderName}
                 onChange={(e) => setBuilderName(e.target.value)}
-                className="w-full rounded-xl border px-3 py-2 text-sm font-medium"
+                className="w-full rounded-xl border px-3 py-2 text-base sm:text-sm font-medium"
                 style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
               />
               <select
                 value={builderGoal}
                 onChange={(e) => setBuilderGoal(e.target.value as RoutineGoal)}
-                className="w-full rounded-xl border px-3 py-2 text-sm"
+                className="w-full rounded-xl border px-3 py-2 text-base sm:text-sm"
                 style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
               >
                 {(Object.keys(ROUTINE_GOAL_LABELS) as RoutineGoal[]).map((g) => (
@@ -1093,6 +1319,19 @@ export default function HomeWorkoutsPage() {
                   </option>
                 ))}
               </select>
+
+              <div className="rounded-xl border p-3 space-y-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card-elevated)' }}>
+                <div className="text-xs font-semibold flex items-center gap-1.5" style={{ color: 'var(--text-secondary)' }}>
+                  <ImageIcon className="h-3.5 w-3.5 text-purple-400" />
+                  Imagen de portada de la rutina (opcional)
+                </div>
+                <ImageUploadControl
+                  label="Portada"
+                  value={builderCoverImageUrl}
+                  onChange={setBuilderCoverImageUrl}
+                  compact
+                />
+              </div>
             </div>
 
             {builderItems.length === 0 ? (
@@ -1101,78 +1340,96 @@ export default function HomeWorkoutsPage() {
               </div>
             ) : (
               <div className="space-y-2">
-                {builderItems.map((item, idx) => (
-                  <div
-                    key={`${item.exerciseId}-${idx}`}
-                    className="rounded-xl border p-3 space-y-2"
-                    style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-semibold text-xs">{item.exerciseName}</span>
-                      <button
-                        type="button"
-                        onClick={() => setBuilderItems((prev) => prev.filter((_, i) => i !== idx))}
-                        className="text-rose-400 p-1"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 text-xs">
-                      <label className="space-y-0.5">
-                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Series</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={item.sets}
-                          onChange={(e) =>
-                            setBuilderItems((prev) =>
-                              prev.map((it, i) => (i === idx ? { ...it, sets: Number(e.target.value) } : it))
-                            )
-                          }
-                          className="w-full rounded border px-2 py-1 text-xs"
-                          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
-                        />
-                      </label>
-                      <label className="space-y-0.5">
-                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Reps</span>
-                        <input
-                          value={item.reps}
-                          onChange={(e) =>
-                            setBuilderItems((prev) =>
-                              prev.map((it, i) => (i === idx ? { ...it, reps: e.target.value } : it))
-                            )
-                          }
-                          className="w-full rounded border px-2 py-1 text-xs"
-                          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
-                        />
-                      </label>
-                      <label className="space-y-0.5">
-                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Kg sug.</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={item.suggestedWeightKg ?? 0}
-                          onChange={(e) =>
-                            setBuilderItems((prev) =>
-                              prev.map((it, i) =>
-                                i === idx ? { ...it, suggestedWeightKg: Number(e.target.value) || undefined } : it
+                {builderItems.map((item, idx) => {
+                  const thumb = resolveItemImage(item.exerciseId, item.imageUrl);
+                  return (
+                    <div
+                      key={`${item.exerciseId}-${idx}`}
+                      className="rounded-xl border p-3 space-y-2"
+                      style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {thumb && (
+                            <img src={thumb} alt={item.exerciseName} className="w-8 h-8 rounded-lg object-cover bg-[#161b26] shrink-0" />
+                          )}
+                          <span className="font-semibold text-xs truncate">{item.exerciseName}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setBuilderItems((prev) => prev.filter((_, i) => i !== idx))}
+                          className="text-rose-400 p-1 shrink-0"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 text-xs">
+                        <label className="space-y-0.5">
+                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Series</span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={item.sets}
+                            onChange={(e) =>
+                              setBuilderItems((prev) =>
+                                prev.map((it, i) => (i === idx ? { ...it, sets: Number(e.target.value) } : it))
                               )
-                            )
-                          }
-                          className="w-full rounded border px-2 py-1 text-xs"
-                          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
-                        />
-                      </label>
+                            }
+                            className="w-full rounded border px-2 py-1.5 text-base sm:text-xs"
+                            style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
+                          />
+                        </label>
+                        <label className="space-y-0.5">
+                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Reps</span>
+                          <input
+                            value={item.reps}
+                            onChange={(e) =>
+                              setBuilderItems((prev) =>
+                                prev.map((it, i) => (i === idx ? { ...it, reps: e.target.value } : it))
+                              )
+                            }
+                            className="w-full rounded border px-2 py-1.5 text-base sm:text-xs"
+                            style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
+                          />
+                        </label>
+                        <label className="space-y-0.5">
+                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Kg sug.</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={item.suggestedWeightKg ?? 0}
+                            onChange={(e) =>
+                              setBuilderItems((prev) =>
+                                prev.map((it, i) =>
+                                  i === idx ? { ...it, suggestedWeightKg: Number(e.target.value) || undefined } : it
+                                )
+                              )
+                            }
+                            className="w-full rounded border px-2 py-1.5 text-base sm:text-xs"
+                            style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
+                          />
+                        </label>
+                      </div>
+                      <ImageUploadControl
+                        label="Imagen del ejercicio en esta rutina"
+                        value={item.imageUrl ?? null}
+                        onChange={(nextUrl) =>
+                          setBuilderItems((prev) =>
+                            prev.map((it, i) => (i === idx ? { ...it, imageUrl: nextUrl } : it))
+                          )
+                        }
+                        compact
+                      />
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
             <button
               type="submit"
               disabled={builderItems.length === 0}
-              className="w-full rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 py-2.5 text-sm font-bold text-white"
+              className="w-full rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 py-3 text-sm font-bold text-white min-h-[44px]"
             >
               Guardar Rutina Personalizada
             </button>
@@ -1180,13 +1437,180 @@ export default function HomeWorkoutsPage() {
         </div>
       )}
 
+      {/* Modal para editar una rutina y sus imágenes */}
+      {editingRoutine && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-6 overflow-hidden">
+          <form
+            onSubmit={saveEditingRoutine}
+            className="w-full max-w-2xl h-[100dvh] sm:h-auto sm:max-h-[90vh] rounded-none sm:rounded-2xl border-0 sm:border shadow-2xl overflow-hidden flex flex-col"
+            style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
+          >
+            <div
+              className="px-4 sm:px-5 py-3.5 border-b flex items-center justify-between gap-3 shrink-0"
+              style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card-elevated)' }}
+            >
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-purple-400">
+                  Personalizar rutina e imágenes
+                </div>
+                <h3 className="text-base sm:text-lg font-bold truncate">{editingRoutine.name}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingRoutine(null)}
+                className="h-10 w-10 rounded-xl border flex items-center justify-center hover:bg-sunken shrink-0"
+                style={{ borderColor: 'var(--border-subtle)' }}
+                aria-label="Cerrar editor"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 space-y-4">
+              <div className="space-y-3">
+                <label className="block space-y-1">
+                  <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                    Nombre de la rutina
+                  </span>
+                  <input
+                    required
+                    value={editingRoutine.name}
+                    onChange={(e) => setEditingRoutine({ ...editingRoutine, name: e.target.value })}
+                    className="w-full rounded-xl border px-3 py-2 text-base sm:text-sm font-medium"
+                    style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
+                  />
+                </label>
+
+                <label className="block space-y-1">
+                  <span className="text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                    Notas
+                  </span>
+                  <textarea
+                    rows={2}
+                    value={editingRoutine.notes ?? ''}
+                    onChange={(e) => setEditingRoutine({ ...editingRoutine, notes: e.target.value })}
+                    className="w-full rounded-xl border px-3 py-2 text-base sm:text-sm"
+                    style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
+                  />
+                </label>
+
+                <div className="rounded-xl border p-3.5 space-y-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card-elevated)' }}>
+                  <div className="text-xs font-semibold">Imagen de portada de la rutina</div>
+                  <ImageUploadControl
+                    label="Portada de rutina"
+                    value={editingRoutine.coverImageUrl ?? null}
+                    onChange={(nextUrl) => setEditingRoutine({ ...editingRoutine, coverImageUrl: nextUrl })}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2.5">
+                <div className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
+                  Imágenes de los ejercicios ({editingRoutine.items.length})
+                </div>
+                {editingRoutine.items.map((item, idx) => {
+                  const effectiveImg = resolveItemImage(item.exerciseId, item.imageUrl);
+                  return (
+                    <div
+                      key={`${item.exerciseId}-${idx}`}
+                      className="rounded-xl border p-3 space-y-2.5"
+                      style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card-elevated)' }}
+                    >
+                      <div className="flex items-center gap-3">
+                        {effectiveImg && (
+                          <img
+                            src={effectiveImg}
+                            alt={item.exerciseName}
+                            className="w-12 h-12 rounded-xl object-cover bg-[#161b26] shrink-0"
+                          />
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-semibold truncate">
+                            {idx + 1}. {item.exerciseName}
+                          </div>
+                          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                            {item.sets} × {item.reps}
+                          </div>
+                        </div>
+                      </div>
+                      <ImageUploadControl
+                        label="Foto propia en esta rutina"
+                        value={item.imageUrl ?? null}
+                        onChange={(nextUrl) =>
+                          setEditingRoutine({
+                            ...editingRoutine,
+                            items: editingRoutine.items.map((it, i) =>
+                              i === idx ? { ...it, imageUrl: nextUrl } : it
+                            ),
+                          })
+                        }
+                        compact
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div
+              className="px-4 sm:px-5 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t flex items-center justify-end gap-2 shrink-0"
+              style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card-elevated)' }}
+            >
+              <button
+                type="button"
+                onClick={() => setEditingRoutine(null)}
+                className="rounded-xl border px-4 py-2.5 text-xs font-semibold min-h-[42px]"
+                style={{ borderColor: 'var(--border-subtle)' }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={savingRoutineEdit}
+                className="rounded-xl bg-emerald-500 hover:bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white min-h-[42px]"
+              >
+                {savingRoutineEdit ? 'Guardando...' : 'Guardar Cambios'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Modal de imagen ampliada / subida rápida */}
+      <ImageLightboxModal
+        open={Boolean(lightbox)}
+        imageUrl={lightbox?.imageUrl}
+        title={lightbox?.title ?? ''}
+        subtitle={lightbox?.subtitle}
+        description={lightbox?.description}
+        canEdit={Boolean(lightbox?.canEdit)}
+        canReset={Boolean(lightbox?.canEdit && lightbox.exerciseId && !lightbox.exerciseId.startsWith('ex_custom_'))}
+        onClose={() => setLightbox(null)}
+        onImageUpdated={
+          lightbox?.exerciseId
+            ? (nextUrl) => updateExerciseImage(lightbox.exerciseId!, nextUrl)
+            : undefined
+        }
+        onResetImage={
+          lightbox?.exerciseId
+            ? () => updateExerciseImage(lightbox.exerciseId!, null)
+            : undefined
+        }
+      />
+
       {/* Reproductor de Entrenamiento en Vivo */}
       {activeWorkout && (
         <WorkoutPlayer
           routineId={activeWorkout.routineId}
           routineName={activeWorkout.name}
           items={activeWorkout.items}
+          exerciseImages={exerciseImagesMap}
           lastExerciseLogs={lastExerciseLogs}
+          onExerciseImageUpdated={(exerciseId, nextUrl) => {
+            setExercises((prev) =>
+              prev.map((e) => (e.id === exerciseId ? { ...e, imageUrl: nextUrl } : e))
+            );
+          }}
           onClose={() => setActiveWorkout(null)}
           onCompleted={() => {
             setActiveWorkout(null);

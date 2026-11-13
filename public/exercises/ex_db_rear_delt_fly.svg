@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="studioBg" cx="50%" cy="46%" r="58%">
+      <stop offset="0%" stop-color="#212b3d"/>
+      <stop offset="100%" stop-color="#161b26"/>
+    </radialGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <linearGradient id="muscleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff9370"/>
+      <stop offset="100%" stop-color="#ff633d"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#studioBg)"/>
+  
+    <ellipse cx="256" cy="438" rx="190" ry="14" fill="#0b1019" opacity="0.6"/>
+  <line x1="48" y1="430" x2="464" y2="430" stroke="#2f3c52" stroke-width="3" stroke-linecap="round"/>
+    <line x1="265" y1="250" x2="285" y2="342" stroke="#0b1019" stroke-width="31" stroke-linecap="round"/>
+  <line x1="265" y1="250" x2="285" y2="342" stroke="#475871" stroke-width="26" stroke-linecap="round"/>
+    <line x1="285" y1="342" x2="278" y2="418" stroke="#0b1019" stroke-width="26" stroke-linecap="round"/>
+  <line x1="285" y1="342" x2="278" y2="418" stroke="#8da0ba" stroke-width="21" stroke-linecap="round"/>
+    <path d="M 286 414 L 258 420 Q 252 428 260 430 L 288 430 Q 292 424 286 414 Z" fill="#2c3749" stroke="#0b1019" stroke-width="2.5"/>
+    <line x1="250" y1="252" x2="262" y2="342" stroke="#0b1019" stroke-width="29" stroke-linecap="round"/>
+  <line x1="250" y1="252" x2="262" y2="342" stroke="#475871" stroke-width="24" stroke-linecap="round"/>
+    <line x1="262" y1="342" x2="256" y2="418" stroke="#0b1019" stroke-width="24" stroke-linecap="round"/>
+  <line x1="262" y1="342" x2="256" y2="418" stroke="#8da0ba" stroke-width="19" stroke-linecap="round"/>
+    <line x1="260" y1="248" x2="168" y2="200" stroke="#0b1019" stroke-width="45" stroke-linecap="round"/>
+  <line x1="260" y1="248" x2="168" y2="200" stroke="#3b4a60" stroke-width="40" stroke-linecap="round"/>
+    <circle cx="138" cy="188" r="22" fill="#8da0ba" stroke="#0b1019" stroke-width="3"/>
+  <path d="M 120 184 Q 138 160 156 184" fill="#2c3749"/>
+    <line x1="175" y1="204" x2="118" y2="278" stroke="#0b1019" stroke-width="22" stroke-linecap="round"/>
+  <line x1="175" y1="204" x2="118" y2="278" stroke="#8da0ba" stroke-width="17" stroke-linecap="round"/>
+    <line x1="118" y1="278" x2="92" y2="260" stroke="#0b1019" stroke-width="20" stroke-linecap="round"/>
+  <line x1="118" y1="278" x2="92" y2="260" stroke="#8da0ba" stroke-width="15" stroke-linecap="round"/>
+    <line x1="186" y1="204" x2="252" y2="175" stroke="#0b1019" stroke-width="23" stroke-linecap="round"/>
+  <line x1="186" y1="204" x2="252" y2="175" stroke="#8da0ba" stroke-width="18" stroke-linecap="round"/>
+    <line x1="252" y1="175" x2="314" y2="152" stroke="#0b1019" stroke-width="21" stroke-linecap="round"/>
+  <line x1="252" y1="175" x2="314" y2="152" stroke="#8da0ba" stroke-width="16" stroke-linecap="round"/>
+    <g transform="translate(88,258) rotate(-30) scale(0.85)">
+    <rect x="-26" y="-5" width="52" height="10" rx="3" fill="#b0c0d4" stroke="#0b1019" stroke-width="2"/>
+    <rect x="-32" y="-17" width="12" height="34" rx="4" fill="#566780" stroke="#0b1019" stroke-width="2.5"/>
+    <rect x="20" y="-17" width="12" height="34" rx="4" fill="#566780" stroke="#0b1019" stroke-width="2.5"/>
+  </g>
+    <g transform="translate(322,150) rotate(-25) scale(0.85)">
+    <rect x="-26" y="-5" width="52" height="10" rx="3" fill="#b0c0d4" stroke="#0b1019" stroke-width="2"/>
+    <rect x="-32" y="-17" width="12" height="34" rx="4" fill="#566780" stroke="#0b1019" stroke-width="2.5"/>
+    <rect x="20" y="-17" width="12" height="34" rx="4" fill="#566780" stroke="#0b1019" stroke-width="2.5"/>
+  </g>
+    <ellipse cx="184" cy="200" rx="18" ry="12" transform="rotate(-20 184 200)" fill="url(#muscleGrad)" filter="url(#glow)" opacity="0.93"/>
+    <polygon points="172,190 226,210 218,232 166,208" fill="url(#muscleGrad)" filter="url(#glow)" opacity="0.93"/>
+    <path d="M 295 250 Q 332 210 318 170" fill="none" stroke="#38bdf8" stroke-width="4" stroke-dasharray="7 6" stroke-linecap="round" opacity="0.9"/>
+  
+</svg>

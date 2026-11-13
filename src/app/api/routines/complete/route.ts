@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withAccount } from '@/lib/account-context';
 import { createActivity, getAthleteProfile, listRoutines, updateRoutine } from '@/lib/db';
 import { estimateActivityTSS } from '@/lib/metrics';
+import { sanitizeImageList } from '@/lib/uploads';
 import type { StrengthSetLog } from '@/types';
 
 export async function POST(req: NextRequest) {
@@ -73,6 +74,7 @@ export async function POST(req: NextRequest) {
         strengthLogs,
         totalVolumeKg: Math.round(totalVolumeKg),
         doneTogether: Boolean(body.doneTogether),
+        images: sanitizeImageList(body.images),
         createdAt: nowIso,
       });
 
