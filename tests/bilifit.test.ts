@@ -23,6 +23,7 @@ import {
   calculateNormalizedPower,
   calculatePMC,
   computePowerCurve,
+  defaultMapLayerForSport,
   defaultSubSportForSport,
   getEffectiveAvgSpeedMs,
   getEffectiveDurationSec,
@@ -3055,4 +3056,31 @@ test('Telemetry chart pointer mapping syncs accurately and excludePausedTime upd
   assert.ok(hrAfterSec < hrBeforeSec - 120);
   assert.ok(z1AfterSec < z1BeforeSec);
   assert.ok((after.extras?.gapSpeedMs ?? 0) > (pauseAct.extras?.gapSpeedMs ?? 0) + 0.4);
+});
+
+test('Running and walking activities and segments default to dark map layer', () => {
+  assert.equal(defaultMapLayerForSport('running'), 'dark');
+  assert.equal(defaultMapLayerForSport('walking'), 'dark');
+  assert.equal(defaultMapLayerForSport('trail'), 'topo');
+  assert.equal(defaultMapLayerForSport('mountain'), 'topo');
+  assert.equal(defaultMapLayerForSport('cycling'), 'osm');
+  assert.equal(defaultMapLayerForSport('mywhoosh', true), 'virtual');
+  assert.equal(defaultMapLayerForSport('running', true), 'virtual');
+
+  const activityDetailSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src', 'app', 'actividades', '[id]', 'page.tsx'),
+    'utf8'
+  );
+  const segmentsPageSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src', 'app', 'segmentos', 'page.tsx'),
+    'utf8'
+  );
+  const activityMapSrc = fs.readFileSync(
+    path.join(process.cwd(), 'src', 'components', 'ActivityMap.tsx'),
+    'utf8'
+  );
+
+  assert.ok(activityDetailSrc.includes('defaultMapLayerForSport(activity.sport, Boolean(worldInfo))'));
+  assert.ok(segmentsPageSrc.includes('defaultMapLayerForSport(selectedSegment.sport, Boolean(selectedSegment.worldName))'));
+  assert.ok(activityMapSrc.includes('prevDefaultLayerRef'));
 });

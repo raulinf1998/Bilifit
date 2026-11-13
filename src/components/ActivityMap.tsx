@@ -20,9 +20,8 @@ import {
   toWorldDisplayCoords,
 } from '@/lib/mywhoosh-maps';
 import { decodePolyline } from '@/lib/polyline';
+import type { MapStyle } from '@/lib/metrics';
 import type { ActivityPoint, SportType } from '@/types';
-
-type MapStyle = 'virtual' | 'topo' | 'osm' | 'dark';
 
 function isWebGLSupported(): boolean {
   if (typeof document === 'undefined') return false;
@@ -151,6 +150,7 @@ export default function ActivityMap({
 
   const matchedWorldId = myWhooshMatch?.world.id ?? null;
   const prevWorldIdRef = useRef<string | null>(matchedWorldId);
+  const prevDefaultLayerRef = useRef<MapStyle>(defaultLayer);
   const [layer, setLayer] = useState<MapStyle>(matchedWorldId ? 'virtual' : defaultLayer);
   const [fitScope, setFitScope] = useState<'world' | 'route'>('world');
 
@@ -159,8 +159,11 @@ export default function ActivityMap({
       setLayer('virtual');
     } else if (!matchedWorldId && prevWorldIdRef.current !== null && layer === 'virtual') {
       setLayer(defaultLayer === 'virtual' ? 'topo' : defaultLayer);
+    } else if (!matchedWorldId && prevDefaultLayerRef.current !== defaultLayer) {
+      setLayer(defaultLayer === 'virtual' ? 'topo' : defaultLayer);
     }
     prevWorldIdRef.current = matchedWorldId;
+    prevDefaultLayerRef.current = defaultLayer;
   }, [matchedWorldId, defaultLayer, layer]);
 
   // Coordenadas geográficas alineadas al mundo (para sincronía de hover con perfil de altitud/telemetría)

@@ -38,6 +38,7 @@ import {
   type TrimUnit,
 } from '@/lib/activity-trim';
 import {
+  defaultMapLayerForSport,
   defaultSubSportForSport,
   formatDistanceKm,
   formatDuration,
@@ -1158,9 +1159,7 @@ export default function ActivityDetailPage() {
             worldName={activity.worldName}
             title={activity.title}
             color={sportColor(activity.sport)}
-            defaultLayer={
-              worldInfo ? 'virtual' : activity.sport === 'mountain' || activity.sport === 'trail' ? 'topo' : 'osm'
-            }
+            defaultLayer={defaultMapLayerForSport(activity.sport, Boolean(worldInfo))}
             hoverPoint={hoverPoint}
             highlightPolyline={highlightPolyline}
             trimPreview={

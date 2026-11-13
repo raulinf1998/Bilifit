@@ -202,6 +202,15 @@ export function resolveDisplaySubSport(sport: SportType, subSport?: string | nul
   return trimmed;
 }
 
+export type MapStyle = 'virtual' | 'topo' | 'osm' | 'dark';
+
+export function defaultMapLayerForSport(sport?: SportType, hasVirtualWorld = false): MapStyle {
+  if (hasVirtualWorld) return 'virtual';
+  if (sport === 'mountain' || sport === 'trail') return 'topo';
+  if (sport === 'running' || sport === 'walking') return 'dark';
+  return 'osm';
+}
+
 export function sportColor(sport: SportType): string {
   switch (sport) {
     case 'running':
