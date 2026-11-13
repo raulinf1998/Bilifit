@@ -153,6 +153,16 @@ const AI_EXERCISE_IMAGE_IDS = new Set([
   'ex_nordic_eccentric_calf',
   'ex_side_plank_clam',
   'ex_foam_thoracic_ext',
+  'ex_db_incline_curl',
+  'ex_db_rdl',
+  'ex_band_face_pull',
+  'ex_deadbug',
+  'ex_band_pallof_press',
+  'ex_pushup',
+  'ex_decline_pushup',
+  'ex_pike_pushup',
+  'ex_air_squat',
+  'ex_bulgarian_bw',
 ]);
 
 export function defaultExerciseImageUrl(id: string): string {
