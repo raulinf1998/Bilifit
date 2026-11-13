@@ -143,6 +143,7 @@ export interface StrengthSetLog {
   exerciseId: string;
   exerciseName: string;
   equipmentUsed: string[];
+  perDumbbell?: boolean;
   sets: Array<{
     reps: number;
     weightKg: number;
@@ -280,6 +281,7 @@ export interface Exercise {
   restSeconds: number;
   instructions: string;
   imageUrl?: string | null;
+  perDumbbell?: boolean;
   isCustom?: boolean;
 }
 
@@ -291,6 +293,7 @@ export interface RoutineExerciseItem {
   sets: number;
   reps: string;
   suggestedWeightKg?: number;
+  perDumbbell?: boolean;
   restSeconds: number;
   notes?: string;
   imageUrl?: string | null;

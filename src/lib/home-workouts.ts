@@ -120,6 +120,58 @@ export const DEFAULT_HOME_EQUIPMENT: HomeEquipment[] = [
   },
 ];
 
+export const PER_DUMBBELL_EXERCISE_IDS = new Set([
+  'ex_db_rdl',
+  'ex_db_bulgarian_split',
+  'ex_db_floor_press',
+  'ex_db_bench_press',
+  'ex_db_bent_over_row',
+  'ex_db_overhead_press',
+  'ex_db_lateral_raise',
+  'ex_db_thruster',
+  'ex_db_hammer_curl',
+  'ex_db_incline_press',
+  'ex_db_chest_fly',
+  'ex_db_seated_shoulder_press',
+  'ex_db_rear_delt_fly',
+  'ex_db_hammer_curl_strict',
+  'ex_db_walking_lunges',
+  'ex_db_incline_curl',
+]);
+
+export const SINGLE_DUMBBELL_EXERCISE_IDS = new Set([
+  'ex_db_goblet_squat',
+  'ex_db_single_leg_rdl',
+  'ex_db_one_arm_row',
+  'ex_db_suitcase_carry',
+]);
+
+export function isPerDumbbellByDefault(id: string): boolean {
+  return PER_DUMBBELL_EXERCISE_IDS.has(id);
+}
+
+export function isSingleDumbbellByDefault(id: string): boolean {
+  return SINGLE_DUMBBELL_EXERCISE_IDS.has(id);
+}
+
+export function resolveIsPerDumbbell(
+  input: { exerciseId?: string; perDumbbell?: boolean },
+  lookupPerDumbbell?: boolean
+): boolean {
+  if (typeof input.perDumbbell === 'boolean') return input.perDumbbell;
+  if (typeof lookupPerDumbbell === 'boolean') return lookupPerDumbbell;
+  return input.exerciseId ? PER_DUMBBELL_EXERCISE_IDS.has(input.exerciseId) : false;
+}
+
+export function calculateStrengthSetVolumeKg(
+  set: { reps: number; weightKg: number; durationSec?: number },
+  perDumbbell?: boolean
+): number {
+  const weight = Number(set.weightKg) || 0;
+  const factor = set.durationSec && set.durationSec > 0 ? 1 : Number(set.reps) || 0;
+  return factor * weight * (perDumbbell ? 2 : 1);
+}
+
 export function defaultExerciseImageUrl(id: string): string {
   return `/exercises/${id}.jpg`;
 }
@@ -1227,6 +1279,7 @@ const RAW_DEFAULT_EXERCISES: Exercise[] = [
 export const DEFAULT_EXERCISES: Exercise[] = RAW_DEFAULT_EXERCISES.map((ex) => ({
   ...ex,
   imageUrl: ex.imageUrl ?? defaultExerciseImageUrl(ex.id),
+  perDumbbell: ex.perDumbbell ?? isPerDumbbellByDefault(ex.id),
 }));
 
 export const ROUTINE_GOAL_LABELS: Record<RoutineGoal, { label: string; description: string }> = {
@@ -1473,6 +1526,7 @@ export function generateHomeRoutine(params: {
       sets,
       reps: chosen.defaultReps,
       suggestedWeightKg,
+      perDumbbell: Boolean(chosen.perDumbbell),
       restSeconds,
       notes: chosen.instructions,
       imageUrl: chosen.imageUrl ?? defaultExerciseImageUrl(chosen.id),

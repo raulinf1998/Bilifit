@@ -23,7 +23,11 @@ import {
 import ImageLightboxModal from '@/components/ImageLightboxModal';
 import ImageUploadControl from '@/components/ImageUploadControl';
 import WorkoutPlayer, { type LastExerciseLogRef } from '@/components/WorkoutPlayer';
-import { ROUTINE_GOAL_LABELS } from '@/lib/home-workouts';
+import {
+  isSingleDumbbellByDefault,
+  resolveIsPerDumbbell,
+  ROUTINE_GOAL_LABELS,
+} from '@/lib/home-workouts';
 import type {
   Exercise,
   HomeEquipment,
@@ -89,6 +93,7 @@ export default function HomeWorkoutsPage() {
   const [newExMuscle, setNewExMuscle] = useState<MuscleGroup>('piernas');
   const [newExPattern, setNewExPattern] = useState<Exercise['pattern']>('rodilla');
   const [newExEquip, setNewExEquip] = useState<string[]>([]);
+  const [newExPerDumbbell, setNewExPerDumbbell] = useState(true);
   const [newExReps, setNewExReps] = useState('10-12');
   const [newExInstructions, setNewExInstructions] = useState('');
   const [newExImageUrl, setNewExImageUrl] = useState<string | null>(null);
@@ -155,6 +160,14 @@ export default function HomeWorkoutsPage() {
     const map: Record<string, string | null | undefined> = {};
     for (const ex of exercises) {
       map[ex.id] = ex.imageUrl ?? null;
+    }
+    return map;
+  }, [exercises]);
+
+  const exercisePerDumbbellMap = useMemo(() => {
+    const map: Record<string, boolean> = {};
+    for (const ex of exercises) {
+      map[ex.id] = Boolean(ex.perDumbbell);
     }
     return map;
   }, [exercises]);
@@ -320,6 +333,7 @@ export default function HomeWorkoutsPage() {
             sets: ex.defaultSets,
             reps: ex.defaultReps,
             suggestedWeightKg: ex.requiredEquipment.includes('dumbbells') ? 12 : undefined,
+            perDumbbell: Boolean(ex.perDumbbell),
             restSeconds: ex.restSeconds,
             notes: ex.instructions,
             imageUrl: ex.imageUrl ?? null,
@@ -396,6 +410,7 @@ export default function HomeWorkoutsPage() {
         restSeconds: 60,
         instructions: newExInstructions || 'Ejecución controlada manteniendo buena técnica.',
         imageUrl: newExImageUrl,
+        perDumbbell: newExEquip.includes('dumbbells') && newExPerDumbbell,
       }),
     });
     if (res.ok) {
@@ -404,6 +419,7 @@ export default function HomeWorkoutsPage() {
       setNewExName('');
       setNewExInstructions('');
       setNewExEquip([]);
+      setNewExPerDumbbell(true);
       setNewExImageUrl(null);
       setShowNewEx(false);
     }
@@ -678,6 +694,10 @@ export default function HomeWorkoutsPage() {
                 <div className="space-y-3">
                   {generatedPlan.items.map((item, idx) => {
                     const imgUrl = resolveItemImage(item.exerciseId, item.imageUrl);
+                    const perDb = resolveIsPerDumbbell(item, exercisePerDumbbellMap[item.exerciseId]);
+                    const isSingleDb =
+                      !perDb &&
+                      (isSingleDumbbellByDefault(item.exerciseId) || item.requiredEquipment.includes('dumbbells'));
                     return (
                       <div
                         key={`${item.exerciseId}-${idx}`}
@@ -718,6 +738,16 @@ export default function HomeWorkoutsPage() {
                                   <span className="text-[11px] px-2 py-0.5 rounded-full bg-sunken" style={{ color: 'var(--text-secondary)' }}>
                                     {MUSCLE_LABELS[item.muscleGroup]}
                                   </span>
+                                  {perDb && (
+                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded border border-purple-500/35 bg-purple-500/15 text-purple-700 dark:text-purple-300">
+                                      Por mancuerna (×2)
+                                    </span>
+                                  )}
+                                  {isSingleDb && (
+                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded border border-cyan-500/35 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300">
+                                      1 mancuerna
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="flex flex-wrap items-center gap-1.5 mt-1">
                                   {item.requiredEquipment.length === 0 ? (
@@ -738,7 +768,7 @@ export default function HomeWorkoutsPage() {
                                 <div className="text-right text-xs tabular-nums">
                                   <div className="font-bold">
                                     {item.sets} × {item.reps}
-                                    {item.suggestedWeightKg ? ` (${item.suggestedWeightKg} kg)` : ''}
+                                    {item.suggestedWeightKg ? ` (${item.suggestedWeightKg} kg${perDb ? ' c/u' : ''})` : ''}
                                   </div>
                                   <div style={{ color: 'var(--text-muted)' }}>Descanso {item.restSeconds}s</div>
                                 </div>
@@ -982,6 +1012,10 @@ export default function HomeWorkoutsPage() {
                 <div className="space-y-1.5 pt-1">
                   {rt.items.map((item, idx) => {
                     const thumbUrl = resolveItemImage(item.exerciseId, item.imageUrl);
+                    const perDb = resolveIsPerDumbbell(item, exercisePerDumbbellMap[item.exerciseId]);
+                    const isSingleDb =
+                      !perDb &&
+                      (isSingleDumbbellByDefault(item.exerciseId) || item.requiredEquipment.includes('dumbbells'));
                     return (
                       <div
                         key={`${item.exerciseId}-${idx}`}
@@ -1012,13 +1046,25 @@ export default function HomeWorkoutsPage() {
                         </button>
 
                         <div className="min-w-0 flex-1">
-                          <div className="font-semibold text-xs sm:text-[13px] truncate">
-                            {idx + 1}. {item.exerciseName}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="font-semibold text-xs sm:text-[13px] truncate">
+                              {idx + 1}. {item.exerciseName}
+                            </span>
+                            {perDb && (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-purple-500/35 bg-purple-500/15 text-purple-700 dark:text-purple-300 shrink-0">
+                                Por mancuerna (×2)
+                              </span>
+                            )}
+                            {isSingleDb && (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-cyan-500/35 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 shrink-0">
+                                1 mancuerna
+                              </span>
+                            )}
                           </div>
                           <div className="text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
                             {item.sets} × {item.reps}
                             {typeof item.suggestedWeightKg === 'number' && item.suggestedWeightKg > 0
-                              ? ` (${item.suggestedWeightKg} kg)`
+                              ? ` (${item.suggestedWeightKg} kg${perDb ? ' c/u' : ''})`
                               : ''}
                           </div>
                         </div>
@@ -1157,6 +1203,17 @@ export default function HomeWorkoutsPage() {
                       );
                     })}
                   </div>
+                  {newExEquip.includes('dumbbells') && (
+                    <label className="mt-2 inline-flex items-center gap-2 text-[11px] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={newExPerDumbbell}
+                        onChange={(e) => setNewExPerDumbbell(e.target.checked)}
+                        className="accent-purple-500"
+                      />
+                      <span>Usa 2 mancuernas (anotar peso por mancuerna y multiplicar volumen ×2)</span>
+                    </label>
+                  )}
                 </div>
                 <input
                   value={newExInstructions}
@@ -1213,6 +1270,10 @@ export default function HomeWorkoutsPage() {
             <div className="space-y-2 max-h-[540px] overflow-y-auto pr-1">
               {libraryExercises.map((ex) => {
                 const compatible = ex.requiredEquipment.every((id) => ownedSet.has(id));
+                const perDb = resolveIsPerDumbbell({ exerciseId: ex.id, perDumbbell: ex.perDumbbell });
+                const isSingleDb =
+                  !perDb &&
+                  (isSingleDumbbellByDefault(ex.id) || ex.requiredEquipment.includes('dumbbells'));
                 return (
                   <div
                     key={ex.id}
@@ -1249,6 +1310,16 @@ export default function HomeWorkoutsPage() {
                           <span className="text-[10px] px-2 py-0.5 rounded bg-sunken" style={{ color: 'var(--text-secondary)' }}>
                             {MUSCLE_LABELS[ex.muscleGroup]}
                           </span>
+                          {perDb && (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-purple-500/35 bg-purple-500/15 text-purple-700 dark:text-purple-300">
+                              Por mancuerna (×2)
+                            </span>
+                          )}
+                          {isSingleDb && (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border border-cyan-500/35 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300">
+                              1 mancuerna
+                            </span>
+                          )}
                           {!compatible && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300">
                               Falta material
@@ -1277,6 +1348,7 @@ export default function HomeWorkoutsPage() {
                             sets: ex.defaultSets,
                             reps: ex.defaultReps,
                             suggestedWeightKg: ex.requiredEquipment.includes('dumbbells') ? 10 : undefined,
+                            perDumbbell: perDb,
                             restSeconds: ex.restSeconds,
                             notes: ex.instructions,
                             imageUrl: ex.imageUrl ?? null,
@@ -1394,7 +1466,9 @@ export default function HomeWorkoutsPage() {
                           />
                         </label>
                         <label className="space-y-0.5">
-                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Kg sug.</span>
+                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                            {resolveIsPerDumbbell(item, exercisePerDumbbellMap[item.exerciseId]) ? 'Kg c/u sug.' : 'Kg sug.'}
+                          </span>
                           <input
                             type="number"
                             min={0}
@@ -1606,6 +1680,7 @@ export default function HomeWorkoutsPage() {
           routineName={activeWorkout.name}
           items={activeWorkout.items}
           exerciseImages={exerciseImagesMap}
+          exercisePerDumbbell={exercisePerDumbbellMap}
           lastExerciseLogs={lastExerciseLogs}
           onExerciseImageUpdated={(exerciseId, nextUrl) => {
             setExercises((prev) =>

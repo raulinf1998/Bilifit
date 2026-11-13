@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { withAccount } from '@/lib/account-context';
-import { createActivity, getAthleteProfile, listRoutines, updateRoutine } from '@/lib/db';
+import { createActivity, getAthleteProfile, listAllExercises, listRoutines, updateRoutine } from '@/lib/db';
+import { calculateStrengthSetVolumeKg, resolveIsPerDumbbell } from '@/lib/home-workouts';
 import { estimateActivityTSS } from '@/lib/metrics';
 import { sanitizeImageList } from '@/lib/uploads';
 import type { StrengthSetLog } from '@/types';
@@ -13,18 +14,24 @@ export async function POST(req: NextRequest) {
       const title = String(body.title || 'Rutina de Fuerza en Casa').trim();
       const durationSec = Math.max(120, Math.round(Number(body.durationSec || 1800)));
       const rpe = Math.min(10, Math.max(1, Number(body.rpe || 7)));
-      const strengthLogs: StrengthSetLog[] = Array.isArray(body.strengthLogs) ? body.strengthLogs : [];
+      const rawLogs: StrengthSetLog[] = Array.isArray(body.strengthLogs) ? body.strengthLogs : [];
 
+      const exerciseLookup = new Map(listAllExercises().map((ex) => [ex.id, ex]));
       let totalVolumeKg = 0;
-      for (const ex of strengthLogs) {
-        for (const s of ex.sets) {
-          if (s.completed) {
-            const weight = Number(s.weightKg) || 0;
-            const factor = s.durationSec && s.durationSec > 0 ? 1 : Number(s.reps) || 0;
-            totalVolumeKg += factor * weight;
+      const strengthLogs: StrengthSetLog[] = rawLogs
+        .map((ex) => {
+          const perDumbbell = resolveIsPerDumbbell(ex, exerciseLookup.get(ex.exerciseId)?.perDumbbell);
+          const completedSets = (ex.sets ?? []).filter((s) => Boolean(s?.completed));
+          for (const s of completedSets) {
+            totalVolumeKg += calculateStrengthSetVolumeKg(s, perDumbbell);
           }
-        }
-      }
+          return {
+            ...ex,
+            sets: completedSets,
+            ...(perDumbbell ? { perDumbbell: true } : typeof ex.perDumbbell === 'boolean' ? { perDumbbell: ex.perDumbbell } : {}),
+          };
+        })
+        .filter((ex) => ex.sets.length > 0);
 
       const profile = getAthleteProfile();
       const tss = estimateActivityTSS(
@@ -47,7 +54,7 @@ export async function POST(req: NextRequest) {
         title,
         description: body.notes
           ? String(body.notes)
-          : `Sesión en casa completada (${strengthLogs.length} ejercicios · ${Math.round(totalVolumeKg)} kg movidos).`,
+          : `Sesión en casa completada (${strengthLogs.length} ${strengthLogs.length === 1 ? 'ejercicio' : 'ejercicios'} · ${Math.round(totalVolumeKg)} kg movidos).`,
         startedAt: nowIso,
         durationSec,
         movingTimeSec: durationSec,
