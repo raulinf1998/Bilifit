@@ -408,6 +408,7 @@ function ActiveAppShell({
             setShowSettings(false);
             router.push('/ajustes');
           }}
+          onActivitiesReloaded={() => router.refresh()}
           onClose={() => setShowSettings(false)}
         />
       )}

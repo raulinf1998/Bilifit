@@ -1,5 +1,10 @@
 import { computeElevationGainLoss, haversineMeters } from '@/lib/polyline';
-import { calculateNormalizedPower } from '@/lib/metrics';
+import {
+  calculateNormalizedPower,
+  getEffectiveAvgSpeedMs,
+  getEffectiveDurationSec,
+  isIntervalMoving,
+} from '@/lib/metrics';
 import type {
   Activity,
   ActivityExtras,
@@ -136,7 +141,11 @@ export function enrichPointsTelemetry(points: ActivityPoint[], sport: SportType)
 /**
  * Calcula parciales automáticos cada 1.000 metros (incluyendo GAP, desnivel, FC, potencia y cadencia).
  */
-export function computeKmSplits(points: ActivityPoint[], sport: SportType): ActivityLap[] {
+export function computeKmSplits(
+  points: ActivityPoint[],
+  sport: SportType,
+  excludePausedTime = false
+): ActivityLap[] {
   if (points.length < 2) return [];
   const totalDist = points[points.length - 1]?.dist ?? 0;
   if (totalDist < 150) return [];
@@ -144,6 +153,9 @@ export function computeKmSplits(points: ActivityPoint[], sport: SportType): Acti
   const splits: ActivityLap[] = [];
   let splitIdx = 1;
   let splitStartIdx = 0;
+
+  const isPaceSport =
+    sport === 'running' || sport === 'trail' || sport === 'mountain' || sport === 'walking';
 
   const buildLap = (startIdx: number, endIdx: number, lapNum: number): ActivityLap | null => {
     const startPt = points[startIdx];
@@ -165,20 +177,39 @@ export function computeKmSplits(points: ActivityPoint[], sport: SportType): Acti
     let cadCnt = 0;
     let maxSpeed = 0;
     let movingSec = 0;
+    let movingValidDt = 0;
+
+    for (let k = 1; k < slice.length; k++) {
+      const dt = slice[k].t - slice[k - 1].t;
+      if (dt <= 0 || dt > 120) continue;
+      movingValidDt += dt;
+      if (isIntervalMoving(slice[k - 1], slice[k])) {
+        movingSec += dt;
+      }
+    }
+
+    const hasRealPause = movingValidDt > 0 && movingSec > 0 && movingValidDt - movingSec >= 3;
+    const effMove = hasRealPause
+      ? Math.max(1, Math.min(dur, Math.round(dur * (movingSec / movingValidDt))))
+      : dur;
+
     let gapWeightedSum = 0;
     let gapDurSum = 0;
 
     for (let k = 0; k < slice.length; k++) {
       const pt = slice[k];
-      const dt = k > 0 ? Math.max(0, pt.t - slice[k - 1].t) : 0;
+      const dt = k > 0 ? Math.max(0, slice[k].t - slice[k - 1].t) : 0;
+      const moving = k === 0 || isIntervalMoving(slice[k - 1], pt);
       if (typeof pt.speed === 'number') {
         if (pt.speed > maxSpeed && pt.speed < 35) maxSpeed = pt.speed;
-        if (pt.speed > 0.35 || (pt.watts ?? 0) > 15) movingSec += dt;
-        if (pt.speed > 0.4 && (sport === 'running' || sport === 'trail' || sport === 'mountain' || sport === 'walking')) {
+      }
+      if (isPaceSport && k > 0 && dt > 0) {
+        if (moving && typeof pt.speed === 'number' && pt.speed > 0.4) {
           const factor = calculateMinettiGapFactor(pt.grade ?? 0);
-          const gapSpd = pt.speed * factor;
-          gapWeightedSum += gapSpd * Math.max(1, dt);
-          gapDurSum += Math.max(1, dt);
+          gapWeightedSum += pt.speed * factor * dt;
+          gapDurSum += dt;
+        } else if (!excludePausedTime && !moving) {
+          gapDurSum += dt;
         }
       }
       if (typeof pt.hr === 'number' && pt.hr > 25) {
@@ -196,8 +227,8 @@ export function computeKmSplits(points: ActivityPoint[], sport: SportType): Acti
       }
     }
 
-    const effMove = movingSec > 0 ? Math.round(movingSec) : dur;
-    const avgSpeedMs = Math.round((dist / effMove) * 100) / 100;
+    const activeDur = excludePausedTime ? effMove : dur;
+    const avgSpeedMs = Math.round((dist / activeDur) * 100) / 100;
     const avgGradePct =
       typeof startPt.ele === 'number' && typeof endPt.ele === 'number' && dist > 0
         ? Math.round(((endPt.ele - startPt.ele) / dist) * 1000) / 10
@@ -213,7 +244,7 @@ export function computeKmSplits(points: ActivityPoint[], sport: SportType): Acti
       movingTimeSec: effMove,
       avgSpeedMs,
       maxSpeedMs: maxSpeed > 0 ? Math.round(maxSpeed * 100) / 100 : null,
-      gapSpeedMs: gapDurSum > 0 ? Math.round((gapWeightedSum / gapDurSum) * 100) / 100 : null,
+      gapSpeedMs: gapDurSum > 0 && gapWeightedSum > 0 ? Math.round((gapWeightedSum / gapDurSum) * 100) / 100 : null,
       elevationGain: eleStats.gain,
       elevationLoss: eleStats.loss,
       avgGradePct,
@@ -241,6 +272,92 @@ export function computeKmSplits(points: ActivityPoint[], sport: SportType): Acti
   }
 
   return splits;
+}
+
+/**
+ * Enriquece las vueltas/segmentos del dispositivo con su tiempo en movimiento real
+ * a partir de los puntos GPS y recalcula su velocidad efectiva según `excludePausedTime`.
+ */
+export function enrichActivityLaps(
+  laps: ActivityLap[] | undefined,
+  points: ActivityPoint[],
+  activity: Pick<Activity, 'durationSec' | 'movingTimeSec' | 'excludePausedTime'>
+): ActivityLap[] {
+  if (!laps || laps.length === 0) return [];
+
+  let cursorIdx = 0;
+  let lastStartDist = -1;
+
+  const updated = laps.map((lap) => {
+    const dur = Math.max(1, lap.durationSec || 1);
+    let mov = lap.movingTimeSec > 0 ? Math.min(dur, lap.movingTimeSec) : dur;
+
+    if (mov >= dur && points.length >= 2 && lap.endDistM > lap.startDistM) {
+      if (lap.startDistM < lastStartDist) {
+        cursorIdx = 0;
+      }
+      lastStartDist = lap.startDistM;
+
+      let startIdx = cursorIdx;
+      while (startIdx < points.length - 1 && (points[startIdx].dist ?? 0) < lap.startDistM - 10) {
+        startIdx++;
+      }
+      let endIdx = startIdx;
+      while (endIdx < points.length - 1 && (points[endIdx].dist ?? 0) < lap.endDistM) {
+        endIdx++;
+      }
+      if (endIdx > startIdx) {
+        cursorIdx = endIdx;
+        const slice = points.slice(startIdx, endIdx + 1);
+        let validDt = 0;
+        let movingDt = 0;
+        for (let k = 1; k < slice.length; k++) {
+          const dt = slice[k].t - slice[k - 1].t;
+          if (dt <= 0 || dt > 120) continue;
+          validDt += dt;
+          if (isIntervalMoving(slice[k - 1], slice[k])) {
+            movingDt += dt;
+          }
+        }
+        if (validDt >= 5 && movingDt > 0 && validDt - movingDt >= 4) {
+          mov = Math.max(1, Math.min(dur, Math.round(dur * (movingDt / validDt))));
+        }
+      }
+    }
+
+    return {
+      ...lap,
+      movingTimeSec: mov,
+    };
+  });
+
+  // Fallback proporcional si los laps cubren toda la actividad pero ninguno traía pausas desglosadas
+  const actDur = activity.durationSec || 0;
+  const actMov = activity.movingTimeSec || 0;
+  if (actDur > 0 && actMov > 0 && actDur - actMov >= 5) {
+    const sumDur = updated.reduce((s, l) => s + (l.durationSec || 0), 0);
+    const sumMov = updated.reduce((s, l) => s + (l.movingTimeSec || 0), 0);
+    const anyLapHasPause = sumDur - sumMov >= 4;
+    if (!anyLapHasPause && sumDur > 0 && Math.abs(sumDur - actDur) <= Math.max(30, actDur * 0.15)) {
+      const ratio = actMov / actDur;
+      for (const lap of updated) {
+        lap.movingTimeSec = Math.max(1, Math.min(lap.durationSec, Math.round(lap.durationSec * ratio)));
+      }
+    }
+  }
+
+  const excludePaused = Boolean(activity.excludePausedTime);
+  return updated.map((lap) => {
+    const effDur = excludePaused && lap.movingTimeSec > 0 ? lap.movingTimeSec : lap.durationSec;
+    const avgSpeedMs =
+      lap.distanceMeters > 0 && effDur > 0 && (excludePaused || lap.movingTimeSec !== lap.durationSec)
+        ? Math.round((lap.distanceMeters / effDur) * 100) / 100
+        : lap.avgSpeedMs ?? null;
+    return {
+      ...lap,
+      avgSpeedMs,
+    };
+  });
 }
 
 /**
@@ -323,7 +440,11 @@ export function computeBestEfforts(points: ActivityPoint[], sport: SportType): B
 /**
  * Zonas de Frecuencia Cardíaca (Z1–Z5) en segundos y %.
  */
-export function computeHeartRateZones(points: ActivityPoint[], profile: AthleteProfile): ZoneBucket[] {
+export function computeHeartRateZones(
+  points: ActivityPoint[],
+  profile: AthleteProfile,
+  excludePausedTime = false
+): ZoneBucket[] {
   const maxHr = profile.maxHr || 190;
   const defs = [
     { zone: 'Z1', name: 'Recuperación', min: 0, max: 0.6, color: '#94A3B8' },
@@ -346,6 +467,7 @@ export function computeHeartRateZones(points: ActivityPoint[], profile: AthleteP
 
   let totalSec = 0;
   for (let i = 1; i < points.length; i++) {
+    if (excludePausedTime && !isIntervalMoving(points[i - 1], points[i])) continue;
     const hr = points[i].hr;
     if (typeof hr !== 'number' || hr < 30) continue;
     const dt = Math.max(1, Math.min(30, points[i].t - points[i - 1].t));
@@ -369,7 +491,11 @@ export function computeHeartRateZones(points: ActivityPoint[], profile: AthleteP
 /**
  * Zonas de Ritmo para correr y montaña.
  */
-export function computePaceZones(points: ActivityPoint[], sport: SportType): ZoneBucket[] {
+export function computePaceZones(
+  points: ActivityPoint[],
+  sport: SportType,
+  excludePausedTime = false
+): ZoneBucket[] {
   if (sport !== 'running' && sport !== 'trail' && sport !== 'mountain' && sport !== 'walking') return [];
   // Umbrales en s/km
   const defs =
@@ -393,6 +519,7 @@ export function computePaceZones(points: ActivityPoint[], sport: SportType): Zon
   let totalSec = 0;
 
   for (let i = 1; i < points.length; i++) {
+    if (excludePausedTime && !isIntervalMoving(points[i - 1], points[i])) continue;
     const spd = points[i].speed;
     if (typeof spd !== 'number' || spd < 0.5) continue;
     const paceSecKm = 1000 / spd;
@@ -418,7 +545,7 @@ export function computePaceZones(points: ActivityPoint[], sport: SportType): Zon
 /**
  * Desglose de distancia, tiempo y ritmo en Subida (>+2%), Llano y Bajada (<-2%).
  */
-export function computeTerrainBreakdown(points: ActivityPoint[]): TerrainSplit[] {
+export function computeTerrainBreakdown(points: ActivityPoint[], excludePausedTime = false): TerrainSplit[] {
   if (points.length < 3 || !points.some((p) => typeof p.grade === 'number')) return [];
 
   const buckets: Record<'subida' | 'llano' | 'bajada', { dist: number; dur: number }> = {
@@ -428,6 +555,7 @@ export function computeTerrainBreakdown(points: ActivityPoint[]): TerrainSplit[]
   };
 
   for (let i = 1; i < points.length; i++) {
+    if (excludePausedTime && !isIntervalMoving(points[i - 1], points[i])) continue;
     const dt = Math.max(0, Math.min(30, points[i].t - points[i - 1].t));
     const dd = Math.max(0, (points[i].dist ?? 0) - (points[i - 1].dist ?? 0));
     const g = points[i].grade ?? 0;
@@ -457,11 +585,38 @@ export function computeTerrainBreakdown(points: ActivityPoint[]): TerrainSplit[]
  * Calcula métricas fisiológicas avanzadas de sesión (GAP, VAM, EF, Desacople Aeróbico, VI, kJ, Temperatura, Dinámica de Carrera).
  */
 export function computeSessionExtras(
-  activity: Pick<Activity, 'sport' | 'durationSec' | 'movingTimeSec' | 'distanceMeters' | 'elevationGain' | 'avgSpeedMs' | 'avgHr' | 'avgWatts' | 'normalizedPower' | 'extras'>,
+  activity: Pick<
+    Activity,
+    | 'sport'
+    | 'durationSec'
+    | 'movingTimeSec'
+    | 'distanceMeters'
+    | 'elevationGain'
+    | 'avgSpeedMs'
+    | 'avgHr'
+    | 'avgWatts'
+    | 'normalizedPower'
+    | 'excludePausedTime'
+    | 'extras'
+  >,
   points: ActivityPoint[]
 ): ActivityExtras {
   const base: ActivityExtras = { ...(activity.extras ?? {}) };
   if (points.length === 0) return base;
+
+  const excludePaused = Boolean(activity.excludePausedTime);
+  const effectiveDuration = getEffectiveDurationSec({
+    durationSec: activity.durationSec,
+    movingTimeSec: activity.movingTimeSec,
+    excludePausedTime: excludePaused,
+  });
+  const effectiveAvgSpeed = getEffectiveAvgSpeedMs({
+    distanceMeters: activity.distanceMeters,
+    durationSec: activity.durationSec,
+    movingTimeSec: activity.movingTimeSec,
+    avgSpeedMs: activity.avgSpeedMs ?? null,
+    excludePausedTime: excludePaused,
+  });
 
   const eles = points.map((p) => p.ele).filter((v): v is number => typeof v === 'number');
   if (eles.length > 0) {
@@ -488,14 +643,14 @@ export function computeSessionExtras(
     base.avgStrideLenM = base.avgStrideLenM ?? Math.round((strides.reduce((a, b) => a + b, 0) / strides.length) * 100) / 100;
   } else if (
     (activity.sport === 'running' || activity.sport === 'trail' || activity.sport === 'mountain' || activity.sport === 'walking') &&
-    activity.avgSpeedMs &&
+    effectiveAvgSpeed &&
     points.some((p) => p.cad)
   ) {
     const minCad = activity.sport === 'walking' ? 70 : 100;
     const cads = points.map((p) => p.cad).filter((v): v is number => typeof v === 'number' && v > minCad);
     if (cads.length > 0) {
       const avgCad = cads.reduce((a, b) => a + b, 0) / cads.length;
-      base.avgStrideLenM = Math.round(((activity.avgSpeedMs * 60) / avgCad) * 100) / 100;
+      base.avgStrideLenM = Math.round(((effectiveAvgSpeed * 60) / avgCad) * 100) / 100;
     }
   }
 
@@ -508,7 +663,7 @@ export function computeSessionExtras(
   }
 
   // Potencia: trabajo kJ y Variability Index
-  const activeSec = activity.movingTimeSec || activity.durationSec || 0;
+  const activeSec = effectiveDuration || activity.movingTimeSec || activity.durationSec || 0;
   if (activity.avgWatts && activeSec > 0) {
     base.workKj = base.workKj ?? Math.round((activity.avgWatts * activeSec) / 1000);
     if (activity.normalizedPower && activity.avgWatts > 0) {
@@ -520,8 +675,8 @@ export function computeSessionExtras(
   if (activity.avgHr && activity.avgHr > 0) {
     if (activity.normalizedPower) {
       base.efficiencyFactor = Math.round((activity.normalizedPower / activity.avgHr) * 100) / 100;
-    } else if (activity.avgSpeedMs) {
-      base.efficiencyFactor = Math.round(((activity.avgSpeedMs * 60) / activity.avgHr) * 100) / 100;
+    } else if (effectiveAvgSpeed) {
+      base.efficiencyFactor = Math.round(((effectiveAvgSpeed * 60) / activity.avgHr) * 100) / 100;
     }
   }
 
@@ -555,12 +710,16 @@ export function computeSessionExtras(
     for (let i = 1; i < points.length; i++) {
       const spd = points[i].speed;
       const dt = Math.max(0, Math.min(30, points[i].t - points[i - 1].t));
-      if (typeof spd === 'number' && spd > 0.4 && dt > 0) {
+      if (dt <= 0) continue;
+      const moving = isIntervalMoving(points[i - 1], points[i]);
+      if (moving && typeof spd === 'number' && spd > 0.4) {
         gapSum += spd * calculateMinettiGapFactor(points[i].grade ?? 0) * dt;
+        gapDur += dt;
+      } else if (!excludePaused && !moving) {
         gapDur += dt;
       }
     }
-    if (gapDur > 0) {
+    if (gapDur > 0 && gapSum > 0) {
       base.gapSpeedMs = Math.round((gapSum / gapDur) * 100) / 100;
     }
   }
@@ -569,6 +728,7 @@ export function computeSessionExtras(
   let climbGain = 0;
   let climbSec = 0;
   for (let i = 1; i < points.length; i++) {
+    if (excludePaused && !isIntervalMoving(points[i - 1], points[i])) continue;
     const de = (points[i].ele ?? 0) - (points[i - 1].ele ?? 0);
     const dt = Math.max(0, Math.min(30, points[i].t - points[i - 1].t));
     if (de > 0 && (points[i].grade ?? 0) >= 2 && dt > 0) {

@@ -35,6 +35,9 @@ export default function MountainRoutesPage() {
 
   useEffect(() => {
     load();
+    const onReload = () => load();
+    window.addEventListener('bilifit:activities-reloaded', onReload);
+    return () => window.removeEventListener('bilifit:activities-reloaded', onReload);
   }, [load]);
 
   async function handleAddRoute(e: React.FormEvent) {

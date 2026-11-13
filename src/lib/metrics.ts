@@ -1,4 +1,29 @@
+import { haversineMeters } from '@/lib/polyline';
 import type { Activity, ActivityPoint, AthleteProfile, FitnessDayPoint, SportType } from '@/types';
+
+export function isIntervalMoving(prev: ActivityPoint, cur: ActivityPoint): boolean {
+  const dt = cur.t - prev.t;
+  if (dt <= 0) return false;
+  let stepSpd: number | undefined;
+  if (
+    typeof prev.lat === 'number' &&
+    typeof prev.lon === 'number' &&
+    typeof cur.lat === 'number' &&
+    typeof cur.lon === 'number'
+  ) {
+    stepSpd = haversineMeters(prev.lat, prev.lon, cur.lat, cur.lon) / dt;
+  } else if (typeof cur.dist === 'number' && typeof prev.dist === 'number' && cur.dist >= prev.dist) {
+    stepSpd = (cur.dist - prev.dist) / dt;
+  }
+  const spd = stepSpd !== undefined ? stepSpd : typeof cur.speed === 'number' ? cur.speed : undefined;
+  const hasPowerOrCadence = (cur.watts ?? 0) > 15 || (cur.cad ?? 0) > 25;
+  if (dt > 60) {
+    return (spd !== undefined && spd > 0.35 && dt <= 120) || (hasPowerOrCadence && dt <= 60);
+  }
+  if ((cur.watts ?? 0) > 15) return true;
+  if (spd !== undefined) return spd > 0.35;
+  return hasPowerOrCadence || true;
+}
 
 export function getEffectiveDurationSec(
   activity: Pick<Activity, 'durationSec' | 'movingTimeSec' | 'excludePausedTime'>
@@ -351,7 +376,11 @@ export interface PowerZoneSummary {
   seconds: number;
 }
 
-export function getCogganPowerZones(ftpWatts: number, points?: ActivityPoint[]): PowerZoneSummary[] {
+export function getCogganPowerZones(
+  ftpWatts: number,
+  points?: ActivityPoint[],
+  excludePausedTime = false
+): PowerZoneSummary[] {
   const zones: PowerZoneSummary[] = [
     { zone: 'Z1', name: 'Recuperación', range: `< ${Math.round(ftpWatts * 0.55)} W`, minPct: 0, maxPct: 0.55, color: '#94A3B8', seconds: 0 },
     { zone: 'Z2', name: 'Resistencia', range: `${Math.round(ftpWatts * 0.56)}-${Math.round(ftpWatts * 0.75)} W`, minPct: 0.55, maxPct: 0.75, color: '#3B82F6', seconds: 0 },
@@ -364,6 +393,7 @@ export function getCogganPowerZones(ftpWatts: number, points?: ActivityPoint[]):
 
   if (points && points.length > 1 && ftpWatts > 0) {
     for (let i = 1; i < points.length; i++) {
+      if (excludePausedTime && !isIntervalMoving(points[i - 1], points[i])) continue;
       const w = points[i].watts;
       if (typeof w !== 'number') continue;
       const dt = Math.max(1, Math.min(30, points[i].t - points[i - 1].t));

@@ -6,11 +6,12 @@ import type { AccountId } from '@/lib/accounts';
 import { decryptSecret, encryptSecret } from '@/lib/crypto';
 import {
   createActivity,
+  findActivityIdByExternalId,
   findDuplicateActivityId,
   getAthleteProfile,
   getDb,
   getDbPath,
-  hasActivityWithExternalId,
+  refreshActivityFromSource,
 } from '@/lib/db';
 import { estimateActivityTSS } from '@/lib/metrics';
 import { parseUploadedActivityFile } from '@/lib/parsers';
@@ -665,10 +666,12 @@ function persistHuaweiParsedActivities(
   fileName: string,
   driveFileId: string | null,
   channel: 'folder' | 'drive',
-  parsedList: ParsedActivityData[]
-): { imported: number; skipped: number } {
+  parsedList: ParsedActivityData[],
+  refreshExisting = false
+): { imported: number; updated: number; skipped: number } {
   const profile = getAthleteProfile();
   let imported = 0;
+  let updated = 0;
   let skipped = 0;
 
   for (let idx = 0; idx < parsedList.length; idx++) {
@@ -678,14 +681,73 @@ function persistHuaweiParsedActivities(
       parsed.externalId ||
       `huawei_${crypto.createHash('sha1').update(hashSeed).digest('hex').slice(0, 16)}`;
 
-    if (hasActivityWithExternalId(extId)) {
-      skipped++;
-      continue;
-    }
+    const existingByExt = findActivityIdByExternalId(extId);
+    const dupId = existingByExt ?? findDuplicateActivityId(parsed.startedAt, parsed.sport, parsed.distanceMeters, extId);
 
-    const dupId = findDuplicateActivityId(parsed.startedAt, parsed.sport, parsed.distanceMeters, extId);
     if (dupId) {
-      if (parsedList.length === 1) {
+      if (refreshExisting) {
+        const tss = estimateActivityTSS(
+          {
+            sport: parsed.sport,
+            durationSec: parsed.durationSec,
+            movingTimeSec: parsed.movingTimeSec,
+            avgWatts: parsed.avgWatts ?? null,
+            normalizedPower: parsed.normalizedPower ?? null,
+            avgHr: parsed.avgHr ?? null,
+            elevationGain: parsed.elevationGain,
+          },
+          profile
+        );
+        const refreshed = refreshActivityFromSource(dupId, {
+          externalId: extId,
+          sport: parsed.sport,
+          subSport: parsed.subSport ?? null,
+          title: parsed.title,
+          description: parsed.description ?? null,
+          startedAt: parsed.startedAt,
+          durationSec: parsed.durationSec,
+          movingTimeSec: parsed.movingTimeSec,
+          distanceMeters: parsed.distanceMeters,
+          elevationGain: parsed.elevationGain,
+          elevationLoss: parsed.elevationLoss,
+          avgSpeedMs: parsed.avgSpeedMs ?? null,
+          maxSpeedMs: parsed.maxSpeedMs ?? null,
+          avgHr: parsed.avgHr ?? null,
+          maxHr: parsed.maxHr ?? null,
+          avgWatts: parsed.avgWatts ?? null,
+          normalizedPower: parsed.normalizedPower ?? null,
+          maxWatts: parsed.maxWatts ?? null,
+          avgCadence: parsed.avgCadence ?? null,
+          calories: parsed.calories ?? Math.round((parsed.durationSec / 60) * 9),
+          tss,
+          worldName: parsed.worldName ?? null,
+          polyline: parsed.polyline ?? null,
+          startLat: parsed.startLat ?? null,
+          startLon: parsed.startLon ?? null,
+          points: parsed.points,
+          laps: parsed.laps ?? [],
+          extras: {
+            ...(parsed.extras ?? {}),
+            deviceName: parsed.extras?.deviceName ?? 'Huawei Health / Health Sync',
+          },
+        });
+        if (parsedList.length === 1 || idx === 0) {
+          upsertHuaweiImportLog({
+            itemKey,
+            fileName,
+            driveFileId,
+            localActivityId: dupId,
+            title: refreshed?.title ?? parsed.title,
+            startedAt: refreshed?.startedAt ?? parsed.startedAt,
+            channel,
+            status: 'imported',
+          });
+        }
+        updated++;
+        continue;
+      }
+
+      if (parsedList.length === 1 && !existingByExt) {
         upsertHuaweiImportLog({
           itemKey,
           fileName,
@@ -781,10 +843,11 @@ function persistHuaweiParsedActivities(
     });
   }
 
-  return { imported, skipped };
+  return { imported, updated, skipped };
 }
 
-function shouldSkipLoggedItem(itemKey: string, retryFailed: boolean): boolean {
+function shouldSkipLoggedItem(itemKey: string, retryFailed: boolean, refreshExisting = false): boolean {
+  if (refreshExisting) return false;
   const prev = getDb()
     .prepare('SELECT status, local_activity_id FROM huawei_imports WHERE item_key = ?')
     .get(itemKey) as { status: string; local_activity_id: string | null } | undefined;
@@ -804,6 +867,7 @@ export async function syncHuaweiActivities(
     limit?: number;
     maxPages?: number;
     retryFailed?: boolean;
+    refreshExisting?: boolean;
     fetchImpl?: FetchLike;
   } = {}
 ): Promise<HuaweiSyncResult> {
@@ -852,8 +916,10 @@ export async function syncHuaweiActivities(
     const limit = Math.max(1, Math.min(500, options.limit ?? 50));
     const maxPages = Math.max(1, Math.min(30, options.maxPages ?? 10));
     const retryFailed = options.retryFailed ?? true;
+    const refreshExisting = options.refreshExisting ?? false;
 
     let imported = 0;
+    let updated = 0;
     let skipped = 0;
     let failed = 0;
     let scanned = 0;
@@ -869,11 +935,11 @@ export async function syncHuaweiActivities(
           scanned++;
           const itemKey = `folder:${grp.bundleKey === grp.primary.fileName ? grp.primary.item.relPath : grp.bundleKey}`;
 
-          if (shouldSkipLoggedItem(itemKey, retryFailed)) {
+          if (shouldSkipLoggedItem(itemKey, retryFailed, refreshExisting)) {
             skipped++;
             continue;
           }
-          if (imported >= limit) continue;
+          if (imported + updated >= limit) continue;
 
           try {
             const rawBuf = fs.readFileSync(grp.primary.item.fullPath);
@@ -909,8 +975,16 @@ export async function syncHuaweiActivities(
               }
             }
 
-            const res = persistHuaweiParsedActivities(itemKey, grp.primary.fileName, null, 'folder', activities);
+            const res = persistHuaweiParsedActivities(
+              itemKey,
+              grp.primary.fileName,
+              null,
+              'folder',
+              activities,
+              refreshExisting
+            );
             imported += res.imported;
+            updated += res.updated;
             skipped += res.skipped;
           } catch (err) {
             const msg = err instanceof Error ? err.message : 'Error procesando archivo';
@@ -938,11 +1012,11 @@ export async function syncHuaweiActivities(
           scanned++;
           const itemKey = `drive:${grp.bundleKey === grp.primary.fileName ? grp.primary.item.id : grp.bundleKey}`;
 
-          if (shouldSkipLoggedItem(itemKey, retryFailed)) {
+          if (shouldSkipLoggedItem(itemKey, retryFailed, refreshExisting)) {
             skipped++;
             continue;
           }
-          if (imported >= limit) continue;
+          if (imported + updated >= limit) continue;
 
           try {
             const rawBuf = await downloadDriveFileBuffer(grp.primary.item.id, fetchImpl);
@@ -983,9 +1057,11 @@ export async function syncHuaweiActivities(
               grp.primary.fileName,
               grp.primary.item.id,
               'drive',
-              activities
+              activities,
+              refreshExisting
             );
             imported += res.imported;
+            updated += res.updated;
             skipped += res.skipped;
           } catch (err) {
             const msg = err instanceof Error ? err.message : 'Error descargando o parseando archivo de Drive';
@@ -1014,11 +1090,11 @@ export async function syncHuaweiActivities(
         WHERE id = 1
       `).run(
         new Date().toISOString(),
-        failed > 0 && imported === 0 ? 'error' : 'ok',
+        failed > 0 && imported === 0 && updated === 0 ? 'error' : 'ok',
         errors.length > 0 ? errors.slice(0, 3).join(' | ') : null
       );
 
-      return { imported, skipped, failed, scanned, errors };
+      return { imported, updated, skipped, failed, scanned, errors };
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Error sincronizando Huawei Health';
       const needsReconnect = /caducad|autoriz|token|refresh/i.test(msg);

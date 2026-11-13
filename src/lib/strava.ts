@@ -3,9 +3,11 @@ import { resolveActivityTitle } from '@/lib/activity-naming';
 import { computeSessionExtras, enrichPointsTelemetry } from '@/lib/analytics';
 import {
   createActivity,
-  findDuplicateActivity,
+  findActivityIdByExternalId,
+  findDuplicateActivityId,
   getAthleteProfile,
   getDb,
+  refreshActivityFromSource,
 } from '@/lib/db';
 import { calculateNormalizedPower, estimateActivityTSS } from '@/lib/metrics';
 import { isMyWhooshContext, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
@@ -378,7 +380,11 @@ async function fetchStravaLaps(accessToken: string, stravaId: number, sport: Spo
   }
 }
 
-export async function syncStravaActivities(limit = 30, fetchStreams = true): Promise<{ imported: number; skipped: number; totalFetched: number }> {
+export async function syncStravaActivities(
+  limit = 30,
+  fetchStreams = true,
+  refreshExisting = false
+): Promise<{ imported: number; updated: number; skipped: number; totalFetched: number }> {
   const accessToken = await getValidStravaAccessToken();
   const profile = getAthleteProfile();
 
@@ -393,6 +399,7 @@ export async function syncStravaActivities(limit = 30, fetchStreams = true): Pro
 
   const list = (await res.json()) as StravaSummaryActivity[];
   let imported = 0;
+  let updated = 0;
   let skipped = 0;
 
   for (const item of list) {
@@ -400,14 +407,18 @@ export async function syncStravaActivities(limit = 30, fetchStreams = true): Pro
     const polylineCoords = item.map?.summary_polyline ? decodePolyline(item.map.summary_polyline) : [];
     const mapped = mapStravaSport(item.type, item.sport_type ?? item.type, item.name, item.device_name, polylineCoords);
 
-    if (findDuplicateActivity(item.start_date, mapped.sport, item.distance ?? 0, externalId)) {
+    const existingId =
+      findActivityIdByExternalId(externalId) ??
+      findDuplicateActivityId(item.start_date, mapped.sport, item.distance ?? 0, externalId);
+
+    if (existingId && !refreshExisting) {
       skipped++;
       continue;
     }
 
     let points: ActivityPoint[] = [];
     let laps: ActivityLap[] = [];
-    if (fetchStreams && imported < 15) {
+    if (fetchStreams && imported + updated < 30) {
       [points, laps] = await Promise.all([
         fetchStravaStreams(accessToken, item.id),
         fetchStravaLaps(accessToken, item.id, mapped.sport),
@@ -490,20 +501,62 @@ export async function syncStravaActivities(limit = 30, fetchStreams = true): Pro
       points
     );
 
+    const resolvedTitle = resolveActivityTitle(item.name, mapped.sport, item.start_date);
+    const durationSec = Math.round(item.elapsed_time ?? 0);
+    const movingTimeSec = Math.round(item.moving_time ?? item.elapsed_time ?? 0);
+    const distanceMeters = Math.round(item.distance ?? 0);
+    const elevationGain = Math.round(item.total_elevation_gain ?? 0);
+    const calories = item.calories ? Math.round(item.calories) : item.kilojoules ? Math.round(item.kilojoules * 1.05) : null;
+
+    if (existingId && refreshExisting) {
+      refreshActivityFromSource(existingId, {
+        externalId,
+        sport: mapped.sport,
+        subSport: mapped.subSport,
+        title: resolvedTitle,
+        description: item.description ?? (item.device_name ? `Grabado con ${item.device_name}` : null),
+        startedAt: item.start_date,
+        durationSec,
+        movingTimeSec,
+        distanceMeters,
+        elevationGain,
+        elevationLoss: elevationGain,
+        avgSpeedMs: item.average_speed ?? null,
+        maxSpeedMs: item.max_speed ?? null,
+        avgHr: item.average_heartrate ? Math.round(item.average_heartrate) : null,
+        maxHr: item.max_heartrate ? Math.round(item.max_heartrate) : null,
+        avgWatts: item.average_watts ? Math.round(item.average_watts) : null,
+        normalizedPower: np,
+        maxWatts: item.max_watts ? Math.round(item.max_watts) : null,
+        avgCadence: adjustedCadence,
+        calories,
+        tss,
+        worldName: resolvedWorldName,
+        polyline,
+        startLat: item.start_latlng?.[0] ?? points[0]?.lat ?? null,
+        startLon: item.start_latlng?.[1] ?? points[0]?.lon ?? null,
+        points,
+        laps,
+        extras,
+      });
+      updated++;
+      continue;
+    }
+
     createActivity({
       id: `act_strava_${item.id}`,
       externalId,
       source: 'strava',
       sport: mapped.sport,
       subSport: mapped.subSport,
-      title: resolveActivityTitle(item.name, mapped.sport, item.start_date),
+      title: resolvedTitle,
       description: item.description ?? (item.device_name ? `Grabado con ${item.device_name}` : null),
       startedAt: item.start_date,
-      durationSec: Math.round(item.elapsed_time ?? 0),
-      movingTimeSec: Math.round(item.moving_time ?? item.elapsed_time ?? 0),
-      distanceMeters: Math.round(item.distance ?? 0),
-      elevationGain: Math.round(item.total_elevation_gain ?? 0),
-      elevationLoss: Math.round(item.total_elevation_gain ?? 0),
+      durationSec,
+      movingTimeSec,
+      distanceMeters,
+      elevationGain,
+      elevationLoss: elevationGain,
       avgSpeedMs: item.average_speed ?? null,
       maxSpeedMs: item.max_speed ?? null,
       avgHr: item.average_heartrate ? Math.round(item.average_heartrate) : null,
@@ -512,7 +565,7 @@ export async function syncStravaActivities(limit = 30, fetchStreams = true): Pro
       normalizedPower: np,
       maxWatts: item.max_watts ? Math.round(item.max_watts) : null,
       avgCadence: adjustedCadence,
-      calories: item.calories ? Math.round(item.calories) : item.kilojoules ? Math.round(item.kilojoules * 1.05) : null,
+      calories,
       tss,
       rpe: item.perceived_exertion ?? null,
       gearId: null,
@@ -533,5 +586,5 @@ export async function syncStravaActivities(limit = 30, fetchStreams = true): Pro
 
   getDb().prepare('UPDATE strava_config SET last_sync_at = ? WHERE id = 1').run(new Date().toISOString());
 
-  return { imported, skipped, totalFetched: list.length };
+  return { imported, updated, skipped, totalFetched: list.length };
 }

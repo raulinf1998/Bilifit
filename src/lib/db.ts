@@ -3,6 +3,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { currentAccountId } from '@/lib/account-context';
 import type { AccountId } from '@/lib/accounts';
+import { hasConcreteActivityName, resolveActivityTitle } from '@/lib/activity-naming';
 import {
   computeTrimmedActivityData,
   previewActivityTrim,
@@ -16,6 +17,7 @@ import {
   computePaceZones,
   computeSessionExtras,
   computeTerrainBreakdown,
+  enrichActivityLaps,
   enrichPointsTelemetry,
 } from '@/lib/analytics';
 import { DEFAULT_EXERCISES, DEFAULT_HOME_EQUIPMENT } from '@/lib/home-workouts';
@@ -532,6 +534,7 @@ function initSchema(db: Database.Database) {
   ensureColumn(db, 'activities', 'extras_json', 'TEXT');
   ensureColumn(db, 'activities', 'done_together', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'activities', 'exclude_paused_time', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'activities', 'trimmed', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, colType: string) {
@@ -896,6 +899,7 @@ function mapActivityRow(row: Record<string, unknown>): Activity {
     totalVolumeKg: row.total_volume_kg != null ? Number(row.total_volume_kg) : null,
     doneTogether: Boolean(row.done_together),
     excludePausedTime: Boolean(row.exclude_paused_time),
+    trimmed: Boolean(row.trimmed),
     laps,
     extras,
     createdAt: String(row.created_at),
@@ -964,18 +968,21 @@ export function getActivityById(id: string): ActivityDetail | null {
   }
 
   const mapped = mapActivityRow(row);
+  const excludePaused = Boolean(mapped.excludePausedTime);
   const enrichedPoints = points.length > 0 ? enrichPointsTelemetry(points, mapped.sport) : [];
   const profile = getAthleteProfile();
   const extras = computeSessionExtras(mapped, enrichedPoints);
-  const kmSplits = enrichedPoints.length > 1 ? computeKmSplits(enrichedPoints, mapped.sport) : [];
+  const enrichedLaps = enrichActivityLaps(mapped.laps, enrichedPoints, mapped);
+  const kmSplits = enrichedPoints.length > 1 ? computeKmSplits(enrichedPoints, mapped.sport, excludePaused) : [];
   const bestEfforts = enrichedPoints.length > 3 ? computeBestEfforts(enrichedPoints, mapped.sport) : [];
-  const hrZones = enrichedPoints.length > 1 ? computeHeartRateZones(enrichedPoints, profile) : [];
-  const paceZones = enrichedPoints.length > 1 ? computePaceZones(enrichedPoints, mapped.sport) : [];
-  const terrainBreakdown = enrichedPoints.length > 2 ? computeTerrainBreakdown(enrichedPoints) : [];
+  const hrZones = enrichedPoints.length > 1 ? computeHeartRateZones(enrichedPoints, profile, excludePaused) : [];
+  const paceZones = enrichedPoints.length > 1 ? computePaceZones(enrichedPoints, mapped.sport, excludePaused) : [];
+  const terrainBreakdown = enrichedPoints.length > 2 ? computeTerrainBreakdown(enrichedPoints, excludePaused) : [];
   const segmentEfforts = getActivitySegmentEfforts(id);
 
   return {
     ...mapped,
+    laps: enrichedLaps,
     extras,
     points: enrichedPoints,
     strengthLogs,
@@ -1070,9 +1077,194 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
   return getActivityById(input.id)!;
 }
 
+export function findActivityIdByExternalId(externalId: string): string | null {
+  const row = getDb().prepare('SELECT id FROM activities WHERE external_id = ?').get(externalId) as { id: string } | undefined;
+  return row?.id ?? null;
+}
+
 export function hasActivityWithExternalId(externalId: string): boolean {
-  const row = getDb().prepare('SELECT id FROM activities WHERE external_id = ?').get(externalId);
-  return Boolean(row);
+  return Boolean(findActivityIdByExternalId(externalId));
+}
+
+export interface RefreshActivitySourceInput {
+  externalId?: string | null;
+  sport: SportType;
+  subSport?: string | null;
+  title: string;
+  description?: string | null;
+  startedAt: string;
+  durationSec: number;
+  movingTimeSec: number;
+  distanceMeters: number;
+  elevationGain: number;
+  elevationLoss: number;
+  avgSpeedMs?: number | null;
+  maxSpeedMs?: number | null;
+  avgHr?: number | null;
+  maxHr?: number | null;
+  avgWatts?: number | null;
+  normalizedPower?: number | null;
+  maxWatts?: number | null;
+  avgCadence?: number | null;
+  calories?: number | null;
+  tss: number;
+  worldName?: string | null;
+  polyline?: string | null;
+  startLat?: number | null;
+  startLon?: number | null;
+  points: ActivityPoint[];
+  laps?: ActivityLap[];
+  extras?: ActivityExtras | null;
+}
+
+/**
+ * Actualiza de forma segura una actividad ya existente desde su archivo/fuente original
+ * preservando ediciones manuales del usuario (título concreto, RPE, descripción, material,
+ * doneTogether, excludePausedTime y rutas recortadas).
+ */
+export function refreshActivityFromSource(existingId: string, incoming: RefreshActivitySourceInput): ActivityDetail | null {
+  const existing = getActivityById(existingId);
+  if (!existing) return null;
+
+  const db = getDb();
+  // Si el usuario cambió manualmente el deporte a algo distinto (salvo migraciones legacy mountain->trail/walking o cycling->mywhoosh) conservar el deporte del usuario
+  const isLegacyUpgrade =
+    (existing.sport === 'mountain' && (incoming.sport === 'trail' || incoming.sport === 'walking')) ||
+    (existing.sport === 'cycling' && incoming.sport === 'mywhoosh');
+  const nextSport = isLegacyUpgrade ? incoming.sport : existing.sport;
+  const nextSubSport =
+    existing.subSport && !isMismatchedSubSport(nextSport, existing.subSport)
+      ? existing.subSport
+      : incoming.subSport && !isMismatchedSubSport(nextSport, incoming.subSport)
+        ? incoming.subSport
+        : defaultSubSportForSport(nextSport);
+
+  const nextTitle = hasConcreteActivityName(existing.title)
+    ? existing.title
+    : resolveActivityTitle(incoming.title, nextSport, existing.trimmed ? existing.startedAt : incoming.startedAt);
+
+  const nextWorldName = existing.worldName ?? incoming.worldName ?? null;
+  const nextDescription = existing.description && existing.description.trim() ? existing.description : incoming.description ?? null;
+
+  if (existing.trimmed) {
+    const mergedLaps = (existing.laps?.length ?? 0) > 0 ? existing.laps : incoming.laps ?? [];
+    db.prepare(`
+      UPDATE activities
+      SET external_id = COALESCE(external_id, ?),
+          sport = ?,
+          sub_sport = ?,
+          title = ?,
+          description = ?,
+          world_name = ?,
+          laps_json = ?
+      WHERE id = ?
+    `).run(
+      incoming.externalId ?? null,
+      nextSport,
+      nextSubSport,
+      nextTitle,
+      nextDescription,
+      nextWorldName,
+      JSON.stringify(mergedLaps),
+      existingId
+    );
+    return getActivityById(existingId);
+  }
+
+  const enrichedPoints =
+    incoming.points && incoming.points.length > 0
+      ? enrichPointsTelemetry(incoming.points, nextSport)
+      : existing.points;
+  const mergedLaps =
+    incoming.laps && incoming.laps.length > 0
+      ? incoming.laps
+      : existing.laps ?? [];
+  const nextDurationSec = incoming.durationSec > 0 ? incoming.durationSec : existing.durationSec;
+  const nextMovingTimeSec =
+    incoming.movingTimeSec > 0
+      ? Math.min(nextDurationSec, incoming.movingTimeSec)
+      : Math.min(nextDurationSec, existing.movingTimeSec > 0 ? existing.movingTimeSec : nextDurationSec);
+  const nextDistance = incoming.distanceMeters > 0 ? incoming.distanceMeters : existing.distanceMeters;
+  const nextExtras = computeSessionExtras(
+    {
+      sport: nextSport,
+      durationSec: nextDurationSec,
+      movingTimeSec: nextMovingTimeSec,
+      distanceMeters: nextDistance,
+      elevationGain: incoming.elevationGain,
+      avgSpeedMs: incoming.avgSpeedMs ?? existing.avgSpeedMs ?? null,
+      avgHr: incoming.avgHr ?? existing.avgHr ?? null,
+      avgWatts: incoming.avgWatts ?? existing.avgWatts ?? null,
+      normalizedPower: incoming.normalizedPower ?? existing.normalizedPower ?? null,
+      extras: incoming.extras ?? existing.extras ?? null,
+    },
+    enrichedPoints
+  );
+
+  db.prepare(`
+    UPDATE activities
+    SET external_id = COALESCE(external_id, ?),
+        sport = ?,
+        sub_sport = ?,
+        title = ?,
+        description = ?,
+        started_at = ?,
+        duration_sec = ?,
+        moving_time_sec = ?,
+        distance_meters = ?,
+        elevation_gain = ?,
+        elevation_loss = ?,
+        avg_speed_ms = ?,
+        max_speed_ms = ?,
+        avg_hr = ?,
+        max_hr = ?,
+        avg_watts = ?,
+        normalized_power = ?,
+        max_watts = ?,
+        avg_cadence = ?,
+        calories = ?,
+        tss = ?,
+        world_name = ?,
+        polyline = ?,
+        start_lat = ?,
+        start_lon = ?,
+        points_json = ?,
+        laps_json = ?,
+        extras_json = ?
+    WHERE id = ?
+  `).run(
+    incoming.externalId ?? null,
+    nextSport,
+    nextSubSport,
+    nextTitle,
+    nextDescription,
+    incoming.startedAt || existing.startedAt,
+    nextDurationSec,
+    nextMovingTimeSec,
+    nextDistance,
+    incoming.elevationGain,
+    incoming.elevationLoss,
+    incoming.avgSpeedMs ?? existing.avgSpeedMs ?? null,
+    incoming.maxSpeedMs ?? existing.maxSpeedMs ?? null,
+    incoming.avgHr ?? existing.avgHr ?? null,
+    incoming.maxHr ?? existing.maxHr ?? null,
+    incoming.avgWatts ?? existing.avgWatts ?? null,
+    incoming.normalizedPower ?? existing.normalizedPower ?? null,
+    incoming.maxWatts ?? existing.maxWatts ?? null,
+    incoming.avgCadence ?? existing.avgCadence ?? null,
+    incoming.calories ?? existing.calories ?? null,
+    existing.rpe && !incoming.avgHr && !incoming.avgWatts && !incoming.normalizedPower ? existing.tss : incoming.tss,
+    nextWorldName,
+    incoming.polyline ?? existing.polyline ?? null,
+    incoming.startLat ?? existing.startLat ?? null,
+    incoming.startLon ?? existing.startLon ?? null,
+    JSON.stringify(enrichedPoints),
+    JSON.stringify(mergedLaps),
+    JSON.stringify(nextExtras),
+    existingId
+  );
+
+  return getActivityById(existingId);
 }
 
 export function findDuplicateActivityId(startedAt: string, sport: SportType, distanceMeters: number, externalId?: string | null): string | null {
@@ -1237,7 +1429,8 @@ export function trimActivity(
           start_lon = ?,
           points_json = ?,
           laps_json = ?,
-          extras_json = ?
+          extras_json = ?,
+          trimmed = 1
       WHERE id = ?
     `).run(
       patch.startedAt,
@@ -1619,7 +1812,7 @@ export function deleteRoutine(id: string): boolean {
 
 // ===== SEGMENTS & EFFORTS =====
 
-function insertSegmentRow(db: Database.Database, seg: Segment) {
+export function insertSegmentRow(db: Database.Database, seg: Segment) {
   db.prepare(`
     INSERT INTO segments (
       id, name, sport, category, distance_meters, elevation_gain, avg_grade_pct, max_grade_pct,
@@ -1646,7 +1839,7 @@ function insertSegmentRow(db: Database.Database, seg: Segment) {
   );
 }
 
-function insertSegmentEffortRow(db: Database.Database, eff: SegmentEffort) {
+export function insertSegmentEffortRow(db: Database.Database, eff: SegmentEffort) {
   db.prepare(`
     INSERT OR REPLACE INTO segment_efforts (
       id, segment_id, activity_id, duration_sec, avg_speed_ms, avg_hr, max_hr, avg_watts, avg_cadence, vam_mh, started_at

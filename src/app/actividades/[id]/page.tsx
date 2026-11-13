@@ -143,6 +143,9 @@ export default function ActivityDetailPage() {
 
   useEffect(() => {
     loadAll();
+    const onReload = () => loadAll();
+    window.addEventListener('bilifit:activities-reloaded', onReload);
+    return () => window.removeEventListener('bilifit:activities-reloaded', onReload);
   }, [loadAll]);
 
   async function handleSave(e: React.FormEvent) {
@@ -472,14 +475,23 @@ export default function ActivityDetailPage() {
     activity.points.some((p) => typeof p.lat === 'number' && typeof p.lon === 'number') ||
     Boolean(activity.polyline) ||
     Boolean(worldInfo);
-  const powerZones = activity.avgWatts ? getCogganPowerZones(ftp, activity.points) : null;
+  const powerZones = activity.avgWatts
+    ? getCogganPowerZones(ftp, activity.points, Boolean(activity.excludePausedTime))
+    : null;
   const intensityFactor =
     activity.normalizedPower && ftp > 0 ? (activity.normalizedPower / ftp).toFixed(2) : null;
   const wKg = activity.avgWatts && weightKg > 0 ? (activity.avgWatts / weightKg).toFixed(2) : null;
   const extras = activity.extras ?? {};
   const maxKm = Number(((activity.distanceMeters || 1000) / 1000).toFixed(2));
+  const getSplitDurationSec = (sp: ActivityLap) =>
+    activity.excludePausedTime && sp.movingTimeSec > 0 ? sp.movingTimeSec : sp.durationSec;
+  const getSplitSpeedMs = (sp: ActivityLap) => {
+    const d = getSplitDurationSec(sp);
+    if (sp.distanceMeters > 0 && d > 0) return sp.distanceMeters / d;
+    return sp.avgSpeedMs ?? 0;
+  };
   const bestSplitSpeed = activity.kmSplits?.length
-    ? Math.max(0.5, ...activity.kmSplits.map((s) => s.avgSpeedMs ?? 0))
+    ? Math.max(0.5, ...activity.kmSplits.map(getSplitSpeedMs))
     : 1;
   const effectiveDurationSec = getEffectiveDurationSec(activity);
   const effectiveAvgSpeedMs = getEffectiveAvgSpeedMs(activity);
@@ -1425,6 +1437,7 @@ export default function ActivityDetailPage() {
                     <thead>
                       <tr className="text-left border-b" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
                         <th className="py-2 px-2">Km</th>
+                        <th className="py-2 px-2">Tiempo</th>
                         <th className="py-2 px-2">{isPaceSport ? 'Ritmo' : 'Velocidad'}</th>
                         {isPaceSport && <th className="py-2 px-2">GAP</th>}
                         <th className="py-2 px-2 w-28">Intensidad</th>
@@ -1437,15 +1450,24 @@ export default function ActivityDetailPage() {
                     </thead>
                     <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
                       {activity.kmSplits.map((sp) => {
-                        const spSpeed =
-                          activity.excludePausedTime && sp.movingTimeSec > 0 && sp.distanceMeters > 0
-                            ? sp.distanceMeters / sp.movingTimeSec
-                            : sp.avgSpeedMs ?? 0;
+                        const spDur = getSplitDurationSec(sp);
+                        const spSpeed = getSplitSpeedMs(sp);
+                        const spPausedSec = Math.max(0, (sp.durationSec || 0) - (sp.movingTimeSec || 0));
                         const barPct = Math.min(100, Math.max(18, Math.round((spSpeed / bestSplitSpeed) * 100)));
                         return (
                           <tr key={sp.lapNumber} className="tabular-nums hover:bg-sunken/50">
                             <td className="py-2 px-2 font-bold">
                               {sp.distanceMeters >= 950 ? `Km ${sp.lapNumber}` : `${(sp.distanceMeters / 1000).toFixed(2)} km`}
+                            </td>
+                            <td className="py-2 px-2">
+                              <div>{formatDurationClock(spDur)}</div>
+                              {spPausedSec >= 3 && (
+                                <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                  {activity.excludePausedTime
+                                    ? `tot ${formatDurationClock(sp.durationSec)}`
+                                    : `mov ${formatDurationClock(sp.movingTimeSec)}`}
+                                </div>
+                              )}
                             </td>
                             <td className="py-2 px-2 font-semibold text-primary">
                               {spSpeed > 0
@@ -1530,7 +1552,16 @@ export default function ActivityDetailPage() {
                               </span>
                             </td>
                             <td className="py-2 px-2">{(lap.distanceMeters / 1000).toFixed(2)} km</td>
-                            <td className="py-2 px-2">{formatDurationClock(lapDur)}</td>
+                            <td className="py-2 px-2">
+                              <div>{formatDurationClock(lapDur)}</div>
+                              {lap.durationSec - lap.movingTimeSec >= 3 && (
+                                <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                  {activity.excludePausedTime
+                                    ? `tot ${formatDurationClock(lap.durationSec)}`
+                                    : `mov ${formatDurationClock(lap.movingTimeSec)}`}
+                                </div>
+                              )}
+                            </td>
                             <td className="py-2 px-2 font-semibold text-primary">
                               {lapSpeed
                                 ? isPaceSport
