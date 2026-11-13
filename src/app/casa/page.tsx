@@ -161,7 +161,8 @@ export default function HomeWorkoutsPage() {
 
   const resolveItemImage = useCallback(
     (exerciseId: string, itemImageUrl?: string | null): string | null => {
-      return itemImageUrl || exerciseImagesMap[exerciseId] || null;
+      const isDefaultAsset = Boolean(itemImageUrl && itemImageUrl.startsWith(`/exercises/${exerciseId}.`));
+      return (isDefaultAsset ? exerciseImagesMap[exerciseId] : itemImageUrl) || exerciseImagesMap[exerciseId] || null;
     },
     [exerciseImagesMap]
   );

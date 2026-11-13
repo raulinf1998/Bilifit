@@ -165,7 +165,8 @@ export default function WorkoutPlayer({
     if (spec.exerciseId in localExerciseImages) {
       return localExerciseImages[spec.exerciseId];
     }
-    return spec.imageUrl || exerciseImages?.[spec.exerciseId] || null;
+    const isDefaultAsset = Boolean(spec.imageUrl && spec.imageUrl.startsWith(`/exercises/${spec.exerciseId}.`));
+    return (isDefaultAsset ? exerciseImages?.[spec.exerciseId] : spec.imageUrl) || exerciseImages?.[spec.exerciseId] || null;
   }
 
   async function saveCustomExerciseImage(exerciseId: string, nextUrl: string | null) {

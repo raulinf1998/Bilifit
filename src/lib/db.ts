@@ -1896,10 +1896,16 @@ export function listRoutines(): Routine[] {
 
   return rows.map((r) => {
     const rawItems: RoutineExerciseItem[] = JSON.parse(String(r.items_json));
-    const items = rawItems.map((it) => ({
-      ...it,
-      imageUrl: it.imageUrl ? sanitizeImageUrl(it.imageUrl) : (exImageLookup.get(it.exerciseId) ?? null),
-    }));
+    const items = rawItems.map((it) => {
+      const clean = it.imageUrl ? sanitizeImageUrl(it.imageUrl) : null;
+      const isStaleDefaultAsset = Boolean(
+        clean && /^\/exercises\/[a-z0-9_]+\.(svg|jpg|jpeg|png)$/i.test(clean) && clean.startsWith(`/exercises/${it.exerciseId}.`)
+      );
+      return {
+        ...it,
+        imageUrl: !clean || isStaleDefaultAsset ? (exImageLookup.get(it.exerciseId) ?? clean) : clean,
+      };
+    });
     return {
       id: String(r.id),
       name: String(r.name),
