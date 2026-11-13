@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { Heart, Plus, Search, Trash2, X } from 'lucide-react';
+import { Camera, Heart, Image as ImageIcon, Plus, Search, Trash2, X } from 'lucide-react';
 import { useActiveAccount } from '@/components/AccountProvider';
+import ImageUploadControl from '@/components/ImageUploadControl';
 import { SportBadge } from '@/components/SportBadge';
 import { TogetherToggleButton, getTogetherLabel } from '@/components/TogetherControl';
 import {
@@ -51,6 +52,7 @@ export default function ActivitiesPage() {
   const [gearId, setGearId] = useState('');
   const [doneTogether, setDoneTogether] = useState(false);
   const [description, setDescription] = useState('');
+  const [manualImages, setManualImages] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -94,11 +96,13 @@ export default function ActivitiesPage() {
         gearId: gearId || null,
         doneTogether,
         description,
+        images: manualImages,
       }),
     });
     if (res.ok) {
       setTitle('');
       setDescription('');
+      setManualImages([]);
       setDoneTogether(false);
       setShowManual(false);
       await load();
@@ -315,9 +319,22 @@ export default function ActivitiesPage() {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Sensaciones o notas..."
-            className="w-full rounded-lg border px-3 py-2 text-sm"
+            className="w-full rounded-lg border px-3 py-2 text-base sm:text-sm"
             style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
           />
+
+          <div className="rounded-xl border p-3.5 space-y-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card-elevated)' }}>
+            <div className="text-xs font-semibold flex items-center gap-1.5" style={{ color: 'var(--text-secondary)' }}>
+              <Camera className="h-3.5 w-3.5 text-purple-400" />
+              Imagen del entrenamiento (opcional)
+            </div>
+            <ImageUploadControl
+              label="Foto"
+              value={manualImages[0] ?? null}
+              onChange={(url) => setManualImages(url ? [url] : [])}
+              compact
+            />
+          </div>
 
           <div className="flex justify-end">
             <button
@@ -418,7 +435,14 @@ export default function ActivitiesPage() {
                     })}
                   </span>
                 </div>
-                <div className="font-semibold text-base">{act.title}</div>
+                <div className="font-semibold text-base flex items-center gap-2">
+                  <span>{act.title}</span>
+                  {act.images && act.images.length > 0 && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-700 dark:text-purple-300">
+                      <ImageIcon className="h-3 w-3" /> {act.images.length}
+                    </span>
+                  )}
+                </div>
                 {act.gearName && (
                   <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
                     Material: {act.gearName}
@@ -426,7 +450,15 @@ export default function ActivitiesPage() {
                 )}
               </div>
 
-              <div className="flex items-center justify-between sm:justify-end gap-5">
+              <div className="flex items-center justify-between sm:justify-end gap-4 sm:gap-5">
+                {act.images && act.images.length > 0 && (
+                  <img
+                    src={act.images[0]}
+                    alt={act.title}
+                    className="w-12 h-12 rounded-xl object-cover border shrink-0 bg-[#161b26] hidden sm:block"
+                    style={{ borderColor: 'var(--border-subtle)' }}
+                  />
+                )}
                 <div className="flex flex-wrap items-center gap-4 text-xs tabular-nums">
                   {act.distanceMeters > 0 && (
                     <div>

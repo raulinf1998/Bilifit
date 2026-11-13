@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withAccount } from '@/lib/account-context';
 import { createCustomExercise, listAllExercises, listHomeEquipment } from '@/lib/db';
 import { isExerciseCompatible } from '@/lib/home-workouts';
+import { sanitizeImageUrl } from '@/lib/uploads';
 import type { Exercise } from '@/types';
 
 export async function GET(req: NextRequest) {
@@ -50,6 +51,7 @@ export async function POST(req: NextRequest) {
         defaultReps: String(body.defaultReps || '10-12'),
         restSeconds: Math.max(15, Number(body.restSeconds || 60)),
         instructions: String(body.instructions || 'Ejecución controlada manteniendo técnica limpia.'),
+        imageUrl: body.imageUrl ? sanitizeImageUrl(body.imageUrl) : null,
       });
 
       return NextResponse.json({ exercise: ex }, { status: 201 });

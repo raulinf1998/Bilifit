@@ -1,11 +1,17 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { withAccount } from '@/lib/account-context';
-import { createRoutine, listRoutines } from '@/lib/db';
-import type { Routine } from '@/types';
+import { createRoutine, getLastExerciseLogs, listRoutines } from '@/lib/db';
+import { sanitizeImageUrl } from '@/lib/uploads';
+import type { Routine, RoutineExerciseItem } from '@/types';
 
 export async function GET(req: NextRequest) {
-  return withAccount(req, () => NextResponse.json({ routines: listRoutines() }));
+  return withAccount(req, () =>
+    NextResponse.json({
+      routines: listRoutines(),
+      lastExerciseLogs: getLastExerciseLogs(),
+    })
+  );
 }
 
 export async function POST(req: NextRequest) {
@@ -17,6 +23,11 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'La rutina necesita nombre y al menos un ejercicio.' }, { status: 400 });
       }
 
+      const sanitizedItems: RoutineExerciseItem[] = body.items.map((item: RoutineExerciseItem) => ({
+        ...item,
+        ...(item.imageUrl ? { imageUrl: sanitizeImageUrl(item.imageUrl) } : {}),
+      }));
+
       const routine: Routine = {
         id: `rt_${crypto.randomUUID().slice(0, 10)}`,
         name,
@@ -24,8 +35,9 @@ export async function POST(req: NextRequest) {
         level: body.level || 'intermedio',
         estimatedMinutes: Number(body.estimatedMinutes || 35),
         equipmentIds: Array.isArray(body.equipmentIds) ? body.equipmentIds : [],
-        items: body.items,
+        items: sanitizedItems,
         notes: body.notes ? String(body.notes) : null,
+        coverImageUrl: body.coverImageUrl ? sanitizeImageUrl(body.coverImageUrl) : null,
         timesCompleted: 0,
         lastCompletedAt: null,
         createdAt: new Date().toISOString(),

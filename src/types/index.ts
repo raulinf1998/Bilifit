@@ -186,6 +186,7 @@ export interface Activity {
   doneTogether?: boolean;
   excludePausedTime?: boolean;
   trimmed?: boolean;
+  images?: string[];
   laps?: ActivityLap[];
   extras?: ActivityExtras | null;
   createdAt: string;
@@ -278,6 +279,7 @@ export interface Exercise {
   defaultReps: string;
   restSeconds: number;
   instructions: string;
+  imageUrl?: string | null;
   isCustom?: boolean;
 }
 
@@ -291,6 +293,7 @@ export interface RoutineExerciseItem {
   suggestedWeightKg?: number;
   restSeconds: number;
   notes?: string;
+  imageUrl?: string | null;
 }
 
 export interface Routine {
@@ -302,6 +305,7 @@ export interface Routine {
   equipmentIds: string[];
   items: RoutineExerciseItem[];
   notes?: string | null;
+  coverImageUrl?: string | null;
   timesCompleted: number;
   lastCompletedAt?: string | null;
   createdAt: string;

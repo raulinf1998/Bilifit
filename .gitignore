@@ -8,6 +8,7 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 data/.bilifit-secret
+data/uploads/
 .env
 .env.local
 .env.*.local

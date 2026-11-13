@@ -20,11 +20,19 @@ import {
   enrichActivityLaps,
   enrichPointsTelemetry,
 } from '@/lib/analytics';
-import { DEFAULT_EXERCISES, DEFAULT_HOME_EQUIPMENT } from '@/lib/home-workouts';
+import { DEFAULT_EXERCISES, DEFAULT_HOME_EQUIPMENT, defaultExerciseImageUrl } from '@/lib/home-workouts';
 import { defaultSubSportForSport, estimateActivityTSS, isMismatchedSubSport } from '@/lib/metrics';
 import { isMyWhooshContext, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
 import { decodePolyline } from '@/lib/polyline';
-import { buildSeedActivityRows, SEED_GEAR, SEED_PROFILE, SEED_ROUTES, SEED_ROUTINES } from '@/lib/seed';
+import { sanitizeImageList, sanitizeImageUrl } from '@/lib/uploads';
+import {
+  buildSeedActivityRows,
+  PRESET_5DAY_ROUTINES,
+  SEED_GEAR,
+  SEED_PROFILE,
+  SEED_ROUTES,
+  SEED_ROUTINES,
+} from '@/lib/seed';
 import { buildSegmentFromRange, matchPointsToSegment } from '@/lib/segments';
 import { emitSettingsEvent } from '@/lib/settings-events';
 import {
@@ -52,6 +60,7 @@ import type {
   HomeEquipment,
   MountainRoute,
   Routine,
+  RoutineExerciseItem,
   Segment,
   SegmentEffort,
   SportType,
@@ -102,6 +111,8 @@ export function getDb(account: AccountId = currentAccountId()): Database.Databas
 
   initSchema(db);
   seedIfEmpty(db, account);
+  ensureHomeEquipmentDefaults(db, account);
+  ensurePreset5DayRoutines(db, account);
   backfillMyWhooshWorlds(db);
   backfillWalkingActivities(db);
   backfillSplitTrailActivities(db);
@@ -109,6 +120,69 @@ export function getDb(account: AccountId = currentAccountId()): Database.Databas
 
   dbInstances.set(dbPath, db);
   return db;
+}
+
+export function ensureHomeEquipmentDefaults(db: Database.Database, account: AccountId = 'raul') {
+  const migrationId = 'home_equipment_defaults_v2_cable';
+  const applied = db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(migrationId);
+  if (applied) return;
+
+  const tx = db.transaction(() => {
+    const stmt = db.prepare(`
+      INSERT OR IGNORE INTO home_equipment (id, name, category, description, owned, details, is_custom)
+      VALUES (?, ?, ?, ?, ?, ?, 0)
+    `);
+    for (const eq of DEFAULT_HOME_EQUIPMENT) {
+      stmt.run(
+        eq.id,
+        eq.name,
+        eq.category,
+        eq.description,
+        account === 'pequenaja' ? 0 : eq.owned ? 1 : 0,
+        eq.details ?? null
+      );
+    }
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(
+      migrationId,
+      new Date().toISOString()
+    );
+  });
+  tx();
+}
+
+export function ensurePreset5DayRoutines(db: Database.Database, account: AccountId = 'raul') {
+  if (account === 'pequenaja') return;
+  const migrationId = 'preset_5day_routines_v1';
+  const applied = db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(migrationId);
+  if (applied) return;
+
+  const tx = db.transaction(() => {
+    const rtStmt = db.prepare(`
+      INSERT OR IGNORE INTO routines (
+        id, name, goal, level, estimated_minutes, equipment_ids_json, items_json, notes, times_completed, last_completed_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const rt of PRESET_5DAY_ROUTINES) {
+      rtStmt.run(
+        rt.id,
+        rt.name,
+        rt.goal,
+        rt.level,
+        rt.estimatedMinutes,
+        JSON.stringify(rt.equipmentIds),
+        JSON.stringify(rt.items),
+        rt.notes ?? null,
+        rt.timesCompleted,
+        rt.lastCompletedAt ?? null,
+        rt.createdAt
+      );
+    }
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(
+      migrationId,
+      new Date().toISOString()
+    );
+  });
+  tx();
 }
 
 export function backfillWalkingActivities(db: Database.Database = getDb()): number {
@@ -527,6 +601,17 @@ function initSchema(db: Database.Database) {
       settings_version INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS exercise_media (
+      exercise_id TEXT PRIMARY KEY,
+      image_url TEXT,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   // Migración segura para bases de datos existentes
@@ -535,6 +620,9 @@ function initSchema(db: Database.Database) {
   ensureColumn(db, 'activities', 'done_together', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'activities', 'exclude_paused_time', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'activities', 'trimmed', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'activities', 'images_json', 'TEXT');
+  ensureColumn(db, 'custom_exercises', 'image_url', 'TEXT');
+  ensureColumn(db, 'routines', 'cover_image_url', 'TEXT');
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, colType: string) {
@@ -854,6 +942,7 @@ export function updateAthleteProfile(patch: Partial<AthleteProfile>): AthletePro
 function mapActivityRow(row: Record<string, unknown>): Activity {
   let laps: ActivityLap[] | undefined;
   let extras: ActivityExtras | null = null;
+  let images: string[] = [];
   try {
     if (row.laps_json) laps = JSON.parse(String(row.laps_json));
   } catch {
@@ -863,6 +952,11 @@ function mapActivityRow(row: Record<string, unknown>): Activity {
     if (row.extras_json) extras = JSON.parse(String(row.extras_json));
   } catch {
     extras = null;
+  }
+  try {
+    if (row.images_json) images = sanitizeImageList(JSON.parse(String(row.images_json)));
+  } catch {
+    images = [];
   }
 
   return {
@@ -900,6 +994,7 @@ function mapActivityRow(row: Record<string, unknown>): Activity {
     doneTogether: Boolean(row.done_together),
     excludePausedTime: Boolean(row.exclude_paused_time),
     trimmed: Boolean(row.trimmed),
+    images,
     laps,
     extras,
     createdAt: String(row.created_at),
@@ -1020,8 +1115,8 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
       duration_sec, moving_time_sec, distance_meters, elevation_gain, elevation_loss,
       avg_speed_ms, max_speed_ms, avg_hr, max_hr, avg_watts, normalized_power, max_watts,
       avg_cadence, calories, tss, rpe, gear_id, world_name, polyline, start_lat, start_lon,
-      points_json, strength_logs_json, total_volume_kg, done_together, exclude_paused_time, laps_json, extras_json, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      points_json, strength_logs_json, total_volume_kg, done_together, exclude_paused_time, images_json, laps_json, extras_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.id,
     input.externalId ?? null,
@@ -1057,6 +1152,7 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
     input.totalVolumeKg ?? null,
     input.doneTogether ? 1 : 0,
     input.excludePausedTime ? 1 : 0,
+    JSON.stringify(sanitizeImageList(input.images ?? [])),
     JSON.stringify(input.laps ?? []),
     JSON.stringify(extras),
     input.createdAt
@@ -1300,6 +1396,7 @@ export function updateActivity(
     worldName: string | null;
     doneTogether: boolean;
     excludePausedTime: boolean;
+    images: string[];
   }>
 ): ActivityDetail | null {
   const existing = getActivityById(id);
@@ -1312,6 +1409,7 @@ export function updateActivity(
   const nextDoneTogether = patch.doneTogether !== undefined ? Boolean(patch.doneTogether) : Boolean(existing.doneTogether);
   const nextExcludePaused =
     patch.excludePausedTime !== undefined ? Boolean(patch.excludePausedTime) : Boolean(existing.excludePausedTime);
+  const nextImages = patch.images !== undefined ? sanitizeImageList(patch.images) : existing.images ?? [];
   const nextSubSport =
     patch.subSport !== undefined
       ? patch.subSport && isMismatchedSubSport(nextSport, patch.subSport)
@@ -1342,7 +1440,7 @@ export function updateActivity(
 
   db.prepare(`
       UPDATE activities
-      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?, tss = ?, done_together = ?, exclude_paused_time = ?
+      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?, tss = ?, done_together = ?, exclude_paused_time = ?, images_json = ?
       WHERE id = ?
     `).run(
     patch.title ?? existing.title,
@@ -1355,6 +1453,7 @@ export function updateActivity(
     nextTss,
     nextDoneTogether ? 1 : 0,
     nextExcludePaused ? 1 : 0,
+    JSON.stringify(nextImages),
     id
   );
 
@@ -1689,9 +1788,18 @@ export function deleteCustomEquipment(id: string): boolean {
 }
 
 export function listAllExercises(): Exercise[] {
-  const rows = getDb()
+  const db = getDb();
+  const rows = db
     .prepare('SELECT * FROM custom_exercises ORDER BY name ASC')
     .all() as Record<string, unknown>[];
+
+  const mediaRows = db
+    .prepare('SELECT exercise_id, image_url FROM exercise_media')
+    .all() as Array<{ exercise_id: string; image_url: string | null }>;
+  const mediaOverrides = new Map<string, string | null>();
+  for (const m of mediaRows) {
+    mediaOverrides.set(m.exercise_id, m.image_url ? sanitizeImageUrl(m.image_url) : null);
+  }
 
   const custom: Exercise[] = rows.map((r) => ({
     id: String(r.id),
@@ -1706,19 +1814,29 @@ export function listAllExercises(): Exercise[] {
     defaultReps: String(r.default_reps),
     restSeconds: Number(r.rest_seconds),
     instructions: String(r.instructions),
+    imageUrl: r.image_url ? sanitizeImageUrl(String(r.image_url)) : null,
     isCustom: true,
   }));
 
-  return [...custom, ...DEFAULT_EXERCISES];
+  const defaults = DEFAULT_EXERCISES.map((ex) => {
+    if (mediaOverrides.has(ex.id)) {
+      const override = mediaOverrides.get(ex.id);
+      return { ...ex, imageUrl: override ?? defaultExerciseImageUrl(ex.id) };
+    }
+    return ex;
+  });
+
+  return [...custom, ...defaults];
 }
 
 export function createCustomExercise(ex: Omit<Exercise, 'isCustom'>): Exercise {
+  const cleanImage = ex.imageUrl ? sanitizeImageUrl(ex.imageUrl) : null;
   getDb()
     .prepare(`
       INSERT INTO custom_exercises (
         id, name, muscle_group, secondary_muscles_json, required_equipment_json,
-        difficulty, pattern, sport_benefit_json, default_sets, default_reps, rest_seconds, instructions
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        difficulty, pattern, sport_benefit_json, default_sets, default_reps, rest_seconds, instructions, image_url
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     .run(
       ex.id,
@@ -1732,9 +1850,41 @@ export function createCustomExercise(ex: Omit<Exercise, 'isCustom'>): Exercise {
       ex.defaultSets,
       ex.defaultReps,
       ex.restSeconds,
-      ex.instructions
+      ex.instructions,
+      cleanImage
     );
-  return { ...ex, isCustom: true };
+  return { ...ex, imageUrl: cleanImage, isCustom: true };
+}
+
+export function updateExerciseImage(exerciseId: string, imageUrl: string | null): Exercise | null {
+  const db = getDb();
+  const cleanUrl = imageUrl === null ? null : sanitizeImageUrl(imageUrl);
+  if (imageUrl !== null && !cleanUrl) {
+    throw new Error('URL de imagen no válida.');
+  }
+
+  const customRow = db
+    .prepare('SELECT id FROM custom_exercises WHERE id = ?')
+    .get(exerciseId) as { id: string } | undefined;
+
+  if (customRow) {
+    db.prepare('UPDATE custom_exercises SET image_url = ? WHERE id = ?').run(cleanUrl, exerciseId);
+  } else {
+    const existsBuiltIn = DEFAULT_EXERCISES.some((e) => e.id === exerciseId);
+    if (!existsBuiltIn) return null;
+
+    if (cleanUrl === null) {
+      db.prepare('DELETE FROM exercise_media WHERE exercise_id = ?').run(exerciseId);
+    } else {
+      db.prepare(`
+        INSERT INTO exercise_media (exercise_id, image_url, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(exercise_id) DO UPDATE SET image_url = excluded.image_url, updated_at = excluded.updated_at
+      `).run(exerciseId, cleanUrl, new Date().toISOString());
+    }
+  }
+
+  return listAllExercises().find((e) => e.id === exerciseId) ?? null;
 }
 
 export function listRoutines(): Routine[] {
@@ -1742,27 +1892,44 @@ export function listRoutines(): Routine[] {
     .prepare('SELECT * FROM routines ORDER BY created_at DESC')
     .all() as Record<string, unknown>[];
 
-  return rows.map((r) => ({
-    id: String(r.id),
-    name: String(r.name),
-    goal: r.goal as Routine['goal'],
-    level: r.level as Routine['level'],
-    estimatedMinutes: Number(r.estimated_minutes),
-    equipmentIds: JSON.parse(String(r.equipment_ids_json)),
-    items: JSON.parse(String(r.items_json)),
-    notes: r.notes ? String(r.notes) : null,
-    timesCompleted: Number(r.times_completed),
-    lastCompletedAt: r.last_completed_at ? String(r.last_completed_at) : null,
-    createdAt: String(r.created_at),
-  }));
+  const exImageLookup = new Map(listAllExercises().map((ex) => [ex.id, ex.imageUrl ?? null]));
+
+  return rows.map((r) => {
+    const rawItems: RoutineExerciseItem[] = JSON.parse(String(r.items_json));
+    const items = rawItems.map((it) => {
+      const clean = it.imageUrl ? sanitizeImageUrl(it.imageUrl) : null;
+      const isStaleDefaultAsset = Boolean(
+        clean && /^\/exercises\/[a-z0-9_]+\.(svg|jpg|jpeg|png)$/i.test(clean) && clean.startsWith(`/exercises/${it.exerciseId}.`)
+      );
+      return {
+        ...it,
+        imageUrl: !clean || isStaleDefaultAsset ? (exImageLookup.get(it.exerciseId) ?? clean) : clean,
+      };
+    });
+    return {
+      id: String(r.id),
+      name: String(r.name),
+      goal: r.goal as Routine['goal'],
+      level: r.level as Routine['level'],
+      estimatedMinutes: Number(r.estimated_minutes),
+      equipmentIds: JSON.parse(String(r.equipment_ids_json)),
+      items,
+      notes: r.notes ? String(r.notes) : null,
+      coverImageUrl: r.cover_image_url ? sanitizeImageUrl(String(r.cover_image_url)) : null,
+      timesCompleted: Number(r.times_completed),
+      lastCompletedAt: r.last_completed_at ? String(r.last_completed_at) : null,
+      createdAt: String(r.created_at),
+    };
+  });
 }
 
 export function createRoutine(rt: Routine): Routine {
+  const cleanCover = rt.coverImageUrl ? sanitizeImageUrl(rt.coverImageUrl) : null;
   getDb()
     .prepare(`
       INSERT INTO routines (
-        id, name, goal, level, estimated_minutes, equipment_ids_json, items_json, notes, times_completed, last_completed_at, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, name, goal, level, estimated_minutes, equipment_ids_json, items_json, notes, cover_image_url, times_completed, last_completed_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     .run(
       rt.id,
@@ -1773,21 +1940,28 @@ export function createRoutine(rt: Routine): Routine {
       JSON.stringify(rt.equipmentIds),
       JSON.stringify(rt.items),
       rt.notes ?? null,
+      cleanCover,
       rt.timesCompleted,
       rt.lastCompletedAt ?? null,
       rt.createdAt
     );
-  return rt;
+  return { ...rt, coverImageUrl: cleanCover };
 }
 
 export function updateRoutine(id: string, patch: Partial<Routine>): Routine | null {
   const current = listRoutines().find((r) => r.id === id);
   if (!current) return null;
-  const next = { ...current, ...patch };
+  const nextCover =
+    patch.coverImageUrl !== undefined
+      ? patch.coverImageUrl
+        ? sanitizeImageUrl(patch.coverImageUrl)
+        : null
+      : current.coverImageUrl ?? null;
+  const next = { ...current, ...patch, coverImageUrl: nextCover };
   getDb()
     .prepare(`
       UPDATE routines
-      SET name = ?, goal = ?, level = ?, estimated_minutes = ?, equipment_ids_json = ?, items_json = ?, notes = ?, times_completed = ?, last_completed_at = ?
+      SET name = ?, goal = ?, level = ?, estimated_minutes = ?, equipment_ids_json = ?, items_json = ?, notes = ?, cover_image_url = ?, times_completed = ?, last_completed_at = ?
       WHERE id = ?
     `)
     .run(
@@ -1798,6 +1972,7 @@ export function updateRoutine(id: string, patch: Partial<Routine>): Routine | nu
       JSON.stringify(next.equipmentIds),
       JSON.stringify(next.items),
       next.notes ?? null,
+      next.coverImageUrl ?? null,
       next.timesCompleted,
       next.lastCompletedAt ?? null,
       id
@@ -1808,6 +1983,50 @@ export function updateRoutine(id: string, patch: Partial<Routine>): Routine | nu
 export function deleteRoutine(id: string): boolean {
   const res = getDb().prepare('DELETE FROM routines WHERE id = ?').run(id);
   return res.changes > 0;
+}
+
+export interface LastExerciseLogSummary {
+  startedAt: string;
+  sets: Array<{ reps: number; weightKg: number; durationSec?: number }>;
+}
+
+export function getLastExerciseLogs(): Record<string, LastExerciseLogSummary> {
+  const rows = getDb()
+    .prepare(
+      `SELECT started_at, strength_logs_json
+       FROM activities
+       WHERE sport = 'strength' AND strength_logs_json IS NOT NULL
+       ORDER BY started_at DESC
+       LIMIT 60`
+    )
+    .all() as Array<{ started_at: string; strength_logs_json: string }>;
+
+  const result: Record<string, LastExerciseLogSummary> = {};
+  for (const row of rows) {
+    let logs: StrengthSetLog[] = [];
+    try {
+      logs = JSON.parse(row.strength_logs_json) as StrengthSetLog[];
+    } catch {
+      continue;
+    }
+    for (const ex of logs) {
+      if (!ex?.exerciseId || result[ex.exerciseId]) continue;
+      const completedSets = (ex.sets ?? [])
+        .filter((s) => s.completed)
+        .map((s) => ({
+          reps: Number(s.reps) || 0,
+          weightKg: Number(s.weightKg) || 0,
+          ...(typeof s.durationSec === 'number' && s.durationSec > 0 ? { durationSec: s.durationSec } : {}),
+        }));
+      if (completedSets.length > 0) {
+        result[ex.exerciseId] = {
+          startedAt: row.started_at,
+          sets: completedSets,
+        };
+      }
+    }
+  }
+  return result;
 }
 
 // ===== SEGMENTS & EFFORTS =====

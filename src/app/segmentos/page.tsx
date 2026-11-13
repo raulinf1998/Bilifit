@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { Award, Flag, Mountain, Trash2, Trophy } from 'lucide-react';
 import ActivityMap from '@/components/ActivityMap';
 import { SportBadge } from '@/components/SportBadge';
-import { formatDurationClock, formatPaceMinKm, formatSpeedKmh, sportColor } from '@/lib/metrics';
+import { defaultMapLayerForSport, formatDurationClock, formatPaceMinKm, formatSpeedKmh, sportColor } from '@/lib/metrics';
 import type { Segment, SegmentEffort, SportType } from '@/types';
 
 const CATEGORY_LABELS: Record<Segment['category'], string> = {
@@ -208,7 +208,7 @@ function SegmentsContent() {
                   worldName={selectedSegment.worldName}
                   title={selectedSegment.name}
                   color={sportColor(selectedSegment.sport)}
-                  defaultLayer={selectedSegment.sport === 'mountain' || selectedSegment.sport === 'trail' ? 'topo' : 'osm'}
+                  defaultLayer={defaultMapLayerForSport(selectedSegment.sport, Boolean(selectedSegment.worldName))}
                   heightClass="h-64"
                 />
               </div>

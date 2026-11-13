@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { withAccount } from '@/lib/account-context';
 import { createActivity, getAthleteProfile, listRoutines, updateRoutine } from '@/lib/db';
 import { estimateActivityTSS } from '@/lib/metrics';
+import { sanitizeImageList } from '@/lib/uploads';
 import type { StrengthSetLog } from '@/types';
 
 export async function POST(req: NextRequest) {
@@ -18,7 +19,9 @@ export async function POST(req: NextRequest) {
       for (const ex of strengthLogs) {
         for (const s of ex.sets) {
           if (s.completed) {
-            totalVolumeKg += (Number(s.reps) || 0) * (Number(s.weightKg) || 0);
+            const weight = Number(s.weightKg) || 0;
+            const factor = s.durationSec && s.durationSec > 0 ? 1 : Number(s.reps) || 0;
+            totalVolumeKg += factor * weight;
           }
         }
       }
@@ -71,6 +74,7 @@ export async function POST(req: NextRequest) {
         strengthLogs,
         totalVolumeKg: Math.round(totalVolumeKg),
         doneTogether: Boolean(body.doneTogether),
+        images: sanitizeImageList(body.images),
         createdAt: nowIso,
       });
 

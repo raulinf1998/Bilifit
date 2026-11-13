@@ -4,6 +4,7 @@ import { withAccount } from '@/lib/account-context';
 import { resolveActivityTitle } from '@/lib/activity-naming';
 import { createActivity, getAthleteProfile, listActivities } from '@/lib/db';
 import { estimateActivityTSS } from '@/lib/metrics';
+import { sanitizeImageList } from '@/lib/uploads';
 import type { SportType } from '@/types';
 
 export async function GET(req: NextRequest) {
@@ -92,6 +93,7 @@ export async function POST(req: NextRequest) {
         strengthLogs: Array.isArray(body.strengthLogs) ? body.strengthLogs : [],
         totalVolumeKg: body.totalVolumeKg ? Number(body.totalVolumeKg) : null,
         doneTogether: Boolean(body.doneTogether),
+        images: sanitizeImageList(body.images),
         createdAt: new Date().toISOString(),
       });
 
