@@ -1,5 +1,32 @@
 import type { Activity, ActivityPoint, AthleteProfile, FitnessDayPoint, SportType } from '@/types';
 
+export function getEffectiveDurationSec(
+  activity: Pick<Activity, 'durationSec' | 'movingTimeSec' | 'excludePausedTime'>
+): number {
+  if (activity.excludePausedTime && activity.movingTimeSec > 0) {
+    return activity.movingTimeSec;
+  }
+  return activity.durationSec;
+}
+
+export function getEffectiveAvgSpeedMs(
+  activity: Pick<Activity, 'distanceMeters' | 'durationSec' | 'movingTimeSec' | 'avgSpeedMs' | 'excludePausedTime'>
+): number | null {
+  const effectiveDuration = getEffectiveDurationSec(activity);
+  if (activity.distanceMeters > 0 && effectiveDuration > 0) {
+    if (activity.excludePausedTime || activity.durationSec !== activity.movingTimeSec) {
+      return Math.round((activity.distanceMeters / effectiveDuration) * 100) / 100;
+    }
+  }
+  if (typeof activity.avgSpeedMs === 'number' && activity.avgSpeedMs > 0) {
+    return activity.avgSpeedMs;
+  }
+  if (activity.distanceMeters > 0 && effectiveDuration > 0) {
+    return Math.round((activity.distanceMeters / effectiveDuration) * 100) / 100;
+  }
+  return null;
+}
+
 export function formatDuration(totalSeconds: number): string {
   const secs = Math.max(0, Math.round(totalSeconds));
   const h = Math.floor(secs / 3600);

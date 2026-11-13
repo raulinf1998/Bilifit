@@ -5,9 +5,11 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Globe, Layers, Maximize2, Minimize2 } from 'lucide-react';
 import {
-  DARK_MAP_ATTRIBUTION,
+  buildThemedDarkMapStyle,
   DARK_MAP_BACKGROUND,
   DARK_MAP_STYLE,
+  readMapThemePaletteFromDocument,
+  resolveDarkMapColors,
 } from '@/lib/dark-map-style';
 import {
   alignCoordsToMyWhooshWorld,
@@ -51,11 +53,16 @@ const TILE_LAYERS: Record<
   dark: {
     label: 'Oscuro',
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: DARK_MAP_ATTRIBUTION,
+    attribution: '',
     className: 'bilifit-dark-tiles',
     maxZoom: 19,
   },
 };
+
+export interface MapTrimPreviewOverlay {
+  keepPolyline?: string | null;
+  removedPolylines?: string[];
+}
 
 export default function ActivityMap({
   points,
@@ -69,6 +76,7 @@ export default function ActivityMap({
   defaultLayer = 'topo',
   hoverPoint,
   highlightPolyline,
+  trimPreview,
   heightClass = 'h-80',
 }: {
   points?: ActivityPoint[];
@@ -82,16 +90,26 @@ export default function ActivityMap({
   defaultLayer?: MapStyle;
   hoverPoint?: ActivityPoint | null;
   highlightPolyline?: string | null;
+  trimPreview?: MapTrimPreviewOverlay | null;
   heightClass?: string;
 }) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<import('leaflet').Map | null>(null);
   const baseLayerRef = useRef<import('leaflet').Layer | null>(null);
+  const glMapRef = useRef<{
+    setStyle?: (style: unknown, opts?: { diff?: boolean }) => void;
+    once?: (event: string, fn: () => void) => void;
+    on?: (event: string, fn: (evt: { error?: { message?: string; status?: number } }) => void) => void;
+  } | null>(null);
   const routeLayerGroupRef = useRef<import('leaflet').LayerGroup | null>(null);
-  const highlightLayerRef = useRef<import('leaflet').Polyline | null>(null);
+  const trimOverlayGroupRef = useRef<import('leaflet').LayerGroup | null>(null);
+  const highlightGroupRef = useRef<import('leaflet').LayerGroup | null>(null);
+  const hadHighlightRef = useRef(false);
   const hoverMarkerRef = useRef<import('leaflet').CircleMarker | null>(null);
   const leafletRef = useRef<typeof import('leaflet') | null>(null);
   const [mapReadyTick, setMapReadyTick] = useState(0);
+  const [themeRevision, setThemeRevision] = useState(0);
 
   const coords: Array<[number, number]> = useMemo(
     () =>
@@ -189,7 +207,7 @@ export default function ActivityMap({
         zoom: 12,
         minZoom: 1,
         zoomControl: true,
-        attributionControl: true,
+        attributionControl: false,
         zoomSnap: 0.25,
         zoomDelta: 0.5,
         maxBounds: [
@@ -200,6 +218,8 @@ export default function ActivityMap({
       });
       mapRef.current = map;
       routeLayerGroupRef.current = L.layerGroup().addTo(map);
+      trimOverlayGroupRef.current = L.layerGroup().addTo(map);
+      highlightGroupRef.current = L.layerGroup().addTo(map);
 
       if (typeof ResizeObserver !== 'undefined' && containerRef.current) {
         observer = new ResizeObserver(() => {
@@ -222,8 +242,10 @@ export default function ActivityMap({
       active = false;
       observer?.disconnect();
       routeLayerGroupRef.current = null;
+      trimOverlayGroupRef.current = null;
+      highlightGroupRef.current = null;
       baseLayerRef.current = null;
-      highlightLayerRef.current = null;
+      glMapRef.current = null;
       hoverMarkerRef.current = null;
       if (mapRef.current) {
         mapRef.current.remove();
@@ -232,6 +254,19 @@ export default function ActivityMap({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canRenderMap]);
+
+  // Observar cambios de tema o paleta personalizada en <html> para actualizar el estilo Oscuro al instante
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return;
+    const obs = new MutationObserver(() => {
+      setThemeRevision((r) => r + 1);
+    });
+    obs.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme', 'class', 'style'],
+    });
+    return () => obs.disconnect();
+  }, []);
 
   // Actualizar capa base + traza + hitos + encuadre cuando el mapa esté listo o cambien capa, mundo o datos
   useEffect(() => {
@@ -246,6 +281,7 @@ export default function ActivityMap({
       map.removeLayer(baseLayerRef.current);
       baseLayerRef.current = null;
     }
+    glMapRef.current = null;
     routeGroup.clearLayers();
 
     const isVirtual = layer === 'virtual' && Boolean(myWhooshMatch) && Boolean(virtualDisplayBounds);
@@ -328,7 +364,6 @@ export default function ActivityMap({
       }
       const darkCfg = TILE_LAYERS.dark;
       baseLayerRef.current = L.tileLayer(darkCfg.url, {
-        attribution: '© OpenStreetMap · Oscuro',
         maxZoom: darkCfg.maxZoom ?? 19,
         className: darkCfg.className ?? 'bilifit-dark-tiles',
       }).addTo(map);
@@ -340,7 +375,6 @@ export default function ActivityMap({
         pane: 'tilePane',
         zIndex: 1,
         opacity: 1,
-        attribution: `MyWhoosh · ${myWhooshMatch.world.name}`,
       }).addTo(map);
       overlay.once('load', () => {
         if (!cancelled && mapRef.current) {
@@ -353,7 +387,16 @@ export default function ActivityMap({
       const activeStyle = layer === 'virtual' ? fallbackStyle : layer;
 
       if (activeStyle === 'dark') {
-        if (containerRef.current) containerRef.current.style.background = DARK_MAP_BACKGROUND;
+        const themePalette = readMapThemePaletteFromDocument();
+        const darkColors = resolveDarkMapColors(themePalette);
+        if (containerRef.current) containerRef.current.style.background = darkColors.background || DARK_MAP_BACKGROUND;
+        if (wrapperRef.current) {
+          wrapperRef.current.style.setProperty('--bilifit-map-dark-bg', darkColors.background);
+          wrapperRef.current.style.setProperty('--bilifit-map-dark-filter', darkColors.rasterTintFilter);
+          wrapperRef.current.style.setProperty('--bilifit-map-ctrl-bg', darkColors.controlBg);
+          wrapperRef.current.style.setProperty('--bilifit-map-ctrl-border', darkColors.controlBorder);
+          wrapperRef.current.style.setProperty('--bilifit-map-ctrl-text', darkColors.controlText);
+        }
         if (!isWebGLSupported()) {
           mountRasterDarkFallback();
         } else {
@@ -366,11 +409,10 @@ export default function ActivityMap({
               const { maplibreGL } = await import('@maplibre/maplibre-gl-leaflet');
               if (cancelled || mapRef.current !== map) return;
 
+              const initialDarkStyle = themePalette ? buildThemedDarkMapStyle(themePalette) : DARK_MAP_STYLE;
               const glLayer = maplibreGL({
-                style: DARK_MAP_STYLE,
-                attributionControl: {
-                  customAttribution: DARK_MAP_ATTRIBUTION,
-                },
+                style: initialDarkStyle,
+                attributionControl: false as unknown as Record<string, unknown>,
               });
 
               // Evitar lecturas nulas en animationFrame si se cambia de capa durante resize/zoom
@@ -407,10 +449,19 @@ export default function ActivityMap({
               baseLayerRef.current = glLayer;
 
               const glMap = glLayer.getMaplibreMap();
+              glMapRef.current = glMap as unknown as typeof glMapRef.current;
               let styleLoaded = false;
               let fellBack = false;
               glMap?.once('load', () => {
                 styleLoaded = true;
+                const latestPalette = readMapThemePaletteFromDocument();
+                if (!cancelled && latestPalette && mapRef.current === map) {
+                  try {
+                    glMap.setStyle(buildThemedDarkMapStyle(latestPalette), { diff: true });
+                  } catch {
+                    // Ignorar
+                  }
+                }
               });
               glMap?.on('error', (evt: { error?: { message?: string; status?: number } }) => {
                 if (cancelled || fellBack || styleLoaded || mapRef.current !== map) return;
@@ -430,7 +481,6 @@ export default function ActivityMap({
         if (containerRef.current) containerRef.current.style.background = '#0f172a';
         const cfg = TILE_LAYERS[activeStyle];
         baseLayerRef.current = L.tileLayer(cfg.url, {
-          attribution: cfg.attribution,
           maxZoom: cfg.maxZoom ?? 17,
           className: cfg.className ?? '',
         }).addTo(map);
@@ -442,16 +492,91 @@ export default function ActivityMap({
     };
   }, [mapReadyTick, layer, myWhooshMatch, virtualDisplayBounds, defaultLayer, displayCoords, color, fitScope]);
 
-  // Resaltar segmento sobre el mapa si hay highlightPolyline
+  // Re-tintar dinámicamente la capa Oscuro al cambiar tema o paleta personalizada sin reiniciar el mapa
+  useEffect(() => {
+    const activeDark = layer === 'dark' || (layer === 'virtual' && !myWhooshMatch && defaultLayer === 'dark');
+    if (!activeDark) return;
+    const themePalette = readMapThemePaletteFromDocument();
+    const darkColors = resolveDarkMapColors(themePalette);
+    if (containerRef.current) containerRef.current.style.background = darkColors.background || DARK_MAP_BACKGROUND;
+    if (wrapperRef.current) {
+      wrapperRef.current.style.setProperty('--bilifit-map-dark-bg', darkColors.background);
+      wrapperRef.current.style.setProperty('--bilifit-map-dark-filter', darkColors.rasterTintFilter);
+      wrapperRef.current.style.setProperty('--bilifit-map-ctrl-bg', darkColors.controlBg);
+      wrapperRef.current.style.setProperty('--bilifit-map-ctrl-border', darkColors.controlBorder);
+      wrapperRef.current.style.setProperty('--bilifit-map-ctrl-text', darkColors.controlText);
+    }
+    const glMap = glMapRef.current;
+    if (glMap && typeof glMap.setStyle === 'function') {
+      try {
+        const nextStyle = themePalette ? buildThemedDarkMapStyle(themePalette) : DARK_MAP_STYLE;
+        glMap.setStyle(nextStyle, { diff: true });
+      } catch {
+        // Ignorar si el estilo aún está inicializándose
+      }
+    }
+  }, [themeRevision, layer, myWhooshMatch, defaultLayer]);
+
+  // Vista previa en vivo del recorte (tramo conservado vs tramos descartados sin mover el zoom)
+  useEffect(() => {
+    const L = leafletRef.current;
+    const overlayGroup = trimOverlayGroupRef.current;
+    if (!L || !overlayGroup || mapReadyTick === 0) return;
+
+    overlayGroup.clearLayers();
+    if (!trimPreview) return;
+
+    const toDisplay = (rawPoly: string): Array<[number, number]> => {
+      let c = decodePolyline(rawPoly);
+      if (layer === 'virtual' && myWhooshMatch && c.length >= 2) {
+        const aligned = alignCoordsToMyWhooshWorld(myWhooshMatch.world, c).alignedCoords;
+        c = toWorldDisplayCoords(myWhooshMatch.world, aligned);
+      }
+      return c;
+    };
+
+    for (const remPoly of trimPreview.removedPolylines ?? []) {
+      const rCoords = toDisplay(remPoly);
+      if (rCoords.length < 2) continue;
+      L.polyline(rCoords, {
+        color: '#ef4444',
+        weight: 5,
+        opacity: 0.72,
+        dashArray: '6 6',
+        lineJoin: 'round',
+        lineCap: 'round',
+      }).addTo(overlayGroup);
+    }
+
+    if (trimPreview.keepPolyline) {
+      const kCoords = toDisplay(trimPreview.keepPolyline);
+      if (kCoords.length >= 2) {
+        L.polyline(kCoords, {
+          color: '#0f172a',
+          weight: 7,
+          opacity: 0.65,
+          lineJoin: 'round',
+          lineCap: 'round',
+        }).addTo(overlayGroup);
+        L.polyline(kCoords, {
+          color: '#10b981',
+          weight: 4.5,
+          opacity: 0.98,
+          lineJoin: 'round',
+          lineCap: 'round',
+        }).addTo(overlayGroup);
+      }
+    }
+  }, [mapReadyTick, trimPreview, layer, myWhooshMatch]);
+
+  // Resaltar segmento o vuelta sobre el mapa si hay highlightPolyline
   useEffect(() => {
     const map = mapRef.current;
     const L = leafletRef.current;
-    if (!map || !L || mapReadyTick === 0) return;
+    const hGroup = highlightGroupRef.current;
+    if (!map || !L || !hGroup || mapReadyTick === 0) return;
 
-    if (highlightLayerRef.current) {
-      map.removeLayer(highlightLayerRef.current);
-      highlightLayerRef.current = null;
-    }
+    hGroup.clearLayers();
 
     if (highlightPolyline) {
       let hCoords = decodePolyline(highlightPolyline);
@@ -460,15 +585,44 @@ export default function ActivityMap({
         hCoords = toWorldDisplayCoords(myWhooshMatch.world, aligned);
       }
       if (hCoords.length >= 2) {
-        highlightLayerRef.current = L.polyline(hCoords, {
+        L.polyline(hCoords, {
+          color: '#0f172a',
+          weight: 10,
+          opacity: 0.72,
+          lineJoin: 'round',
+          lineCap: 'round',
+        }).addTo(hGroup);
+        const mainHighlight = L.polyline(hCoords, {
           color: '#facc15',
-          weight: 7,
-          opacity: 0.95,
-        }).addTo(map);
-        map.fitBounds(highlightLayerRef.current.getBounds(), { padding: [36, 36] });
+          weight: 5.5,
+          opacity: 0.98,
+          lineJoin: 'round',
+          lineCap: 'round',
+        }).addTo(hGroup);
+        L.circleMarker(hCoords[0], {
+          radius: 5,
+          color: '#0f172a',
+          weight: 2,
+          fillColor: '#facc15',
+          fillOpacity: 1,
+        }).addTo(hGroup);
+        L.circleMarker(hCoords[hCoords.length - 1], {
+          radius: 5,
+          color: '#0f172a',
+          weight: 2,
+          fillColor: '#f59e0b',
+          fillOpacity: 1,
+        }).addTo(hGroup);
+        hadHighlightRef.current = true;
+        map.fitBounds(mainHighlight.getBounds(), { padding: [36, 36] });
+      }
+    } else if (hadHighlightRef.current) {
+      hadHighlightRef.current = false;
+      if (displayCoords.length >= 2) {
+        map.fitBounds(L.latLngBounds(displayCoords), { padding: [24, 24] });
       }
     }
-  }, [mapReadyTick, highlightPolyline, layer, myWhooshMatch]);
+  }, [mapReadyTick, highlightPolyline, layer, myWhooshMatch, displayCoords]);
 
   // Índice rápido de coordenadas para sincronizar el cursor de las gráficas sobre la traza alineada
   const coordIndexMap = useMemo(() => {
@@ -541,6 +695,7 @@ export default function ActivityMap({
 
   return (
     <div
+      ref={wrapperRef}
       className={`relative rounded-xl overflow-hidden border ${isDarkActive ? 'bilifit-map-dark' : ''}`}
       style={{ borderColor: 'var(--border-subtle)' }}
     >

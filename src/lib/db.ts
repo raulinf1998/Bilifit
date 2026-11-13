@@ -4,6 +4,12 @@ import Database from 'better-sqlite3';
 import { currentAccountId } from '@/lib/account-context';
 import type { AccountId } from '@/lib/accounts';
 import {
+  computeTrimmedActivityData,
+  previewActivityTrim,
+  type TrimPreviewResult,
+  type TrimSpec,
+} from '@/lib/activity-trim';
+import {
   computeBestEfforts,
   computeHeartRateZones,
   computeKmSplits,
@@ -525,6 +531,7 @@ function initSchema(db: Database.Database) {
   ensureColumn(db, 'activities', 'laps_json', 'TEXT');
   ensureColumn(db, 'activities', 'extras_json', 'TEXT');
   ensureColumn(db, 'activities', 'done_together', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'activities', 'exclude_paused_time', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 function ensureColumn(db: Database.Database, table: string, column: string, colType: string) {
@@ -888,6 +895,7 @@ function mapActivityRow(row: Record<string, unknown>): Activity {
     startLon: row.start_lon != null ? Number(row.start_lon) : null,
     totalVolumeKg: row.total_volume_kg != null ? Number(row.total_volume_kg) : null,
     doneTogether: Boolean(row.done_together),
+    excludePausedTime: Boolean(row.exclude_paused_time),
     laps,
     extras,
     createdAt: String(row.created_at),
@@ -1005,8 +1013,8 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
       duration_sec, moving_time_sec, distance_meters, elevation_gain, elevation_loss,
       avg_speed_ms, max_speed_ms, avg_hr, max_hr, avg_watts, normalized_power, max_watts,
       avg_cadence, calories, tss, rpe, gear_id, world_name, polyline, start_lat, start_lon,
-      points_json, strength_logs_json, total_volume_kg, done_together, laps_json, extras_json, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      points_json, strength_logs_json, total_volume_kg, done_together, exclude_paused_time, laps_json, extras_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.id,
     input.externalId ?? null,
@@ -1041,6 +1049,7 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
     JSON.stringify(input.strengthLogs ?? []),
     input.totalVolumeKg ?? null,
     input.doneTogether ? 1 : 0,
+    input.excludePausedTime ? 1 : 0,
     JSON.stringify(input.laps ?? []),
     JSON.stringify(extras),
     input.createdAt
@@ -1098,6 +1107,7 @@ export function updateActivity(
     gearId: string | null;
     worldName: string | null;
     doneTogether: boolean;
+    excludePausedTime: boolean;
   }>
 ): ActivityDetail | null {
   const existing = getActivityById(id);
@@ -1108,6 +1118,8 @@ export function updateActivity(
   const sportChanged = Boolean(patch.sport && patch.sport !== existing.sport);
   const nextRpe = patch.rpe !== undefined ? patch.rpe : existing.rpe ?? null;
   const nextDoneTogether = patch.doneTogether !== undefined ? Boolean(patch.doneTogether) : Boolean(existing.doneTogether);
+  const nextExcludePaused =
+    patch.excludePausedTime !== undefined ? Boolean(patch.excludePausedTime) : Boolean(existing.excludePausedTime);
   const nextSubSport =
     patch.subSport !== undefined
       ? patch.subSport && isMismatchedSubSport(nextSport, patch.subSport)
@@ -1138,7 +1150,7 @@ export function updateActivity(
 
   db.prepare(`
       UPDATE activities
-      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?, tss = ?, done_together = ?
+      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?, tss = ?, done_together = ?, exclude_paused_time = ?
       WHERE id = ?
     `).run(
     patch.title ?? existing.title,
@@ -1150,6 +1162,7 @@ export function updateActivity(
     patch.worldName !== undefined ? patch.worldName : existing.worldName ?? null,
     nextTss,
     nextDoneTogether ? 1 : 0,
+    nextExcludePaused ? 1 : 0,
     id
   );
 
@@ -1182,6 +1195,101 @@ export function updateActivity(
   }
 
   return getActivityById(id);
+}
+
+export function trimActivity(
+  id: string,
+  spec: TrimSpec
+): { activity: ActivityDetail; preview: TrimPreviewResult } | null {
+  const existing = getActivityById(id);
+  if (!existing) return null;
+
+  const profile = getAthleteProfile();
+  const fallbackRatio =
+    existing.durationSec > 0 && existing.movingTimeSec > 0
+      ? Math.min(1, existing.movingTimeSec / existing.durationSec)
+      : 1;
+  const preview = previewActivityTrim(existing.points, existing.sport, spec, fallbackRatio);
+  const patch = computeTrimmedActivityData(existing, spec, profile);
+  const db = getDb();
+
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE activities
+      SET started_at = ?,
+          duration_sec = ?,
+          moving_time_sec = ?,
+          distance_meters = ?,
+          elevation_gain = ?,
+          elevation_loss = ?,
+          avg_speed_ms = ?,
+          max_speed_ms = ?,
+          avg_hr = ?,
+          max_hr = ?,
+          avg_watts = ?,
+          normalized_power = ?,
+          max_watts = ?,
+          avg_cadence = ?,
+          calories = ?,
+          tss = ?,
+          polyline = ?,
+          start_lat = ?,
+          start_lon = ?,
+          points_json = ?,
+          laps_json = ?,
+          extras_json = ?
+      WHERE id = ?
+    `).run(
+      patch.startedAt,
+      patch.durationSec,
+      patch.movingTimeSec,
+      patch.distanceMeters,
+      patch.elevationGain,
+      patch.elevationLoss,
+      patch.avgSpeedMs,
+      patch.maxSpeedMs,
+      patch.avgHr,
+      patch.maxHr,
+      patch.avgWatts,
+      patch.normalizedPower,
+      patch.maxWatts,
+      patch.avgCadence,
+      patch.calories,
+      patch.tss,
+      patch.polyline,
+      patch.startLat,
+      patch.startLon,
+      JSON.stringify(patch.points),
+      JSON.stringify(patch.laps),
+      JSON.stringify(patch.extras),
+      id
+    );
+
+    db.prepare('DELETE FROM segment_efforts WHERE activity_id = ?').run(id);
+    if (patch.points.some((p) => typeof p.lat === 'number' && typeof p.lon === 'number')) {
+      const segments = listSegments().filter((s) => s.sport === existing.sport);
+      for (const seg of segments) {
+        const effort = matchPointsToSegment(
+          {
+            id,
+            title: existing.title,
+            startedAt: patch.startedAt,
+            sport: existing.sport,
+            worldName: existing.worldName ?? null,
+          },
+          patch.points,
+          seg
+        );
+        if (effort) {
+          insertSegmentEffortRow(db, effort);
+        }
+      }
+    }
+  });
+  tx();
+
+  const updated = getActivityById(id)!;
+  return { activity: updated, preview };
 }
 
 export function deleteActivity(id: string): boolean {

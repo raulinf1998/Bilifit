@@ -93,6 +93,23 @@ export async function parseUploadedActivityFile(
           }
         }
 
+        if (grp.fallbackTrackItems?.length && sub.activities.length > 0 && (sub.activities[0].laps?.length ?? 0) <= 1) {
+          for (const sib of grp.fallbackTrackItems) {
+            if (!sib.fileName.toLowerCase().endsWith('.tcx')) continue;
+            try {
+              const sibRaw = await sib.item.entry.async('nodebuffer');
+              const sibParsed = await parseUploadedActivityFile(sib.fileName, sibRaw);
+              const sibLaps = sibParsed.activities[0]?.laps ?? [];
+              if (sibLaps.length > (sub.activities[0].laps?.length ?? 0)) {
+                sub.activities[0].laps = sibLaps;
+                break;
+              }
+            } catch {
+              // Ignorar fallback secundario
+            }
+          }
+        }
+
         activities.push(...sub.activities);
         errors.push(...sub.errors);
       } catch (err) {
@@ -163,6 +180,21 @@ export async function parseUploadedActivityBatch(
     if (grp.csvMetaItem && sub.activities.length > 0) {
       const meta = parseHealthSyncCsv(grp.csvMetaItem.item.buffer.toString('utf8'));
       sub.activities = sub.activities.map((a) => applyHealthSyncMetadata(a, meta));
+    }
+    if (grp.fallbackTrackItems?.length && sub.activities.length > 0 && (sub.activities[0].laps?.length ?? 0) <= 1) {
+      for (const sib of grp.fallbackTrackItems) {
+        if (!sib.fileName.toLowerCase().endsWith('.tcx')) continue;
+        try {
+          const sibParsed = await parseUploadedActivityFile(sib.fileName, sib.item.buffer);
+          const sibLaps = sibParsed.activities[0]?.laps ?? [];
+          if (sibLaps.length > (sub.activities[0].laps?.length ?? 0)) {
+            sub.activities[0].laps = sibLaps;
+            break;
+          }
+        } catch {
+          // Ignorar fallback secundario
+        }
+      }
     }
     activities.push(...sub.activities);
     errors.push(...sub.errors);

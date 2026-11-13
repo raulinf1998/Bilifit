@@ -8,7 +8,7 @@ import {
   listMountainRoutes,
   listRoutines,
 } from '@/lib/db';
-import { calculatePMC } from '@/lib/metrics';
+import { calculatePMC, getEffectiveDurationSec } from '@/lib/metrics';
 import { getHuaweiStatus } from '@/lib/huawei-sync';
 import { getMyWhooshStatus } from '@/lib/mywhoosh-sync';
 import { getStravaStatus } from '@/lib/strava';
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
     const thisMonth = activities.filter((a) => now - Date.parse(a.startedAt) <= monthMs);
 
     const weekDistanceKm = Math.round((thisWeek.reduce((s, a) => s + a.distanceMeters, 0) / 1000) * 10) / 10;
-    const weekDurationHours = Math.round((thisWeek.reduce((s, a) => s + a.durationSec, 0) / 3600) * 10) / 10;
+    const weekDurationHours = Math.round((thisWeek.reduce((s, a) => s + getEffectiveDurationSec(a), 0) / 3600) * 10) / 10;
     const weekElevationM = Math.round(thisWeek.reduce((s, a) => s + a.elevationGain, 0));
     const weekTss = thisWeek.reduce((s, a) => s + a.tss, 0);
 
@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
       const d = new Date(endTs);
       const label = `${d.getUTCDate()}/${d.getUTCMonth() + 1}`;
       const hoursFor = (sport: string) =>
-        Math.round((items.filter((i) => i.sport === sport).reduce((s, i) => s + i.durationSec, 0) / 3600) * 100) / 100;
+        Math.round((items.filter((i) => i.sport === sport).reduce((s, i) => s + getEffectiveDurationSec(i), 0) / 3600) * 100) / 100;
 
       weeklyBuckets.push({
         label,

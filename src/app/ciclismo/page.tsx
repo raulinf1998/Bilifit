@@ -7,7 +7,7 @@ import ActivityImporter from '@/components/ActivityImporter';
 import ActivityMap from '@/components/ActivityMap';
 import MyWhooshConnectorCard from '@/components/MyWhooshConnectorCard';
 import { SportBadge } from '@/components/SportBadge';
-import { formatDistanceKm, formatDuration, getCogganPowerZones } from '@/lib/metrics';
+import { formatDistanceKm, formatDuration, getCogganPowerZones, getEffectiveDurationSec } from '@/lib/metrics';
 import {
   MYWHOOSH_WORLDS,
   getMyWhooshWorldByIdOrName,
@@ -72,7 +72,7 @@ export default function CyclingMyWhooshPage() {
     [activities]
   );
   const totalKm = Math.round(activities.reduce((s, a) => s + a.distanceMeters, 0) / 1000);
-  const totalHours = (activities.reduce((s, a) => s + a.durationSec, 0) / 3600).toFixed(1);
+  const totalHours = (activities.reduce((s, a) => s + getEffectiveDurationSec(a), 0) / 3600).toFixed(1);
   const totalTss = activities.reduce((s, a) => s + a.tss, 0);
   const bestNp = Math.max(0, ...activities.map((a) => a.normalizedPower ?? a.avgWatts ?? 0));
   const ftp = profile?.ftpWatts ?? 245;
@@ -343,7 +343,7 @@ export default function CyclingMyWhooshPage() {
                 </div>
                 <div>
                   <div style={{ color: 'var(--text-muted)' }}>Tiempo</div>
-                  <div className="font-semibold">{formatDuration(act.durationSec)}</div>
+                  <div className="font-semibold">{formatDuration(getEffectiveDurationSec(act))}</div>
                 </div>
                 {act.avgWatts && (
                   <div>

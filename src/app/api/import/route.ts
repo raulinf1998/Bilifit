@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { withAccount } from '@/lib/account-context';
+import { resolveActivityTitle } from '@/lib/activity-naming';
 import { createActivity, findDuplicateActivity, getAthleteProfile } from '@/lib/db';
 import { defaultSubSportForSport, estimateActivityTSS } from '@/lib/metrics';
 import { parseUploadedActivityBatch } from '@/lib/parsers';
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
           source: isHuawei ? 'huawei' : act.source,
           sport: finalSport,
           subSport: finalSubSport,
-          title: act.title,
+          title: resolveActivityTitle(act.title, finalSport, act.startedAt),
           description: act.description ?? null,
           startedAt: act.startedAt,
           durationSec: act.durationSec,

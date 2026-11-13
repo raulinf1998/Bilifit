@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import net from 'node:net';
 import { currentAccountId } from '@/lib/account-context';
 import type { AccountId } from '@/lib/accounts';
+import { hasConcreteActivityName, resolveActivityTitle } from '@/lib/activity-naming';
 import { decryptSecret, encryptSecret } from '@/lib/crypto';
 import {
   createActivity,
@@ -755,18 +756,6 @@ function upsertImportLog(log: MyWhooshImportLog) {
     );
 }
 
-function isGenericParsedTitle(parsedTitle: string, activityId: string): boolean {
-  const lower = parsedTitle.trim().toLowerCase();
-  return (
-    !lower ||
-    lower.startsWith('mywhoosh') ||
-    lower.startsWith('actividad') ||
-    lower.startsWith('sesión') ||
-    lower === activityId.toLowerCase() ||
-    /^\d+$/.test(lower)
-  );
-}
-
 function pickSafeStartedAt(parsedStartedAt: string | undefined, remoteStartedAt: string | null): string {
   if (parsedStartedAt) {
     const ms = Date.parse(parsedStartedAt);
@@ -926,14 +915,18 @@ export async function syncMyWhooshActivities(
               detectMyWhooshWorld(`${remote.title} ${remote.worldHint ?? ''}`) ??
               null;
 
-            const finalTitle =
-              remote.title &&
-              !isGenericParsedTitle(remote.title, remote.activityId) &&
-              (isGenericParsedTitle(parsed.title, remote.activityId) || remote.title.length >= parsed.title.length)
+            const remoteHasConcrete =
+              remote.title !== remote.activityId && hasConcreteActivityName(remote.title);
+            const parsedHasConcrete =
+              parsed.title !== remote.activityId && hasConcreteActivityName(parsed.title);
+
+            const candidateTitle =
+              remoteHasConcrete && (!parsedHasConcrete || remote.title.length >= parsed.title.length)
                 ? remote.title
-                : isGenericParsedTitle(parsed.title, remote.activityId)
-                  ? remote.title || 'Sesión MyWhoosh'
-                  : parsed.title;
+                : parsedHasConcrete
+                  ? parsed.title
+                  : null;
+            const finalTitle = resolveActivityTitle(candidateTitle, 'mywhoosh', startedAt);
 
             const tss = estimateActivityTSS(
               {

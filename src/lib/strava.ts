@@ -1,4 +1,5 @@
 import type { NextRequest } from 'next/server';
+import { resolveActivityTitle } from '@/lib/activity-naming';
 import { computeSessionExtras, enrichPointsTelemetry } from '@/lib/analytics';
 import {
   createActivity,
@@ -495,7 +496,7 @@ export async function syncStravaActivities(limit = 30, fetchStreams = true): Pro
       source: 'strava',
       sport: mapped.sport,
       subSport: mapped.subSport,
-      title: item.name || 'Actividad de Strava',
+      title: resolveActivityTitle(item.name, mapped.sport, item.start_date),
       description: item.description ?? (item.device_name ? `Grabado con ${item.device_name}` : null),
       startedAt: item.start_date,
       durationSec: Math.round(item.elapsed_time ?? 0),

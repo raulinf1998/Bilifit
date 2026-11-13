@@ -20,11 +20,16 @@ import {
   calculatePMC,
   computePowerCurve,
   defaultSubSportForSport,
+  getEffectiveAvgSpeedMs,
+  getEffectiveDurationSec,
   isMismatchedSubSport,
   resolveDisplaySubSport,
   sportColor,
   sportLabel,
 } from '../src/lib/metrics';
+import { hasConcreteActivityName, resolveActivityTitle } from '../src/lib/activity-naming';
+import { previewActivityTrim, resolveTrimSpecFromInput } from '../src/lib/activity-trim';
+import { parseFitBuffer } from '../src/lib/parsers/fit';
 import { decodePolyline, encodePolyline } from '../src/lib/polyline';
 import { parseGpxString, generateGpxString } from '../src/lib/parsers/gpx';
 import { parseTcxString } from '../src/lib/parsers/tcx';
@@ -83,6 +88,8 @@ import {
 } from '../src/app/api/settings/custom-palettes/[id]/route';
 import { GET as getActivitiesRoute, POST as postActivitiesRoute } from '../src/app/api/activities/route';
 import { PATCH as patchActivityRoute } from '../src/app/api/activities/[id]/route';
+import { POST as postTrimActivityRoute } from '../src/app/api/activities/[id]/trim/route';
+import { GET as getDashboardRoute } from '../src/app/api/dashboard/route';
 import { GET as getProfileRoute } from '../src/app/api/profile/route';
 import { GET as getHuaweiGoogleAuthRoute } from '../src/app/api/huawei/google/auth/route';
 import { GET as getStravaAuthRoute } from '../src/app/api/strava/auth/route';
@@ -123,7 +130,13 @@ import {
 } from '../src/lib/mywhoosh-sync';
 import { buildSegmentFromRange, detectClimbCandidates, matchPointsToSegment } from '../src/lib/segments';
 import { mapStravaSport } from '../src/lib/strava';
-import { DARK_MAP_ATTRIBUTION, DARK_MAP_BACKGROUND, DARK_MAP_STYLE } from '../src/lib/dark-map-style';
+import {
+  buildThemedDarkMapStyle,
+  DARK_MAP_ATTRIBUTION,
+  DARK_MAP_BACKGROUND,
+  DARK_MAP_STYLE,
+  resolveDarkMapColors,
+} from '../src/lib/dark-map-style';
 
 test.after(() => {
   const peqDb = getDbPath('pequenaja');
@@ -2042,4 +2055,532 @@ test('Multi-account profiles, server themes/palettes, doneTogether, and OAuth is
     for (const p of s.customPalettes) deleteCustomPalette(p.id);
   });
 });
+
+test('Canonical default activity names, stopped time toggle, and activity trimming work end-to-end', async () => {
+  // 1. Canonical default naming (<Deporte> · <dd mmm yyyy>) while preserving real names
+  assert.equal(hasConcreteActivityName('2026.07.28 08.22-RUNNING.fit'), false);
+  assert.equal(hasConcreteActivityName('HiTrack_1760000000000'), false);
+  assert.equal(hasConcreteActivityName('Carrera al aire libre · 28 jul'), false);
+  assert.equal(hasConcreteActivityName('mw12345'), false);
+  assert.equal(hasConcreteActivityName('Hudayriyat Evening Spin'), true);
+  assert.equal(hasConcreteActivityName('Subida Jebel Jais'), true);
+
+  assert.equal(resolveActivityTitle('2026.07.28 08.22-RUNNING.fit', 'running', '2026-07-28T06:22:00Z'), 'Correr · 28 jul 2026');
+  assert.equal(resolveActivityTitle(null, 'walking', '2026-09-20T10:53:00Z'), 'Caminar · 20 sept 2026');
+  assert.equal(resolveActivityTitle('Rodaje Naranco Matinal', 'trail', '2026-07-28T06:22:00Z'), 'Rodaje Naranco Matinal');
+
+  const gpxGeneric = `<?xml version="1.0" encoding="UTF-8"?>
+  <gpx version="1.1" creator="Health Sync">
+    <trk>
+      <name>2026.07.28 08.22-RUNNING.gpx</name>
+      <type>running</type>
+      <trkseg>
+        <trkpt lat="43.3600" lon="-5.8500"><ele>200</ele><time>2026-07-28T06:22:00Z</time></trkpt>
+        <trkpt lat="43.3645" lon="-5.8500"><ele>215</ele><time>2026-07-28T06:25:00Z</time></trkpt>
+        <trkpt lat="43.3690" lon="-5.8500"><ele>230</ele><time>2026-07-28T06:28:00Z</time></trkpt>
+      </trkseg>
+    </trk>
+  </gpx>`;
+  const parsedGenericGpx = parseGpxString(gpxGeneric, '2026.07.28 08.22-RUNNING.gpx');
+  assert.equal(parsedGenericGpx.title, 'Correr · 28 jul 2026');
+
+  const blankManualRes = await postActivitiesRoute(
+    new NextRequest('http://localhost:3000/api/activities', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: '',
+        sport: 'walking',
+        durationMin: 40,
+        distanceKm: 3.2,
+        startedAt: '2026-09-20T10:53:00Z',
+      }),
+    })
+  );
+  assert.equal(blankManualRes.status, 201);
+  const blankManualJson = (await blankManualRes.json()) as { activity: { title: string } };
+  assert.equal(blankManualJson.activity.title, 'Caminar · 20 sept 2026');
+
+  // 2. Stopped time vs elapsed time metrics & FIT / Health Sync CSV / PATCH toggle
+  const pausedSample = {
+    durationSec: 3600,
+    movingTimeSec: 3000,
+    distanceMeters: 10_000,
+    avgSpeedMs: 2.78,
+    excludePausedTime: false,
+  };
+  assert.equal(getEffectiveDurationSec(pausedSample), 3600);
+  assert.equal(getEffectiveAvgSpeedMs(pausedSample), 2.78);
+  assert.equal(getEffectiveDurationSec({ ...pausedSample, excludePausedTime: true }), 3000);
+  assert.equal(getEffectiveAvgSpeedMs({ ...pausedSample, excludePausedTime: true }), 3.33);
+
+  const encPausedFit = new FitEncoder();
+  const fitT0 = new Date('2026-09-22T07:00:00Z');
+  const fitT0Ts = FitEncoder.toFitTimestamp(fitT0);
+  const toSemi = (d: number) => Math.round((d * 2147483648) / 180);
+  encPausedFit.writeMessage(0, [
+    { number: 0, size: 1, baseType: FitBaseType.Enum, value: 4 },
+    { number: 4, size: 4, baseType: FitBaseType.Uint32, value: fitT0Ts },
+  ], 0);
+  encPausedFit.writeMessage(18, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: fitT0Ts + 600 },
+    { number: 2, size: 4, baseType: FitBaseType.Uint32, value: fitT0Ts },
+    { number: 5, size: 1, baseType: FitBaseType.Enum, value: 1 },
+    { number: 7, size: 4, baseType: FitBaseType.Uint32, value: 600 * 1000 },
+    { number: 8, size: 4, baseType: FitBaseType.Uint32, value: 600 * 1000 },
+    { number: 9, size: 4, baseType: FitBaseType.Uint32, value: 1500 * 100 },
+    { number: 59, size: 4, baseType: FitBaseType.Uint32, value: 450 * 1000 },
+  ], 1);
+  for (let i = 0; i <= 20; i++) {
+    const isPaused = i >= 8 && i <= 12;
+    const stepLat = isPaused ? 8 * 0.0005 : (i > 12 ? i - 4 : i) * 0.0005;
+    encPausedFit.writeMessage(20, [
+      { number: 253, size: 4, baseType: FitBaseType.Uint32, value: fitT0Ts + i * 30 },
+      { number: 0, size: 4, baseType: FitBaseType.Sint32, value: toSemi(43.36 + stepLat) },
+      { number: 1, size: 4, baseType: FitBaseType.Sint32, value: toSemi(-5.85) },
+      { number: 2, size: 2, baseType: FitBaseType.Uint16, value: (220 + i + 500) * 5 },
+      { number: 3, size: 1, baseType: FitBaseType.Uint8, value: 140 },
+      { number: 6, size: 2, baseType: FitBaseType.Uint16, value: isPaused ? 0 : 2800 },
+    ], 2);
+  }
+  const pausedFitBytes = encPausedFit.close();
+  const parsedPausedFit = await parseFitBuffer(
+    Buffer.from(pausedFitBytes.buffer, pausedFitBytes.byteOffset, pausedFitBytes.byteLength),
+    '2026.09.22 09.00-RUNNING.fit'
+  );
+  assert.equal(parsedPausedFit.durationSec, 600);
+  assert.equal(parsedPausedFit.movingTimeSec, 450);
+  assert.equal(parsedPausedFit.title, 'Correr · 22 sept 2026');
+
+  const csvMeta = parseHealthSyncCsv(
+    `Aplicación de origen,Tipo de actividad,Nombre de la actividad,Fecha,Tiempo transcurrido,Tiempo activo,Distancia (km)\nHuawei Health,running,Carrera con semáforos,2026.09.22 09.00,600,450,1.5`
+  );
+  assert.equal(csvMeta?.elapsedSec, 600);
+  assert.equal(csvMeta?.activeSec, 450);
+
+  // Create activity with paused time, toggle via PATCH, and check dashboard totals
+  const nowIso = new Date(Date.now() - 2 * 3600_000).toISOString();
+  const trimPoints = Array.from({ length: 21 }, (_, idx) => ({
+    t: idx * 60,
+    lat: 43.36 + idx * 0.0009,
+    lon: -5.85,
+    ele: 200 + idx * 5,
+    hr: 138 + (idx % 5),
+    speed: idx >= 18 ? 0.1 : 3.0,
+    dist: Math.min(idx, 18) * 180,
+  }));
+  const trimTarget = createActivity({
+    id: 'act_trim_paused_test',
+    externalId: null,
+    source: 'fit',
+    sport: 'running',
+    subSport: 'Correr',
+    title: 'Correr · Prueba recorte',
+    description: null,
+    startedAt: nowIso,
+    durationSec: 1200,
+    movingTimeSec: 1020,
+    distanceMeters: 3240,
+    elevationGain: 90,
+    elevationLoss: 0,
+    avgSpeedMs: 2.7,
+    maxSpeedMs: 3.4,
+    avgHr: 140,
+    maxHr: 155,
+    avgWatts: null,
+    normalizedPower: null,
+    maxWatts: null,
+    avgCadence: 170,
+    calories: 240,
+    tss: 35,
+    rpe: 6,
+    gearId: null,
+    worldName: null,
+    polyline: encodePolyline(trimPoints.map((p) => [p.lat, p.lon])),
+    startLat: trimPoints[0].lat,
+    startLon: trimPoints[0].lon,
+    points: trimPoints,
+    strengthLogs: [],
+    totalVolumeKg: null,
+    laps: [
+      {
+        lapNumber: 1,
+        name: 'Segmento 1',
+        startDistM: 0,
+        endDistM: 1800,
+        distanceMeters: 1800,
+        durationSec: 600,
+        movingTimeSec: 600,
+        avgSpeedMs: 3.0,
+        maxSpeedMs: 3.2,
+        elevationGain: 50,
+        elevationLoss: 0,
+        avgHr: 140,
+        maxHr: 150,
+        trigger: 'segment',
+      },
+      {
+        lapNumber: 2,
+        name: 'Segmento 2',
+        startDistM: 1800,
+        endDistM: 3240,
+        distanceMeters: 1440,
+        durationSec: 600,
+        movingTimeSec: 420,
+        avgSpeedMs: 2.4,
+        maxSpeedMs: 3.1,
+        elevationGain: 40,
+        elevationLoss: 0,
+        avgHr: 141,
+        maxHr: 155,
+        trigger: 'segment',
+      },
+    ],
+    createdAt: nowIso,
+  });
+
+  const dashBefore = (await (await getDashboardRoute(new NextRequest('http://localhost:3000/api/dashboard'))).json()) as {
+    summary: { weekDurationHours: number };
+  };
+  const patchExcludeRes = await patchActivityRoute(
+    new NextRequest(`http://localhost:3000/api/activities/${trimTarget.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ excludePausedTime: true }),
+    }),
+    { params: Promise.resolve({ id: trimTarget.id }) }
+  );
+  assert.equal(patchExcludeRes.status, 200);
+  const patchedAct = (await patchExcludeRes.json()) as { activity: { excludePausedTime?: boolean } };
+  assert.equal(patchedAct.activity.excludePausedTime, true);
+
+  const dashAfter = (await (await getDashboardRoute(new NextRequest('http://localhost:3000/api/dashboard'))).json()) as {
+    summary: { weekDurationHours: number };
+  };
+  assert.ok(dashAfter.summary.weekDurationHours <= dashBefore.summary.weekDurationHours);
+
+  // 3. Activity trimming (previewOnly + start/end/middle + segment effort recomputation)
+  const builtSeg = buildSegmentFromRange({
+    activity: trimTarget,
+    points: trimPoints,
+    startDistM: 360,
+    endDistM: 1620,
+    name: 'Tramo Trim Test',
+    category: 'climb',
+  });
+  assert.ok(builtSeg);
+  const seg = createSegmentAndMatch(builtSeg);
+  assert.ok(seg.segment.id);
+
+  const previewOnlyRes = await postTrimActivityRoute(
+    new NextRequest(`http://localhost:3000/api/activities/${trimTarget.id}/trim`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'end', unit: 'km', toKm: 2.52, previewOnly: true }),
+    }),
+    { params: Promise.resolve({ id: trimTarget.id }) }
+  );
+  assert.equal(previewOnlyRes.status, 200);
+  const previewOnlyJson = (await previewOnlyRes.json()) as {
+    preview: { valid: boolean; newDistanceMeters: number; removedPolyline: string | null; keptCount: number };
+  };
+  assert.equal(previewOnlyJson.preview.valid, true);
+  assert.ok(previewOnlyJson.preview.newDistanceMeters < trimTarget.distanceMeters);
+  assert.ok(previewOnlyJson.preview.removedPolyline);
+  // Confirm DB was not mutated by previewOnly
+  assert.equal(getActivityById(trimTarget.id)?.distanceMeters, 3240);
+
+  // Confirm start trim shifts startedAt and slices laps
+  const startSpec = resolveTrimSpecFromInput(trimPoints, { mode: 'start', unit: 'sec', fromSec: 180 });
+  const startPreview = previewActivityTrim(trimPoints, 'running', startSpec);
+  assert.equal(startPreview.valid, true);
+
+  const middleSpec = resolveTrimSpecFromInput(trimPoints, {
+    mode: 'middle',
+    unit: 'sec',
+    fromSec: 420,
+    toSec: 660,
+  });
+  const middlePreview = previewActivityTrim(trimPoints, 'running', middleSpec);
+  assert.equal(middlePreview.valid, true);
+  assert.ok(middlePreview.keptCount < trimPoints.length);
+
+  // Execute actual end trim via POST /api/activities/[id]/trim
+  const commitEndRes = await postTrimActivityRoute(
+    new NextRequest(`http://localhost:3000/api/activities/${trimTarget.id}/trim`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'end', unit: 'km', toKm: 2.52 }),
+    }),
+    { params: Promise.resolve({ id: trimTarget.id }) }
+  );
+  assert.equal(commitEndRes.status, 200);
+  const commitEndJson = (await commitEndRes.json()) as {
+    activity: { distanceMeters: number; durationSec: number; points: unknown[]; laps?: unknown[] };
+  };
+  assert.ok(commitEndJson.activity.distanceMeters <= 2550 && commitEndJson.activity.distanceMeters >= 2400);
+  assert.ok(commitEndJson.activity.durationSec < 1200);
+  assert.ok(commitEndJson.activity.points.length < trimPoints.length);
+  const segEffortsAfterTrim = getSegmentWithEfforts(seg.segment.id);
+  assert.ok(segEffortsAfterTrim && segEffortsAfterTrim.efforts.length >= 1);
+});
+
+test('Map attribution removal, theme-toned dark maps, and Huawei/FIT/GPX custom segments work end-to-end', async () => {
+  // 4 & 5. Attribution removal & theme-toned dynamic Oscuro maps
+  const activityMapSource = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'ActivityMap.tsx'), 'utf8');
+  const multiMapSource = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'MultiRouteMap.tsx'), 'utf8');
+  const cssSource = fs.readFileSync(path.join(process.cwd(), 'src', 'app', 'globals.css'), 'utf8');
+
+  assert.ok(activityMapSource.includes('attributionControl: false'));
+  assert.ok(multiMapSource.includes('attributionControl: false'));
+  assert.ok(cssSource.includes('.leaflet-control-attribution'));
+  assert.ok(activityMapSource.includes('buildThemedDarkMapStyle'));
+  assert.ok(activityMapSource.includes('MutationObserver'));
+
+  const nocturnoPalette = {
+    bg: [12, 14, 25] as [number, number, number],
+    surface: [21, 24, 40] as [number, number, number],
+    raised: [29, 33, 54] as [number, number, number],
+    sunken: [16, 19, 33] as [number, number, number],
+    line: [43, 48, 73] as [number, number, number],
+    ink: [238, 234, 222] as [number, number, number],
+    ink2: [178, 176, 191] as [number, number, number],
+    primary: [201, 162, 75] as [number, number, number],
+    accent: [212, 175, 94] as [number, number, number],
+    accent2: [142, 158, 224] as [number, number, number],
+  };
+  const bosquePalette = {
+    bg: [13, 21, 16] as [number, number, number],
+    surface: [22, 34, 26] as [number, number, number],
+    raised: [31, 47, 36] as [number, number, number],
+    sunken: [17, 27, 20] as [number, number, number],
+    line: [45, 68, 52] as [number, number, number],
+    ink: [235, 244, 236] as [number, number, number],
+    ink2: [175, 196, 180] as [number, number, number],
+    primary: [74, 222, 128] as [number, number, number],
+    accent: [52, 211, 153] as [number, number, number],
+    accent2: [20, 184, 166] as [number, number, number],
+  };
+  const lightCalidoPalette = {
+    bg: [251, 247, 240] as [number, number, number],
+    surface: [255, 252, 246] as [number, number, number],
+    raised: [255, 255, 255] as [number, number, number],
+    sunken: [243, 235, 222] as [number, number, number],
+    line: [228, 216, 198] as [number, number, number],
+    ink: [36, 28, 20] as [number, number, number],
+    ink2: [98, 84, 70] as [number, number, number],
+    primary: [194, 65, 12] as [number, number, number],
+    accent: [217, 119, 6] as [number, number, number],
+    accent2: [13, 148, 136] as [number, number, number],
+  };
+
+  const nocturnoColors = resolveDarkMapColors(nocturnoPalette);
+  const bosqueColors = resolveDarkMapColors(bosquePalette);
+  const calidoLightDarkColors = resolveDarkMapColors(lightCalidoPalette);
+  assert.notEqual(nocturnoColors.background, DARK_MAP_BACKGROUND);
+  assert.notEqual(nocturnoColors.background, bosqueColors.background);
+  assert.notEqual(calidoLightDarkColors.background, bosqueColors.background);
+
+  const nocturnoStyle = buildThemedDarkMapStyle(nocturnoPalette);
+  const bosqueStyle = buildThemedDarkMapStyle(bosquePalette);
+  assert.equal(nocturnoStyle.layers.length, DARK_MAP_STYLE.layers.length);
+  const nocturnoBgLayer = nocturnoStyle.layers.find((l) => l.id === 'background') as { paint?: Record<string, string> };
+  const bosqueBgLayer = bosqueStyle.layers.find((l) => l.id === 'background') as { paint?: Record<string, string> };
+  assert.equal(nocturnoBgLayer?.paint?.['background-color'], nocturnoColors.background);
+  assert.equal(bosqueBgLayer?.paint?.['background-color'], bosqueColors.background);
+  // Ensure light theme also yields genuinely dark background luminance (< 55 per channel avg)
+  const rCal = parseInt(calidoLightDarkColors.background.slice(1, 3), 16);
+  const gCal = parseInt(calidoLightDarkColors.background.slice(3, 5), 16);
+  const bCal = parseInt(calidoLightDarkColors.background.slice(5, 7), 16);
+  assert.ok((rCal + gCal + bCal) / 3 < 55);
+
+  // 6. Custom segments/laps across Huawei JSON, HiTrack, GPX <trkseg>, FIT, and Health Sync .fit + .tcx fallback
+  const huaweiMotionWithSegments = JSON.stringify([
+    {
+      sportType: 258,
+      startTime: 1785200000000,
+      partTimeMap: { 0: 120, 400: 110 },
+      attribute: 'HW_EXT_TRACK_DETAIL@is\n' +
+        'tp=lbs;k=1785200000000000000;lat=43.3600;lon=-5.8500;alt=200;t=1785200000;\n' +
+        'tp=lbs;k=1785200300000000000;lat=43.3645;lon=-5.8500;alt=220;t=1785200300;\n' +
+        'tp=lbs;k=1785200600000000000;lat=43.3690;lon=-5.8500;alt=250;t=1785200600;\n',
+      simplifyJson: JSON.stringify({
+        totalTime: 600000,
+        totalDistance: 1000,
+        partTimeMap: { 1000: 300 },
+        segmentList: [
+          { name: 'Tramo Llano', startTime: 1785200000000, endTime: 1785200300000, distance: 500, duration: 300, avgHeartRate: 142 },
+          { name: 'Rampa Naranco', startTime: 1785200300000, endTime: 1785200600000, distance: 500, duration: 300, avgHeartRate: 165 },
+        ],
+      }),
+    },
+  ]).replace('"partTimeMap": { "0": 120, "400": 110 }', '"partTimeMap": { 0: 120, 400: 110 }');
+
+  const parsedHwSegs = parseHuaweiMotionPathJson(huaweiMotionWithSegments, 'motion_path.json');
+  assert.equal(parsedHwSegs.length, 1);
+  assert.equal(parsedHwSegs[0].laps?.length, 2);
+  assert.equal(parsedHwSegs[0].laps?.[0].name, 'Tramo Llano');
+  assert.equal(parsedHwSegs[0].laps?.[1].name, 'Rampa Naranco');
+  assert.equal(parsedHwSegs[0].laps?.[1].avgHr, 165);
+  assert.equal(parsedHwSegs[0].laps?.[0].trigger, 'segment');
+
+  const hiTrackWithSegMarkers = [
+    'tp=lbs;k=1785200000000000000;lat=43.3600;lon=-5.8500;alt=200;t=1785200000;',
+    'tp=lbs;k=1785200200000000000;lat=43.3630;lon=-5.8500;alt=215;t=1785200200;',
+    'tp=seg;k=1785200200000000000;t=1785200200;n=Cambio Ritmo;',
+    'tp=lbs;k=1785200400000000000;lat=43.3660;lon=-5.8500;alt=235;t=1785200400;',
+  ].join('\n');
+  const parsedHiSeg = parseHiTrackText(hiTrackWithSegMarkers);
+  assert.equal(parsedHiSeg.laps?.length, 2);
+  assert.equal(parsedHiSeg.laps?.[0].name, 'Cambio Ritmo');
+
+  // GPX with multiple <trkseg> creates segment laps
+  const multiSegGpx = `<?xml version="1.0" encoding="UTF-8"?>
+  <gpx version="1.1">
+    <trk>
+      <name>Series Oviedo</name>
+      <type>running</type>
+      <trkseg>
+        <trkpt lat="43.3600" lon="-5.8500"><ele>200</ele><time>2026-09-25T08:00:00Z</time></trkpt>
+        <trkpt lat="43.3640" lon="-5.8500"><ele>205</ele><time>2026-09-25T08:02:00Z</time></trkpt>
+      </trkseg>
+      <trkseg>
+        <trkpt lat="43.3640" lon="-5.8500"><ele>205</ele><time>2026-09-25T08:03:00Z</time></trkpt>
+        <trkpt lat="43.3680" lon="-5.8500"><ele>215</ele><time>2026-09-25T08:05:00Z</time></trkpt>
+      </trkseg>
+    </trk>
+  </gpx>`;
+  const parsedMultiSegGpx = parseGpxString(multiSegGpx, 'series.gpx');
+  assert.equal(parsedMultiSegGpx.laps?.length, 2);
+  assert.equal(parsedMultiSegGpx.laps?.[0].trigger, 'segment');
+
+  // FIT file with manual laps & workout step names
+  const encSegFit = new FitEncoder();
+  const sFitT0 = new Date('2026-09-26T08:00:00Z');
+  const sFitTs = FitEncoder.toFitTimestamp(sFitT0);
+  const toSemiSeg = (d: number) => Math.round((d * 2147483648) / 180);
+  encSegFit.writeMessage(0, [
+    { number: 0, size: 1, baseType: FitBaseType.Enum, value: 4 },
+    { number: 4, size: 4, baseType: FitBaseType.Uint32, value: sFitTs },
+  ], 0);
+  encSegFit.writeMessage(18, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: sFitTs + 360 },
+    { number: 2, size: 4, baseType: FitBaseType.Uint32, value: sFitTs },
+    { number: 5, size: 1, baseType: FitBaseType.Enum, value: 1 },
+    { number: 7, size: 4, baseType: FitBaseType.Uint32, value: 360 * 1000 },
+    { number: 8, size: 4, baseType: FitBaseType.Uint32, value: 360 * 1000 },
+    { number: 9, size: 4, baseType: FitBaseType.Uint32, value: 1100 * 100 },
+  ], 1);
+  encSegFit.writeMessage(19, [
+    { number: 2, size: 4, baseType: FitBaseType.Uint32, value: sFitTs },
+    { number: 7, size: 4, baseType: FitBaseType.Uint32, value: 180 * 1000 },
+    { number: 8, size: 4, baseType: FitBaseType.Uint32, value: 180 * 1000 },
+    { number: 9, size: 4, baseType: FitBaseType.Uint32, value: 550 * 100 },
+    { number: 15, size: 1, baseType: FitBaseType.Uint8, value: 145 },
+    { number: 24, size: 1, baseType: FitBaseType.Enum, value: 0 },
+  ], 2);
+  encSegFit.writeMessage(19, [
+    { number: 2, size: 4, baseType: FitBaseType.Uint32, value: sFitTs + 180 },
+    { number: 7, size: 4, baseType: FitBaseType.Uint32, value: 180 * 1000 },
+    { number: 8, size: 4, baseType: FitBaseType.Uint32, value: 180 * 1000 },
+    { number: 9, size: 4, baseType: FitBaseType.Uint32, value: 550 * 100 },
+    { number: 15, size: 1, baseType: FitBaseType.Uint8, value: 165 },
+    { number: 24, size: 1, baseType: FitBaseType.Enum, value: 0 },
+  ], 2);
+  encSegFit.writeMessage(20, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: sFitTs },
+    { number: 0, size: 4, baseType: FitBaseType.Sint32, value: toSemiSeg(43.36) },
+    { number: 1, size: 4, baseType: FitBaseType.Sint32, value: toSemiSeg(-5.85) },
+    { number: 2, size: 2, baseType: FitBaseType.Uint16, value: (200 + 500) * 5 },
+    { number: 3, size: 1, baseType: FitBaseType.Uint8, value: 135 },
+  ], 3);
+  encSegFit.writeMessage(20, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: sFitTs + 180 },
+    { number: 0, size: 4, baseType: FitBaseType.Sint32, value: toSemiSeg(43.365) },
+    { number: 1, size: 4, baseType: FitBaseType.Sint32, value: toSemiSeg(-5.85) },
+    { number: 2, size: 2, baseType: FitBaseType.Uint16, value: (225 + 500) * 5 },
+    { number: 3, size: 1, baseType: FitBaseType.Uint8, value: 155 },
+  ], 3);
+  encSegFit.writeMessage(20, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: sFitTs + 360 },
+    { number: 0, size: 4, baseType: FitBaseType.Sint32, value: toSemiSeg(43.37) },
+    { number: 1, size: 4, baseType: FitBaseType.Sint32, value: toSemiSeg(-5.85) },
+    { number: 2, size: 2, baseType: FitBaseType.Uint16, value: (260 + 500) * 5 },
+    { number: 3, size: 1, baseType: FitBaseType.Uint8, value: 170 },
+  ], 3);
+  const segFitBytes = encSegFit.close();
+  const parsedSegFit = await parseFitBuffer(
+    Buffer.from(segFitBytes.buffer, segFitBytes.byteOffset, segFitBytes.byteLength),
+    '2026.09.26 10.00-RUNNING.fit'
+  );
+  assert.equal(parsedSegFit.laps?.length, 2);
+  assert.equal(parsedSegFit.laps?.[0].name, 'Segmento 1');
+  assert.equal(parsedSegFit.laps?.[1].name, 'Segmento 2');
+  assert.ok((parsedSegFit.laps?.[0].elevationGain ?? 0) > 0);
+
+  // Health Sync batch fallback: .fit without laps inherits laps from sibling .tcx
+  const encNoLapFit = new FitEncoder();
+  encNoLapFit.writeMessage(0, [
+    { number: 0, size: 1, baseType: FitBaseType.Enum, value: 4 },
+    { number: 4, size: 4, baseType: FitBaseType.Uint32, value: sFitTs },
+  ], 0);
+  encNoLapFit.writeMessage(18, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: sFitTs + 360 },
+    { number: 2, size: 4, baseType: FitBaseType.Uint32, value: sFitTs },
+    { number: 5, size: 1, baseType: FitBaseType.Enum, value: 1 },
+    { number: 7, size: 4, baseType: FitBaseType.Uint32, value: 360 * 1000 },
+    { number: 8, size: 4, baseType: FitBaseType.Uint32, value: 360 * 1000 },
+    { number: 9, size: 4, baseType: FitBaseType.Uint32, value: 1100 * 100 },
+  ], 1);
+  encNoLapFit.writeMessage(20, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: sFitTs },
+    { number: 0, size: 4, baseType: FitBaseType.Sint32, value: toSemiSeg(43.36) },
+    { number: 1, size: 4, baseType: FitBaseType.Sint32, value: toSemiSeg(-5.85) },
+    { number: 2, size: 2, baseType: FitBaseType.Uint16, value: (200 + 500) * 5 },
+  ], 2);
+  encNoLapFit.writeMessage(20, [
+    { number: 253, size: 4, baseType: FitBaseType.Uint32, value: sFitTs + 360 },
+    { number: 0, size: 4, baseType: FitBaseType.Sint32, value: toSemiSeg(43.37) },
+    { number: 1, size: 4, baseType: FitBaseType.Sint32, value: toSemiSeg(-5.85) },
+    { number: 2, size: 2, baseType: FitBaseType.Uint16, value: (240 + 500) * 5 },
+  ], 2);
+  const noLapFitBytes = encNoLapFit.close();
+  const siblingTcx = `<?xml version="1.0" encoding="UTF-8"?>
+  <TrainingCenterDatabase>
+    <Activities>
+      <Activity Sport="Running">
+        <Id>2026-09-26T08:00:00Z</Id>
+        <Lap StartTime="2026-09-26T08:00:00Z">
+          <TotalTimeSeconds>180</TotalTimeSeconds>
+          <DistanceMeters>550</DistanceMeters>
+          <TriggerMethod>Manual</TriggerMethod>
+          <Track>
+            <Trackpoint><Time>2026-09-26T08:00:00Z</Time><Position><LatitudeDegrees>43.36</LatitudeDegrees><LongitudeDegrees>-5.85</LongitudeDegrees></Position><AltitudeMeters>200</AltitudeMeters></Trackpoint>
+            <Trackpoint><Time>2026-09-26T08:03:00Z</Time><Position><LatitudeDegrees>43.365</LatitudeDegrees><LongitudeDegrees>-5.85</LongitudeDegrees></Position><AltitudeMeters>220</AltitudeMeters></Trackpoint>
+          </Track>
+        </Lap>
+        <Lap StartTime="2026-09-26T08:03:00Z">
+          <TotalTimeSeconds>180</TotalTimeSeconds>
+          <DistanceMeters>550</DistanceMeters>
+          <TriggerMethod>Manual</TriggerMethod>
+          <Track>
+            <Trackpoint><Time>2026-09-26T08:03:00Z</Time><Position><LatitudeDegrees>43.365</LatitudeDegrees><LongitudeDegrees>-5.85</LongitudeDegrees></Position><AltitudeMeters>220</AltitudeMeters></Trackpoint>
+            <Trackpoint><Time>2026-09-26T08:06:00Z</Time><Position><LatitudeDegrees>43.37</LatitudeDegrees><LongitudeDegrees>-5.85</LongitudeDegrees></Position><AltitudeMeters>240</AltitudeMeters></Trackpoint>
+          </Track>
+        </Lap>
+      </Activity>
+    </Activities>
+  </TrainingCenterDatabase>`;
+  const hsBatch = await parseUploadedActivityBatch([
+    {
+      fileName: '2026.09.26 10.00-RUNNING.fit',
+      buffer: Buffer.from(noLapFitBytes.buffer, noLapFitBytes.byteOffset, noLapFitBytes.byteLength),
+    },
+    { fileName: '2026.09.26 10.00-RUNNING.tcx', buffer: Buffer.from(siblingTcx, 'utf8') },
+  ]);
+  assert.equal(hsBatch.activities.length, 1);
+  assert.equal(hsBatch.activities[0].laps?.length, 2);
+  assert.equal(hsBatch.activities[0].laps?.[0].name, 'Segmento 1');
+});
+
 

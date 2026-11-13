@@ -6,7 +6,14 @@ import { Heart, Plus, Search, Trash2, X } from 'lucide-react';
 import { useActiveAccount } from '@/components/AccountProvider';
 import { SportBadge } from '@/components/SportBadge';
 import { TogetherToggleButton, getTogetherLabel } from '@/components/TogetherControl';
-import { formatDistanceKm, formatDuration, formatPaceMinKm, formatSpeedKmh } from '@/lib/metrics';
+import {
+  formatDistanceKm,
+  formatDuration,
+  formatPaceMinKm,
+  formatSpeedKmh,
+  getEffectiveAvgSpeedMs,
+  getEffectiveDurationSec,
+} from '@/lib/metrics';
 import type { Activity, GearItem, SportType } from '@/types';
 
 const FILTERS: Array<{ id: string; label: string }> = [
@@ -171,13 +178,12 @@ export default function ActivitiesPage() {
             </div>
             <div className="sm:col-span-2">
               <label className="block text-xs mb-1" style={{ color: 'var(--text-secondary)' }}>
-                Título
+                Título (opcional)
               </label>
               <input
-                required
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="Ej. Rodaje por el río / MyWhoosh Tempo"
+                placeholder="Ej. Rodaje por el río (por defecto: Deporte · fecha)"
                 className="w-full rounded-lg border px-3 py-2 text-sm"
                 style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
               />
@@ -427,22 +433,22 @@ export default function ActivitiesPage() {
                   )}
                   <div>
                     <div style={{ color: 'var(--text-muted)' }}>Duración</div>
-                    <div className="font-bold text-sm">{formatDuration(act.durationSec)}</div>
+                    <div className="font-bold text-sm">{formatDuration(getEffectiveDurationSec(act))}</div>
                   </div>
                   {(act.sport === 'running' ||
                     act.sport === 'trail' ||
                     act.sport === 'mountain' ||
                     act.sport === 'walking') &&
-                    act.avgSpeedMs && (
+                    getEffectiveAvgSpeedMs(act) && (
                     <div>
                       <div style={{ color: 'var(--text-muted)' }}>Ritmo</div>
-                      <div className="font-bold text-sm">{formatPaceMinKm(act.avgSpeedMs)}</div>
+                      <div className="font-bold text-sm">{formatPaceMinKm(getEffectiveAvgSpeedMs(act))}</div>
                     </div>
                   )}
-                  {(act.sport === 'mywhoosh' || act.sport === 'cycling') && act.avgSpeedMs && (
+                  {(act.sport === 'mywhoosh' || act.sport === 'cycling') && getEffectiveAvgSpeedMs(act) && (
                     <div>
                       <div style={{ color: 'var(--text-muted)' }}>Vel.</div>
-                      <div className="font-bold text-sm">{formatSpeedKmh(act.avgSpeedMs)}</div>
+                      <div className="font-bold text-sm">{formatSpeedKmh(getEffectiveAvgSpeedMs(act))}</div>
                     </div>
                   )}
                   {act.avgWatts && (
