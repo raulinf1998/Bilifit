@@ -3254,14 +3254,16 @@ test('5-day strength split routines preserve exact names, exercises, sets, reps 
 });
 
 test('Exercise illustrations exist for all exercises and exercise/routine/workout image attachments persist across APIs', async () => {
-  // 1. Every default exercise has a mapped imageUrl whose static asset exists in public/exercises/
+  // 1. Every default exercise has a unified .jpg illustration whose static asset exists in public/exercises/
   const publicDir = path.join(process.cwd(), 'public');
   assert.ok(DEFAULT_EXERCISES.length >= 77);
   for (const ex of DEFAULT_EXERCISES) {
-    assert.ok(ex.imageUrl && ex.imageUrl.startsWith('/exercises/'), `Missing imageUrl for ${ex.id}`);
+    assert.equal(ex.imageUrl, `/exercises/${ex.id}.jpg`, `Expected unified .jpg imageUrl for ${ex.id}`);
     const assetPath = path.join(publicDir, ex.imageUrl.replace(/^\//, ''));
     assert.ok(fs.existsSync(assetPath), `Missing exercise asset on disk: ${assetPath}`);
   }
+  const svgLeftovers = fs.readdirSync(path.join(publicDir, 'exercises')).filter((f) => f.endsWith('.svg'));
+  assert.deepEqual(svgLeftovers, [], 'All exercise illustrations should be unified .jpg files with no .svg leftovers');
 
   // 2. listAllExercises & listRoutines surface imageUrl on built-in exercises and routine items
   const allExercises = listAllExercises();
