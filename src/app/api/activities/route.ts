@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { withAccount } from '@/lib/account-context';
+import { resolveActivityTitle } from '@/lib/activity-naming';
 import { createActivity, getAthleteProfile, listActivities } from '@/lib/db';
 import { estimateActivityTSS } from '@/lib/metrics';
 import type { SportType } from '@/types';
@@ -29,10 +30,9 @@ export async function POST(req: NextRequest) {
     try {
       const body = await req.json();
       const sport = (body.sport || 'running') as SportType;
-      const title = String(body.title || '').trim();
-      if (!title) {
-        return NextResponse.json({ error: 'El título es obligatorio' }, { status: 400 });
-      }
+      const rawTitle = String(body.title || '').trim();
+      const startedAt = body.startedAt ? new Date(body.startedAt).toISOString() : new Date().toISOString();
+      const title = resolveActivityTitle(rawTitle, sport, startedAt);
 
       const profile = getAthleteProfile();
       const durationSec = Math.max(60, Math.round(Number(body.durationMin || 45) * 60));
@@ -41,7 +41,6 @@ export async function POST(req: NextRequest) {
       const avgHr = body.avgHr ? Math.round(Number(body.avgHr)) : null;
       const avgWatts = body.avgWatts ? Math.round(Number(body.avgWatts)) : null;
       const rpe = body.rpe ? Number(body.rpe) : 6;
-      const startedAt = body.startedAt ? new Date(body.startedAt).toISOString() : new Date().toISOString();
 
       const tss = estimateActivityTSS(
         {

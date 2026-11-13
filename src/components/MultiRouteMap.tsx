@@ -30,11 +30,10 @@ export default function MultiRouteMap({
         mapRef.current.remove();
       }
 
-      const map = L.map(containerRef.current, { zoomControl: true });
+      const map = L.map(containerRef.current, { zoomControl: true, attributionControl: false });
       mapRef.current = map;
 
       L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenTopoMap',
         maxZoom: 17,
       }).addTo(map);
 

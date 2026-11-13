@@ -184,6 +184,7 @@ export interface Activity {
   startLon?: number | null;
   totalVolumeKg?: number | null;
   doneTogether?: boolean;
+  excludePausedTime?: boolean;
   laps?: ActivityLap[];
   extras?: ActivityExtras | null;
   createdAt: string;

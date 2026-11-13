@@ -734,37 +734,31 @@ body {
 }
 
 .leaflet-container .bilifit-dark-tiles {
-  filter: grayscale(100%) invert(94%) contrast(90%) brightness(88%);
+  filter: var(--bilifit-map-dark-filter, grayscale(100%) invert(94%) contrast(90%) brightness(88%));
 }
 
 .bilifit-map-dark .leaflet-container {
-  background: #212121;
+  background: var(--bilifit-map-dark-bg, #212121);
 }
 
 .bilifit-map-dark .leaflet-bar {
-  border: 1px solid rgba(51, 65, 85, 0.75) !important;
+  border: 1px solid var(--bilifit-map-ctrl-border, rgba(51, 65, 85, 0.75)) !important;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
   border-radius: 0.5rem;
   overflow: hidden;
 }
 
 .bilifit-map-dark .leaflet-bar a {
-  background-color: rgba(15, 23, 42, 0.88);
-  color: #e2e8f0;
-  border-bottom-color: rgba(51, 65, 85, 0.7);
+  background-color: var(--bilifit-map-ctrl-bg, rgba(15, 23, 42, 0.88));
+  color: var(--bilifit-map-ctrl-text, #e2e8f0);
+  border-bottom-color: var(--bilifit-map-ctrl-border, rgba(51, 65, 85, 0.7));
 }
 
 .bilifit-map-dark .leaflet-bar a:hover {
-  background-color: rgba(30, 41, 59, 0.95);
+  background-color: var(--bilifit-map-ctrl-bg, rgba(30, 41, 59, 0.95));
   color: #ffffff;
 }
 
-.bilifit-map-dark .leaflet-control-attribution {
-  background: rgba(15, 23, 42, 0.72);
-  color: #94a3b8;
-  backdrop-filter: blur(4px);
-}
-
-.bilifit-map-dark .leaflet-control-attribution a {
-  color: #cbd5e1;
+.leaflet-control-attribution {
+  display: none !important;
 }

@@ -18,7 +18,13 @@ import {
 import { FitnessPMCChart, WeeklyVolumeChart, type WeeklyBucket } from '@/components/Charts';
 import { SportBadge } from '@/components/SportBadge';
 import { TogetherBadge } from '@/components/TogetherControl';
-import { formatDistanceKm, formatDuration, formatPaceMinKm } from '@/lib/metrics';
+import {
+  formatDistanceKm,
+  formatDuration,
+  formatPaceMinKm,
+  getEffectiveAvgSpeedMs,
+  getEffectiveDurationSec,
+} from '@/lib/metrics';
 import type {
   Activity,
   AthleteProfile,
@@ -322,16 +328,16 @@ export default function DashboardPage() {
                   )}
                   <div>
                     <div style={{ color: 'var(--text-muted)' }}>Tiempo</div>
-                    <div className="font-semibold">{formatDuration(act.durationSec)}</div>
+                    <div className="font-semibold">{formatDuration(getEffectiveDurationSec(act))}</div>
                   </div>
                   {(act.sport === 'running' ||
                     act.sport === 'trail' ||
                     act.sport === 'mountain' ||
                     act.sport === 'walking') &&
-                    act.avgSpeedMs && (
+                    getEffectiveAvgSpeedMs(act) && (
                     <div>
                       <div style={{ color: 'var(--text-muted)' }}>Ritmo</div>
-                      <div className="font-semibold">{formatPaceMinKm(act.avgSpeedMs)}</div>
+                      <div className="font-semibold">{formatPaceMinKm(getEffectiveAvgSpeedMs(act))}</div>
                     </div>
                   )}
                   {act.avgWatts && (

@@ -1,8 +1,9 @@
+import { resolveActivityTitle, hasConcreteActivityName } from '@/lib/activity-naming';
 import { computeSessionExtras, enrichPointsTelemetry } from '@/lib/analytics';
 import { isMyWhooshContext, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
 import { computeElevationGainLoss, downsamplePoints, encodePolyline, haversineMeters } from '@/lib/polyline';
 import type { ParsedActivityData } from '@/lib/parsers/gpx';
-import type { ActivityExtras, ActivityPoint, SportType } from '@/types';
+import type { ActivityExtras, ActivityLap, ActivityPoint, SportType } from '@/types';
 
 export interface HealthSyncCsvMetadata {
   originApp: string | null;
@@ -79,6 +80,252 @@ function convertHiTrackTimestampMs(raw: number, refStartMs?: number, isRelativeS
   return Math.round((raw / divisor) * 1000);
 }
 
+const SEGMENT_HI_TYPES = new Set([
+  'seg',
+  'segment',
+  'lap',
+  'split',
+  'mark',
+  'int',
+  'interval',
+  'section',
+  'stage',
+  'p-m',
+]);
+
+interface RawHuaweiSegmentSpec {
+  name?: string;
+  startMs?: number;
+  endMs?: number;
+  startDistM?: number;
+  endDistM?: number;
+  distanceMeters?: number;
+  durationSec?: number;
+  movingTimeSec?: number;
+  avgSpeedMs?: number;
+  maxSpeedMs?: number;
+  elevationGain?: number;
+  elevationLoss?: number;
+  avgHr?: number;
+  maxHr?: number;
+  avgCadence?: number;
+  calories?: number;
+  trigger?: string;
+}
+
+function normalizeDurationMaybeMs(raw: unknown, referenceDurationSec?: number): number | undefined {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  if (n > 86_400 || (referenceDurationSec && referenceDurationSec > 0 && n > referenceDurationSec * 15)) {
+    return Math.round(n / 1000);
+  }
+  return Math.round(n);
+}
+
+function buildLapFromPointSlice(
+  slice: ActivityPoint[],
+  lapNumber: number,
+  overrides: Partial<ActivityLap> = {}
+): ActivityLap | null {
+  if (slice.length === 0) return null;
+  const first = slice[0];
+  const last = slice[slice.length - 1];
+  const startDistM = overrides.startDistM ?? Math.round(first.dist ?? 0);
+  const endDistM = overrides.endDistM ?? Math.round(last.dist ?? startDistM);
+  const distanceMeters = overrides.distanceMeters ?? Math.max(0, Math.round(endDistM - startDistM));
+  const durationSec = overrides.durationSec ?? Math.max(1, Math.round(last.t - first.t));
+  let mov = 0;
+  for (let i = 1; i < slice.length; i++) {
+    const dt = slice[i].t - slice[i - 1].t;
+    const spd = slice[i].speed ?? 0;
+    if (dt > 0 && dt <= 60 && spd > 0.25) mov += dt;
+  }
+  const movingTimeSec = overrides.movingTimeSec ?? (mov > 0 ? Math.min(durationSec, Math.round(mov)) : durationSec);
+  const ele = computeElevationGainLoss(slice, 1.8);
+  const hrs = slice.map((p) => p.hr).filter((v): v is number => typeof v === 'number');
+  const cads = slice.map((p) => p.cad).filter((v): v is number => typeof v === 'number' && v > 0);
+  const speeds = slice.map((p) => p.speed).filter((v): v is number => typeof v === 'number' && v > 0 && v < 35);
+
+  const avgSpeedMs =
+    overrides.avgSpeedMs ??
+    (distanceMeters > 0 && movingTimeSec > 0 ? Math.round((distanceMeters / movingTimeSec) * 100) / 100 : null);
+
+  return {
+    lapNumber,
+    name: overrides.name ?? `Segmento ${lapNumber}`,
+    startDistM,
+    endDistM,
+    distanceMeters,
+    durationSec,
+    movingTimeSec,
+    avgSpeedMs,
+    maxSpeedMs:
+      overrides.maxSpeedMs ??
+      (speeds.length > 0 ? Math.round(Math.max(...speeds) * 100) / 100 : null),
+    elevationGain: overrides.elevationGain ?? ele.gain,
+    elevationLoss: overrides.elevationLoss ?? ele.loss,
+    avgGradePct:
+      distanceMeters >= 20
+        ? Math.round((((last.ele ?? 0) - (first.ele ?? 0)) / distanceMeters) * 1000) / 10
+        : null,
+    avgHr:
+      overrides.avgHr ??
+      (hrs.length > 0 ? Math.round(hrs.reduce((a, b) => a + b, 0) / hrs.length) : null),
+    maxHr: overrides.maxHr ?? (hrs.length > 0 ? Math.max(...hrs) : null),
+    avgWatts: overrides.avgWatts ?? null,
+    normalizedPower: overrides.normalizedPower ?? null,
+    avgCadence:
+      overrides.avgCadence ??
+      (cads.length > 0 ? Math.round(cads.reduce((a, b) => a + b, 0) / cads.length) : null),
+    calories: overrides.calories ?? null,
+    trigger: overrides.trigger ?? 'segment',
+  };
+}
+
+function buildLapsFromHuaweiSpecs(
+  specs: RawHuaweiSegmentSpec[],
+  boundaryMarks: Array<{ tsMs: number; name?: string; trigger?: string }>,
+  points: ActivityPoint[],
+  startMs: number,
+  durationSec: number,
+  totalDistanceM: number
+): ActivityLap[] {
+  const out: ActivityLap[] = [];
+
+  if (specs.length > 0) {
+    let cursorDist = 0;
+    let cursorT = 0;
+    for (let i = 0; i < specs.length; i++) {
+      const sp = specs[i];
+      const idx = out.length + 1;
+      const startT =
+        typeof sp.startMs === 'number' && Number.isFinite(sp.startMs)
+          ? Math.max(0, Math.round((sp.startMs - startMs) / 1000))
+          : cursorT;
+      const endT =
+        typeof sp.endMs === 'number' && Number.isFinite(sp.endMs)
+          ? Math.max(startT, Math.round((sp.endMs - startMs) / 1000))
+          : typeof sp.durationSec === 'number' && sp.durationSec > 0
+            ? startT + sp.durationSec
+            : startT;
+
+      let slice: ActivityPoint[] = [];
+      if (typeof sp.startDistM === 'number' && typeof sp.endDistM === 'number' && sp.endDistM > sp.startDistM) {
+        slice = points.filter((p) => (p.dist ?? -1) >= sp.startDistM! && (p.dist ?? -1) <= sp.endDistM!);
+      } else if (endT > startT) {
+        slice = points.filter((p) => p.t >= startT && p.t <= endT);
+      } else if (typeof sp.distanceMeters === 'number' && sp.distanceMeters > 0) {
+        const sD = cursorDist;
+        const eD = cursorDist + sp.distanceMeters;
+        slice = points.filter((p) => (p.dist ?? -1) >= sD && (p.dist ?? -1) <= eD);
+      }
+
+      const distM =
+        sp.distanceMeters ??
+        (typeof sp.endDistM === 'number' && typeof sp.startDistM === 'number'
+          ? Math.max(0, Math.round(sp.endDistM - sp.startDistM))
+          : slice.length >= 2
+            ? Math.max(0, Math.round((slice[slice.length - 1].dist ?? 0) - (slice[0].dist ?? 0)))
+            : 0);
+      const startDistM = sp.startDistM ?? (slice.length > 0 ? Math.round(slice[0].dist ?? cursorDist) : Math.round(cursorDist));
+      const endDistM = sp.endDistM ?? Math.round(startDistM + distM);
+      const dur = sp.durationSec ?? (endT > startT ? endT - startT : 0);
+
+      cursorDist = Math.max(cursorDist, endDistM);
+      cursorT = Math.max(cursorT, endT);
+
+      if (dur <= 0 && distM <= 0) continue;
+
+      if (slice.length >= 2) {
+        const lap = buildLapFromPointSlice(slice, idx, {
+          name: sp.name || `Segmento ${idx}`,
+          startDistM,
+          endDistM,
+          distanceMeters: distM > 0 ? distM : undefined,
+          durationSec: dur > 0 ? dur : undefined,
+          movingTimeSec: sp.movingTimeSec,
+          avgSpeedMs: sp.avgSpeedMs,
+          maxSpeedMs: sp.maxSpeedMs,
+          elevationGain: sp.elevationGain,
+          elevationLoss: sp.elevationLoss,
+          avgHr: sp.avgHr,
+          maxHr: sp.maxHr,
+          avgCadence: sp.avgCadence,
+          calories: sp.calories,
+          trigger: sp.trigger ?? 'segment',
+        });
+        if (lap) out.push(lap);
+      } else {
+        const mov = sp.movingTimeSec ?? dur;
+        out.push({
+          lapNumber: idx,
+          name: sp.name || `Segmento ${idx}`,
+          startDistM,
+          endDistM,
+          distanceMeters: distM,
+          durationSec: dur,
+          movingTimeSec: mov,
+          avgSpeedMs:
+            sp.avgSpeedMs ??
+            (distM > 0 && mov > 0 ? Math.round((distM / mov) * 100) / 100 : null),
+          maxSpeedMs: sp.maxSpeedMs ?? null,
+          elevationGain: sp.elevationGain ?? 0,
+          elevationLoss: sp.elevationLoss ?? 0,
+          avgHr: sp.avgHr ?? null,
+          maxHr: sp.maxHr ?? null,
+          avgWatts: null,
+          normalizedPower: null,
+          avgCadence: sp.avgCadence ?? null,
+          calories: sp.calories ?? null,
+          trigger: sp.trigger ?? 'segment',
+        });
+      }
+    }
+    if (out.length > 0) return out;
+  }
+
+  if (boundaryMarks.length > 0 && points.length >= 2) {
+    const endMs = startMs + Math.max(1, durationSec) * 1000;
+    const sortedMarks = boundaryMarks
+      .filter((m) => m.tsMs > startMs + 3000 && m.tsMs < endMs - 3000)
+      .sort((a, b) => a.tsMs - b.tsMs);
+
+    const deduped: Array<{ tsMs: number; name?: string; trigger?: string }> = [];
+    for (const m of sortedMarks) {
+      if (deduped.length === 0 || m.tsMs - deduped[deduped.length - 1].tsMs >= 3000) {
+        deduped.push(m);
+      }
+    }
+
+    if (deduped.length > 0) {
+      const boundaries = [
+        { tsMs: startMs, name: deduped[0]?.name, trigger: deduped[0]?.trigger },
+        ...deduped.map((d, idx) => ({ tsMs: d.tsMs, name: deduped[idx + 1]?.name ?? d.name, trigger: d.trigger })),
+        { tsMs: endMs, name: undefined, trigger: deduped[deduped.length - 1]?.trigger },
+      ];
+
+      for (let i = 0; i < boundaries.length - 1; i++) {
+        const sT = Math.max(0, Math.round((boundaries[i].tsMs - startMs) / 1000));
+        const eT = Math.max(sT, Math.round((boundaries[i + 1].tsMs - startMs) / 1000));
+        const slice = points.filter((p) => p.t >= sT && p.t <= eT);
+        const idx = out.length + 1;
+        if (slice.length >= 2) {
+          const lap = buildLapFromPointSlice(slice, idx, {
+            name: boundaries[i].name || `Segmento ${idx}`,
+            durationSec: Math.max(1, eT - sT),
+            trigger: boundaries[i].trigger ?? 'manual',
+          });
+          if (lap) out.push(lap);
+        }
+      }
+      if (out.length > 0) return out;
+    }
+  }
+
+  void totalDistanceM;
+  return out;
+}
+
 export function parseHiTrackText(
   text: string,
   options: {
@@ -92,6 +339,7 @@ export function parseHiTrackText(
     maxHr?: number;
     steps?: number;
     deviceName?: string;
+    extraSegments?: RawHuaweiSegmentSpec[];
   } = {}
 ): ParsedActivityData {
   const lines = text.split(/\r?\n/);
@@ -114,6 +362,8 @@ export function parseHiTrackText(
   let stepFreqPositiveMax = 0;
   let hasNegativeStepFreq = false;
   let hasGps = false;
+  const hiTrackSegments: RawHuaweiSegmentSpec[] = [];
+  const hiTrackBoundaryMarks: Array<{ tsMs: number; name?: string; trigger?: string }> = [];
 
   // Intentar extraer epoch desde nombre de archivo HiTrack_YYYY... o HiTrack_<10digits>
   if (!minTsMs && options.fileName) {
@@ -203,6 +453,41 @@ export function parseHiTrackText(
       const decimetersPerSec = Number(kv.v);
       if (tsMs && Number.isFinite(decimetersPerSec) && decimetersPerSec >= 0 && decimetersPerSec < 400) {
         upsert(tsMs, { speed: Math.round((decimetersPerSec / 10) * 100) / 100 });
+      }
+    } else if (tp && SEGMENT_HI_TYPES.has(tp)) {
+      const nameVal = kv.n ?? kv.name ?? kv.label ?? kv.title;
+      const startRaw = Number(kv.st ?? kv.startTime ?? kv.start);
+      const endRaw = Number(kv.et ?? kv.endTime ?? kv.end);
+      const tsRaw = Number(kv.t ?? kv.k);
+      const distVal = Number(kv.d ?? kv.dist ?? kv.dis ?? kv.distance);
+      const durVal = Number(kv.dur ?? kv.dt ?? kv.time ?? kv.duration);
+      const hrVal = Number(kv.hr ?? kv.h ?? kv.avgHr);
+      const cadVal = Number(kv.cad ?? kv.c);
+      const spdVal = Number(kv.s ?? kv.v ?? kv.speed);
+      const triggerVal = kv.type ?? kv.trigger ?? kv.intensity ?? (tp === 'lap' || tp === 'mark' ? 'manual' : 'segment');
+
+      const sMs = Number.isFinite(startRaw) ? convertHiTrackTimestampMs(startRaw, minTsMs ?? options.startTimeMs ?? undefined) : null;
+      const eMs = Number.isFinite(endRaw) ? convertHiTrackTimestampMs(endRaw, minTsMs ?? options.startTimeMs ?? undefined) : null;
+      const markMs = Number.isFinite(tsRaw) ? convertHiTrackTimestampMs(tsRaw, minTsMs ?? options.startTimeMs ?? undefined) : null;
+
+      if ((sMs && eMs && eMs > sMs) || (Number.isFinite(durVal) && durVal > 0) || (Number.isFinite(distVal) && distVal > 0)) {
+        hiTrackSegments.push({
+          name: nameVal?.trim() || undefined,
+          startMs: sMs ?? markMs ?? undefined,
+          endMs: eMs ?? undefined,
+          distanceMeters: Number.isFinite(distVal) && distVal > 0 ? Math.round(distVal) : undefined,
+          durationSec: Number.isFinite(durVal) && durVal > 0 ? normalizeDurationMaybeMs(durVal) : undefined,
+          avgHr: Number.isFinite(hrVal) && hrVal > 25 && hrVal < 245 ? Math.round(hrVal) : undefined,
+          avgCadence: Number.isFinite(cadVal) && cadVal > 0 && cadVal < 255 ? Math.round(cadVal) : undefined,
+          avgSpeedMs: Number.isFinite(spdVal) && spdVal > 0 && spdVal < 40 ? Math.round(spdVal * 100) / 100 : undefined,
+          trigger: triggerVal,
+        });
+      } else if (markMs) {
+        hiTrackBoundaryMarks.push({
+          tsMs: markMs,
+          name: nameVal?.trim() || undefined,
+          trigger: triggerVal,
+        });
       }
     }
   }
@@ -346,14 +631,22 @@ export function parseHiTrackText(
   );
 
   const startedAtIso = new Date(startMs).toISOString();
-  const dateLabel = new Date(startMs).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' });
+  const combinedSpecs = [...(options.extraSegments ?? []), ...hiTrackSegments];
+  const laps = buildLapsFromHuaweiSpecs(
+    combinedSpecs,
+    hiTrackBoundaryMarks,
+    enrichedPoints,
+    startMs,
+    durationSec,
+    distanceMeters
+  );
 
   return {
     externalId: `huawei_ht_${startMs}_${options.sportTypeCode ?? sportInfo.sport}`,
     source: 'fit',
     sport: sportInfo.sport,
     subSport: sportInfo.subSport,
-    title: `${sportInfo.fallbackTitle} · ${dateLabel}`,
+    title: resolveActivityTitle(null, sportInfo.sport, startedAtIso),
     startedAt: startedAtIso,
     durationSec,
     movingTimeSec: effMoving,
@@ -370,37 +663,199 @@ export function parseHiTrackText(
     startLat: coordsForPoly[0]?.[0],
     startLon: coordsForPoly[0]?.[1],
     points: downsamplePoints(enrichedPoints, 1800),
-    laps: [],
+    laps,
     extras,
   };
 }
 
+function extractSegmentsFromHuaweiJson(
+  entry: Record<string, unknown>,
+  simplifyJson: Record<string, unknown>,
+  parentObj: Record<string, unknown> | undefined,
+  totalDurationSec?: number,
+  totalDistanceM?: number
+): RawHuaweiSegmentSpec[] {
+  const out: RawHuaweiSegmentSpec[] = [];
+  const arrayKeys = [
+    'segmentList',
+    'segments',
+    'customSegments',
+    'laps',
+    'lapList',
+    'splits',
+    'splitList',
+    'intervalList',
+    'intervals',
+    'sectionList',
+    'sections',
+    'stageList',
+    'stages',
+    'subTrackList',
+    'partList',
+    'sportSegments',
+    'childTrackList',
+    'trackSegments',
+  ];
+
+  const containers = [simplifyJson, entry, ...(parentObj ? [parentObj] : [])];
+  for (const container of containers) {
+    for (const key of arrayKeys) {
+      const list = container[key];
+      if (!Array.isArray(list)) continue;
+      for (const rawItem of list) {
+        if (!rawItem || typeof rawItem !== 'object') continue;
+        const item = rawItem as Record<string, unknown>;
+        const nameRaw = item.name ?? item.title ?? item.label ?? item.segmentName ?? item.lapName ?? item.typeName;
+        const startMsRaw = Number(item.startTime ?? item.start_time ?? item.beginTime);
+        const endMsRaw = Number(item.endTime ?? item.end_time);
+        const startDistRaw = Number(item.startDist ?? item.startDistance ?? item.start_distance);
+        const endDistRaw = Number(item.endDist ?? item.endDistance ?? item.end_distance);
+        const distRaw = Number(item.distance ?? item.totalDistance ?? item.dist ?? item.distanceMeters);
+        const durRaw = item.duration ?? item.totalTime ?? item.elapsedTime ?? item.time ?? item.durationSec;
+        const movRaw = item.movingTime ?? item.activeTime ?? item.totalTimerTime;
+        const eleGainRaw = Number(item.elevationGain ?? item.totalAscent ?? item.ascent);
+        const eleLossRaw = Number(item.elevationLoss ?? item.totalDescent ?? item.descent);
+        const avgHrRaw = Number(item.avgHr ?? item.avgHeartRate ?? item.heartRate);
+        const maxHrRaw = Number(item.maxHr ?? item.maxHeartRate);
+        const avgCadRaw = Number(item.avgCadence ?? item.cadence);
+        const avgSpdRaw = Number(item.avgSpeed ?? item.speed);
+        const calRaw = Number(item.calories ?? item.totalCalories);
+        const triggerRaw = item.trigger ?? item.type ?? item.intensity ?? (key.toLowerCase().includes('lap') ? 'manual' : 'segment');
+
+        const durSec = durRaw !== undefined ? normalizeDurationMaybeMs(durRaw, totalDurationSec) : undefined;
+        const movSec = movRaw !== undefined ? normalizeDurationMaybeMs(movRaw, totalDurationSec) : undefined;
+        const distM = Number.isFinite(distRaw) && distRaw > 0 ? Math.round(distRaw) : undefined;
+
+        if ((durSec && durSec > 0) || (distM && distM > 0) || (Number.isFinite(startMsRaw) && Number.isFinite(endMsRaw) && endMsRaw > startMsRaw)) {
+          out.push({
+            name: typeof nameRaw === 'string' && nameRaw.trim() ? nameRaw.trim() : undefined,
+            startMs: Number.isFinite(startMsRaw) && startMsRaw > 1e11 ? startMsRaw : undefined,
+            endMs: Number.isFinite(endMsRaw) && endMsRaw > 1e11 ? endMsRaw : undefined,
+            startDistM: Number.isFinite(startDistRaw) ? Math.round(startDistRaw) : undefined,
+            endDistM: Number.isFinite(endDistRaw) ? Math.round(endDistRaw) : undefined,
+            distanceMeters: distM,
+            durationSec: durSec,
+            movingTimeSec: movSec,
+            elevationGain: Number.isFinite(eleGainRaw) && eleGainRaw >= 0 ? Math.round(eleGainRaw) : undefined,
+            elevationLoss: Number.isFinite(eleLossRaw) && eleLossRaw >= 0 ? Math.round(eleLossRaw) : undefined,
+            avgHr: Number.isFinite(avgHrRaw) && avgHrRaw > 25 && avgHrRaw < 245 ? Math.round(avgHrRaw) : undefined,
+            maxHr: Number.isFinite(maxHrRaw) && maxHrRaw > 25 && maxHrRaw < 245 ? Math.round(maxHrRaw) : undefined,
+            avgCadence: Number.isFinite(avgCadRaw) && avgCadRaw > 0 && avgCadRaw < 255 ? Math.round(avgCadRaw) : undefined,
+            avgSpeedMs: Number.isFinite(avgSpdRaw) && avgSpdRaw > 0 && avgSpdRaw < 40 ? Math.round(avgSpdRaw * 100) / 100 : undefined,
+            calories:
+              Number.isFinite(calRaw) && calRaw > 0
+                ? Math.round(calRaw > 5000 ? calRaw / 1000 : calRaw)
+                : undefined,
+            trigger: typeof triggerRaw === 'string' ? triggerRaw : 'segment',
+          });
+        }
+      }
+      if (out.length > 0) return out;
+    }
+  }
+
+  // Revisar partTimeMap si contiene objetos o distancias personalizadas válidas
+  for (const container of containers) {
+    const ptm = container.partTimeMap;
+    if (!ptm || typeof ptm !== 'object' || Array.isArray(ptm)) continue;
+    const entries = Object.entries(ptm as Record<string, unknown>);
+    if (entries.length === 0) continue;
+
+    // Formato objeto: { "1": { distance, duration, name }, ... }
+    if (entries.some(([, v]) => v && typeof v === 'object' && !Array.isArray(v))) {
+      for (const [k, v] of entries) {
+        if (!v || typeof v !== 'object') continue;
+        const obj = v as Record<string, unknown>;
+        const distM = Number(obj.distance ?? obj.totalDistance ?? obj.dist);
+        const durSec = normalizeDurationMaybeMs(obj.duration ?? obj.time ?? obj.totalTime, totalDurationSec);
+        if ((durSec && durSec > 0) || (Number.isFinite(distM) && distM > 0)) {
+          out.push({
+            name: typeof obj.name === 'string' && obj.name.trim() ? obj.name.trim() : `Segmento ${k}`,
+            distanceMeters: Number.isFinite(distM) && distM > 0 ? Math.round(distM) : undefined,
+            durationSec: durSec,
+            trigger: 'segment',
+          });
+        }
+      }
+      if (out.length > 0) return out;
+    }
+
+    // Formato numérico: claves de distancia (en metros, ej. 400, 800, 1500) -> duración o tiempo acumulado
+    const numericPairs = entries
+      .map(([k, v]) => ({ key: Number(k), val: Number(v) }))
+      .filter((p) => Number.isFinite(p.key) && Number.isFinite(p.val) && p.val > 0)
+      .sort((a, b) => a.key - b.key);
+
+    if (numericPairs.length >= 2) {
+      const hasDistanceKeys =
+        numericPairs.every((p) => p.key >= 50) &&
+        (!totalDistanceM || numericPairs[numericPairs.length - 1].key <= totalDistanceM * 1.15);
+      const isUniform1Km =
+        hasDistanceKeys &&
+        numericPairs.every((p, idx) => idx === numericPairs.length - 1 ? p.key % 1000 === 0 || p.key > idx * 1000 : p.key === (idx + 1) * 1000);
+
+      if (hasDistanceKeys && !isUniform1Km) {
+        const vals = numericPairs.map((p) => normalizeDurationMaybeMs(p.val, totalDurationSec) ?? 0);
+        const monotonicVals = vals.every((v, i) => i === 0 || v > vals[i - 1]);
+        const sumDurs = monotonicVals ? vals[vals.length - 1] : vals.reduce((a, b) => a + b, 0);
+        if (!totalDurationSec || sumDurs <= totalDurationSec * 1.25) {
+          let prevDist = 0;
+          let prevVal = 0;
+          for (let i = 0; i < numericPairs.length; i++) {
+            const distM = Math.max(0, Math.round(numericPairs[i].key - prevDist));
+            const durSec = monotonicVals ? Math.max(1, vals[i] - prevVal) : vals[i];
+            if (distM > 0 && durSec > 0) {
+              out.push({
+                name: `Segmento ${out.length + 1}`,
+                startDistM: prevDist,
+                endDistM: Math.round(numericPairs[i].key),
+                distanceMeters: distM,
+                durationSec: durSec,
+                trigger: 'segment',
+              });
+            }
+            prevDist = Math.round(numericPairs[i].key);
+            prevVal = vals[i];
+          }
+          if (out.length > 0) return out;
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
 export function parseHuaweiMotionPathJson(jsonText: string, fileName = 'motion_path.json'): ParsedActivityData[] {
   // Huawei Privacy JSON suele traer claves numéricas sin comillas en partTimeMap:{0:123,...}
-  const sanitized = jsonText
-    .replace(/^\uFEFF/, '')
-    .replace(/"partTimeMap"\s*:\s*\{[^{}]*\}/g, '"partTimeMap":null');
-
-  const raw = JSON.parse(sanitized) as unknown;
+  const cleanText = jsonText.replace(/^\uFEFF/, '');
+  let raw: unknown;
+  try {
+    const quotedKeys = cleanText.replace(/([{,]\s*)(\d+)\s*:/g, '$1"$2":');
+    raw = JSON.parse(quotedKeys);
+  } catch {
+    const sanitized = cleanText.replace(/"partTimeMap"\s*:\s*\{[^{}]*\}/g, '"partTimeMap":null');
+    raw = JSON.parse(sanitized);
+  }
   const topList = Array.isArray(raw) ? raw : [raw];
 
-  const entries: Array<Record<string, unknown>> = [];
+  const entries: Array<{ entry: Record<string, unknown>; parent?: Record<string, unknown> }> = [];
   for (const item of topList) {
     if (!item || typeof item !== 'object') continue;
     const obj = item as Record<string, unknown>;
     if (Array.isArray(obj.motionPathData)) {
       for (const mp of obj.motionPathData) {
         if (mp && typeof mp === 'object') {
-          entries.push(mp as Record<string, unknown>);
+          entries.push({ entry: mp as Record<string, unknown>, parent: obj });
         }
       }
     } else if ('attribute' in obj || 'sportType' in obj || 'startTime' in obj) {
-      entries.push(obj);
+      entries.push({ entry: obj });
     }
   }
 
   const out: ParsedActivityData[] = [];
-  for (const entry of entries) {
+  for (const { entry, parent } of entries) {
     const sportTypeCode = typeof entry.sportType === 'number' ? entry.sportType : undefined;
     const startTimeMs = typeof entry.startTime === 'number' ? entry.startTime : undefined;
     const totalTimeEntry = typeof entry.totalTime === 'number' ? entry.totalTime : undefined;
@@ -424,6 +879,20 @@ export function parseHuaweiMotionPathJson(jsonText: string, fileName = 'motion_p
         simplifyJson = JSON.parse(jsonSlice) as Record<string, unknown>;
       } catch {
         simplifyJson = {};
+      }
+    }
+    if (Object.keys(simplifyJson).length === 0 && entry.simplifyJson) {
+      if (typeof entry.simplifyJson === 'string') {
+        try {
+          const parsedSimplify = JSON.parse(entry.simplifyJson);
+          if (parsedSimplify && typeof parsedSimplify === 'object' && !Array.isArray(parsedSimplify)) {
+            simplifyJson = parsedSimplify as Record<string, unknown>;
+          }
+        } catch {
+          simplifyJson = {};
+        }
+      } else if (typeof entry.simplifyJson === 'object' && !Array.isArray(entry.simplifyJson)) {
+        simplifyJson = entry.simplifyJson as Record<string, unknown>;
       }
     }
 
@@ -454,6 +923,9 @@ export function parseHuaweiMotionPathJson(jsonText: string, fileName = 'motion_p
 
     if (!trackDetail && !totalTimeMs && !totalDistanceM) continue;
 
+    const totalDurationSec = totalTimeMs ? Math.round(totalTimeMs / 1000) : undefined;
+    const extraSegments = extractSegmentsFromHuaweiJson(entry, simplifyJson, parent, totalDurationSec, totalDistanceM);
+
     const parsed = parseHiTrackText(trackDetail, {
       fileName,
       sportTypeCode,
@@ -464,7 +936,20 @@ export function parseHuaweiMotionPathJson(jsonText: string, fileName = 'motion_p
       avgHr,
       maxHr,
       steps,
+      extraSegments,
     });
+
+    const explicitTitle =
+      typeof simplifyJson.name === 'string'
+        ? simplifyJson.name
+        : typeof entry.name === 'string'
+          ? entry.name
+          : typeof entry.title === 'string'
+            ? entry.title
+            : null;
+    if (explicitTitle && hasConcreteActivityName(explicitTitle)) {
+      parsed.title = resolveActivityTitle(explicitTitle, parsed.sport, parsed.startedAt);
+    }
 
     if (parsed.durationSec > 0 || parsed.distanceMeters > 0 || parsed.points.length > 0) {
       out.push(parsed);
@@ -599,6 +1084,7 @@ export interface BundleableFileItem<T> {
 export interface GroupedHealthSyncEntry<T> {
   primary: BundleableFileItem<T>;
   csvMetaItem?: BundleableFileItem<T>;
+  fallbackTrackItems?: Array<BundleableFileItem<T>>;
   bundleKey: string;
 }
 
@@ -653,6 +1139,7 @@ export function groupHealthSyncFiles<T>(items: Array<BundleableFileItem<T>>): Ar
     out.push({
       primary: grp.tracks[0].item,
       csvMetaItem: grp.csv,
+      fallbackTrackItems: grp.tracks.slice(1).map((t) => t.item),
       bundleKey,
     });
   }
@@ -663,14 +1150,27 @@ export function groupHealthSyncFiles<T>(items: Array<BundleableFileItem<T>>): Ar
 export function applyHealthSyncMetadata(parsed: ParsedActivityData, meta: HealthSyncCsvMetadata | null): ParsedActivityData {
   if (!meta) return parsed;
 
-  const isGenericTitle =
-    /^\d{4}\.\d{2}\.\d{2}\s+\d{2}\.\d{2}/.test(parsed.title) ||
-    ['running', 'walking', 'hiking', 'cycling', 'biking', 'actividad'].includes(parsed.title.trim().toLowerCase());
-
-  const nextTitle = meta.activityName && isGenericTitle ? meta.activityName : parsed.title || meta.activityName || 'Actividad';
+  const parsedHasConcreteName = hasConcreteActivityName(parsed.title);
+  const csvHasConcreteName = hasConcreteActivityName(meta.activityName);
+  const candidateTitle = csvHasConcreteName && !parsedHasConcreteName
+    ? meta.activityName
+    : parsedHasConcreteName
+      ? parsed.title
+      : csvHasConcreteName
+        ? meta.activityName
+        : null;
   const nextCalories = (!parsed.calories || parsed.calories <= 0) && meta.calories ? meta.calories : parsed.calories;
   const nextAvgHr = (!parsed.avgHr || parsed.avgHr <= 0) && meta.avgHr ? meta.avgHr : parsed.avgHr;
   const nextMaxHr = (!parsed.maxHr || parsed.maxHr <= 0) && meta.maxHr ? meta.maxHr : parsed.maxHr;
+
+  const nextDurationSec =
+    parsed.durationSec <= 0 && meta.elapsedSec && meta.elapsedSec > 0
+      ? meta.elapsedSec
+      : parsed.durationSec;
+  const nextMovingTimeSec =
+    meta.activeSec && meta.activeSec > 0 && meta.activeSec < nextDurationSec && parsed.movingTimeSec >= nextDurationSec - 2
+      ? meta.activeSec
+      : parsed.movingTimeSec;
 
   const nextExtras: ActivityExtras = {
     ...(parsed.extras ?? {}),
@@ -697,7 +1197,7 @@ export function applyHealthSyncMetadata(parsed: ParsedActivityData, meta: Health
       sport: parsed.sport,
       subSport: parsed.subSport,
       worldName: parsed.worldName,
-      title: nextTitle,
+      title: candidateTitle ?? parsed.title,
       deviceName: nextExtras.deviceName,
     });
 
@@ -723,6 +1223,8 @@ export function applyHealthSyncMetadata(parsed: ParsedActivityData, meta: Health
           ? 'Senderismo'
           : parsed.subSport;
 
+  const nextTitle = resolveActivityTitle(candidateTitle, nextSport, parsed.startedAt);
+
   const resolvedWorld = resolveMyWhooshWorldForActivity({
     worldName: parsed.worldName,
     title: nextTitle,
@@ -738,6 +1240,8 @@ export function applyHealthSyncMetadata(parsed: ParsedActivityData, meta: Health
     subSport: nextSubSport,
     worldName: resolvedWorld?.world.name ?? parsed.worldName,
     title: nextTitle,
+    durationSec: nextDurationSec,
+    movingTimeSec: nextMovingTimeSec,
     calories: nextCalories,
     avgHr: nextAvgHr,
     maxHr: nextMaxHr,

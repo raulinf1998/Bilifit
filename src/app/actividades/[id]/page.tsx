@@ -15,18 +15,28 @@ import {
   Globe,
   HeartPulse,
   Mountain,
+  PauseCircle,
   Plus,
   Save,
+  Scissors,
   Sparkles,
   Thermometer,
   Timer,
   Trash2,
+  X,
   Zap,
 } from 'lucide-react';
 import ActivityMap from '@/components/ActivityMap';
 import { PowerZonesChart, TelemetryChart, ZoneBarsChart } from '@/components/Charts';
 import { SportBadge } from '@/components/SportBadge';
 import { TogetherBadge, TogetherToggleButton } from '@/components/TogetherControl';
+import {
+  previewActivityTrim,
+  resolveTrimSpecFromInput,
+  type TrimInputSpec,
+  type TrimMode,
+  type TrimUnit,
+} from '@/lib/activity-trim';
 import {
   defaultSubSportForSport,
   formatDistanceKm,
@@ -35,11 +45,13 @@ import {
   formatPaceMinKm,
   formatSpeedKmh,
   getCogganPowerZones,
+  getEffectiveAvgSpeedMs,
+  getEffectiveDurationSec,
   sportColor,
 } from '@/lib/metrics';
 import { isMyWhooshContext, MYWHOOSH_WORLDS, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
-import { decodePolyline } from '@/lib/polyline';
-import type { ActivityDetail, ActivityPoint, AthleteProfile, GearItem, SportType } from '@/types';
+import { decodePolyline, encodePolyline } from '@/lib/polyline';
+import type { ActivityDetail, ActivityLap, ActivityPoint, AthleteProfile, GearItem, SportType } from '@/types';
 
 type AnalysisTab = 'splits' | 'efforts' | 'zones' | 'terrain';
 
@@ -62,11 +74,25 @@ export default function ActivityDetailPage() {
   const [rpe, setRpe] = useState(6);
   const [doneTogether, setDoneTogether] = useState(false);
   const [togglingTogether, setTogglingTogether] = useState(false);
+  const [togglingPaused, setTogglingPaused] = useState(false);
   const [description, setDescription] = useState('');
 
   // Tabs análisis profundo
   const [activeTab, setActiveTab] = useState<AnalysisTab>('splits');
   const [splitView, setSplitView] = useState<'km' | 'laps'>('km');
+  const [selectedLapNum, setSelectedLapNum] = useState<number | null>(null);
+
+  // Recorte / Trim de actividad
+  const [showTrimPanel, setShowTrimPanel] = useState(false);
+  const [trimMode, setTrimMode] = useState<TrimMode>('end');
+  const [trimUnit, setTrimUnit] = useState<TrimUnit>('km');
+  const [trimStartKm, setTrimStartKm] = useState(0);
+  const [trimEndKm, setTrimEndKm] = useState(0);
+  const [trimStartSec, setTrimStartSec] = useState(0);
+  const [trimEndSec, setTrimEndSec] = useState(0);
+  const [trimBusy, setTrimBusy] = useState(false);
+  const [trimError, setTrimError] = useState<string | null>(null);
+  const [trimNotice, setTrimNotice] = useState<string | null>(null);
 
   // Creador de segmentos
   const [showSegmentCreator, setShowSegmentCreator] = useState(false);
@@ -95,9 +121,21 @@ export default function ActivityDetailPage() {
       const distKm = Number(((actRes.activity.distanceMeters || 1000) / 1000).toFixed(2));
       setSegStartKm(0);
       setSegEndKm(Math.min(distKm, Math.max(0.5, Number((distKm * 0.4).toFixed(2)))));
-      if (actRes.activity.laps && actRes.activity.laps.length > 1) {
+      const actLaps = (actRes.activity.laps ?? []) as ActivityLap[];
+      const hasCustomLaps = actLaps.some(
+        (l) =>
+          l.trigger === 'segment' ||
+          l.trigger === 'manual' ||
+          l.trigger === 'split' ||
+          (l.name && !/^vuelta\s+\d+$/i.test(l.name.trim()))
+      );
+      const kmSplitsLen = actRes.activity.kmSplits?.length ?? 0;
+      if (hasCustomLaps || actLaps.length > 1 || (kmSplitsLen === 0 && actLaps.length > 0)) {
+        setSplitView('laps');
+      } else {
         setSplitView('km');
       }
+      setSelectedLapNum(null);
     }
     setProfile(profRes?.profile ?? null);
     setGear(gearRes?.gear ?? []);
@@ -158,6 +196,164 @@ export default function ActivityDetailPage() {
     } finally {
       setTogglingTogether(false);
     }
+  }
+
+  async function handleTogglePausedTime() {
+    if (!activity) return;
+    const nextVal = !Boolean(activity.excludePausedTime);
+    setTogglingPaused(true);
+    setActivity((prev) => (prev ? { ...prev, excludePausedTime: nextVal } : prev));
+    try {
+      const res = await fetch(`/api/activities/${params.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ excludePausedTime: nextVal }),
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data?.activity) setActivity(data.activity);
+      } else {
+        await loadAll();
+      }
+    } finally {
+      setTogglingPaused(false);
+    }
+  }
+
+  function openTrimPanel() {
+    if (!activity) return;
+    const totalKm = Math.max(0.1, Number(((activity.distanceMeters || 0) / 1000).toFixed(2)));
+    const totalSec = Math.max(10, activity.durationSec || 60);
+    const useKm = activity.distanceMeters >= 200;
+    setTrimUnit(useKm ? 'km' : 'sec');
+    setTrimMode('end');
+    setTrimStartKm(Number(Math.min(totalKm * 0.1, 0.5).toFixed(2)));
+    setTrimEndKm(Number((totalKm * 0.85).toFixed(2)));
+    setTrimStartSec(Math.min(Math.round(totalSec * 0.1), 60));
+    setTrimEndSec(Math.round(totalSec * 0.85));
+    setTrimError(null);
+    setTrimNotice(null);
+    setShowTrimPanel(true);
+  }
+
+  function handleSelectTrimMode(nextMode: TrimMode) {
+    if (!activity) return;
+    const totalKm = Math.max(0.1, Number(((activity.distanceMeters || 0) / 1000).toFixed(2)));
+    const totalSec = Math.max(10, activity.durationSec || 60);
+    setTrimMode(nextMode);
+    setTrimError(null);
+    if (nextMode === 'start') {
+      setTrimStartKm(Number((totalKm * 0.15).toFixed(2)));
+      setTrimStartSec(Math.round(totalSec * 0.15));
+    } else if (nextMode === 'end') {
+      setTrimEndKm(Number((totalKm * 0.85).toFixed(2)));
+      setTrimEndSec(Math.round(totalSec * 0.85));
+    } else if (nextMode === 'middle') {
+      setTrimStartKm(Number((totalKm * 0.35).toFixed(2)));
+      setTrimEndKm(Number((totalKm * 0.65).toFixed(2)));
+      setTrimStartSec(Math.round(totalSec * 0.35));
+      setTrimEndSec(Math.round(totalSec * 0.65));
+    } else {
+      setTrimStartKm(Number((totalKm * 0.1).toFixed(2)));
+      setTrimEndKm(Number((totalKm * 0.9).toFixed(2)));
+      setTrimStartSec(Math.round(totalSec * 0.1));
+      setTrimEndSec(Math.round(totalSec * 0.9));
+    }
+  }
+
+  const currentTrimInput: TrimInputSpec = useMemo(
+    () => ({
+      mode: trimMode,
+      unit: trimUnit,
+      fromKm: trimUnit === 'km' ? trimStartKm : undefined,
+      toKm: trimUnit === 'km' ? trimEndKm : undefined,
+      fromSec: trimUnit === 'sec' ? trimStartSec : undefined,
+      toSec: trimUnit === 'sec' ? trimEndSec : undefined,
+    }),
+    [trimMode, trimUnit, trimStartKm, trimEndKm, trimStartSec, trimEndSec]
+  );
+
+  const trimPreviewResult = useMemo(() => {
+    if (!showTrimPanel || !activity) return { preview: null, error: null as string | null };
+    try {
+      const spec = resolveTrimSpecFromInput(activity.points, currentTrimInput);
+      const fallbackRatio =
+        activity.durationSec > 0 && activity.movingTimeSec > 0
+          ? Math.min(1, activity.movingTimeSec / activity.durationSec)
+          : 1;
+      const preview = previewActivityTrim(activity.points, activity.sport, spec, fallbackRatio);
+      if (!preview.valid) {
+        return { preview: null, error: preview.error || 'Ajusta el rango de recorte' };
+      }
+      return { preview, error: null as string | null };
+    } catch (err) {
+      return {
+        preview: null,
+        error: err instanceof Error ? err.message : 'Ajusta el rango de recorte',
+      };
+    }
+  }, [showTrimPanel, activity, currentTrimInput]);
+
+  async function handleConfirmTrim() {
+    if (!activity || !trimPreviewResult.preview) return;
+    setTrimBusy(true);
+    setTrimError(null);
+    try {
+      const res = await fetch(`/api/activities/${activity.id}/trim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(currentTrimInput),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setTrimError(data?.error || 'No se pudo recortar la actividad');
+        return;
+      }
+      setShowTrimPanel(false);
+      setHighlightPolyline(null);
+      setSelectedLapNum(null);
+      setTrimNotice(
+        `Actividad recortada: se eliminaron ${(trimPreviewResult.preview.removedDistanceMeters / 1000).toFixed(2)} km y ${formatDuration(trimPreviewResult.preview.removedDurationSec)}.`
+      );
+      await loadAll();
+    } catch {
+      setTrimError('Error de conexión al recortar la actividad');
+    } finally {
+      setTrimBusy(false);
+    }
+  }
+
+  function encodeLapSegmentPolyline(lap: ActivityLap): string | null {
+    if (!activity || activity.points.length < 2) return null;
+    const gpsPts = activity.points.filter(
+      (p): p is ActivityPoint & { lat: number; lon: number } =>
+        typeof p.lat === 'number' && typeof p.lon === 'number'
+    );
+    if (gpsPts.length < 2) return null;
+    const startD = lap.startDistM;
+    const endD = lap.endDistM;
+    let slice = gpsPts.filter((p) => {
+      const d = p.dist ?? -1;
+      return d >= startD - 15 && d <= endD + 15;
+    });
+    if (slice.length < 2 && activity.distanceMeters > 0) {
+      const i0 = Math.max(0, Math.floor((startD / activity.distanceMeters) * (gpsPts.length - 1)));
+      const i1 = Math.min(gpsPts.length - 1, Math.ceil((endD / activity.distanceMeters) * (gpsPts.length - 1)));
+      slice = gpsPts.slice(i0, i1 + 1);
+    }
+    if (slice.length < 2) return null;
+    return encodePolyline(slice.map((p) => [p.lat, p.lon] as [number, number]));
+  }
+
+  function handleSelectLap(lap: ActivityLap) {
+    if (selectedLapNum === lap.lapNumber) {
+      setSelectedLapNum(null);
+      setHighlightPolyline(null);
+      return;
+    }
+    const poly = encodeLapSegmentPolyline(lap);
+    setSelectedLapNum(lap.lapNumber);
+    if (poly) setHighlightPolyline(poly);
   }
 
   async function handleDelete() {
@@ -285,6 +481,14 @@ export default function ActivityDetailPage() {
   const bestSplitSpeed = activity.kmSplits?.length
     ? Math.max(0.5, ...activity.kmSplits.map((s) => s.avgSpeedMs ?? 0))
     : 1;
+  const effectiveDurationSec = getEffectiveDurationSec(activity);
+  const effectiveAvgSpeedMs = getEffectiveAvgSpeedMs(activity);
+  const pausedSec = Math.max(0, activity.durationSec - activity.movingTimeSec);
+  const canTrimActivity =
+    activity.points.length >= 4 || (activity.durationSec >= 15 && activity.distanceMeters >= 100);
+  const canSwitchToKm = activity.distanceMeters >= 200;
+  const totalDistKm = Math.max(0.1, Number(((activity.distanceMeters || 0) / 1000).toFixed(2)));
+  const totalDurSec = Math.max(10, activity.durationSec || 60);
 
   return (
     <div className="space-y-6">
@@ -299,6 +503,45 @@ export default function ActivityDetailPage() {
             busy={togglingTogether}
             onClick={handleToggleTogether}
           />
+          {activity.durationSec > 0 && (
+            <button
+              type="button"
+              disabled={togglingPaused}
+              onClick={handleTogglePausedTime}
+              title={
+                pausedSec > 0
+                  ? `Tiempo parado detectado: ${formatDuration(pausedSec)}`
+                  : 'Alternar entre tiempo total (transcurrido) y tiempo en movimiento'
+              }
+              className={`inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold transition-colors disabled:opacity-60 ${
+                activity.excludePausedTime
+                  ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-700 dark:text-cyan-300'
+                  : 'hover:bg-sunken'
+              }`}
+              style={!activity.excludePausedTime ? { borderColor: 'var(--border-subtle)' } : undefined}
+            >
+              <PauseCircle className="h-3.5 w-3.5" />
+              {activity.excludePausedTime ? 'Tiempo parado excluido' : 'Excluir tiempo parado'}
+              {pausedSec >= 5 && (
+                <span className="opacity-75 tabular-nums">({formatDuration(pausedSec)})</span>
+              )}
+            </button>
+          )}
+          {canTrimActivity && (
+            <button
+              type="button"
+              onClick={() => (showTrimPanel ? setShowTrimPanel(false) : openTrimPanel())}
+              className={`inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold transition-colors ${
+                showTrimPanel
+                  ? 'border-amber-500/40 bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                  : 'hover:bg-sunken'
+              }`}
+              style={!showTrimPanel ? { borderColor: 'var(--border-subtle)' } : undefined}
+            >
+              <Scissors className="h-3.5 w-3.5" />
+              {showTrimPanel ? 'Cerrar recorte' : 'Recortar'}
+            </button>
+          )}
           {hasGps && (
             <a
               href={`/api/activities/${activity.id}?format=gpx`}
@@ -325,6 +568,15 @@ export default function ActivityDetailPage() {
           </button>
         </div>
       </div>
+
+      {trimNotice && (
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs font-medium text-emerald-700 dark:text-emerald-300 flex items-center justify-between gap-2">
+          <span>{trimNotice}</span>
+          <button type="button" onClick={() => setTrimNotice(null)} className="opacity-70 hover:opacity-100">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Header & KPIs principales */}
       <div className="card-surface p-6 space-y-4">
@@ -468,16 +720,25 @@ export default function ActivityDetailPage() {
             </div>
           )}
           <div className="card-elevated p-3">
-            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Tiempo mov.</div>
-            <div className="text-lg font-bold tabular-nums">{formatDuration(activity.durationSec)}</div>
+            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              {activity.excludePausedTime ? 'Tiempo en mov.' : 'Tiempo total'}
+            </div>
+            <div className="text-lg font-bold tabular-nums">{formatDuration(effectiveDurationSec)}</div>
+            {pausedSec >= 5 && (
+              <div className="text-[10px] tabular-nums mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                {activity.excludePausedTime
+                  ? `Total: ${formatDuration(activity.durationSec)} · Excl. ${formatDuration(pausedSec)}`
+                  : `Mov: ${formatDuration(activity.movingTimeSec)} · Parado: ${formatDuration(pausedSec)}`}
+              </div>
+            )}
           </div>
-          {typeof activity.avgSpeedMs === 'number' && activity.avgSpeedMs > 0 && (
+          {typeof effectiveAvgSpeedMs === 'number' && effectiveAvgSpeedMs > 0 && (
             <div className="card-elevated p-3">
               <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 {isPaceSport ? 'Ritmo medio' : 'Vel. media'}
               </div>
               <div className="text-lg font-bold tabular-nums text-primary">
-                {isPaceSport ? formatPaceMinKm(activity.avgSpeedMs) : formatSpeedKmh(activity.avgSpeedMs)}
+                {isPaceSport ? formatPaceMinKm(effectiveAvgSpeedMs) : formatSpeedKmh(effectiveAvgSpeedMs)}
               </div>
             </div>
           )}
@@ -584,6 +845,277 @@ export default function ActivityDetailPage() {
         </div>
       </div>
 
+      {/* Panel interactivo de Recorte / Edición de traza */}
+      {showTrimPanel && (
+        <div className="card-surface p-5 space-y-4 border-amber-500/30">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-bold flex items-center gap-2">
+                <Scissors className="h-4 w-4 text-amber-400" />
+                Recortar Actividad (inicio, final o tramo intermedio)
+              </h2>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                El mapa muestra en <strong className="text-emerald-400">verde</strong> la parte que se conserva y en{' '}
+                <strong className="text-rose-400">rojo discontinuo</strong> los tramos que se eliminarán.
+              </p>
+            </div>
+            {canSwitchToKm && (
+              <div className="inline-flex rounded-lg border overflow-hidden text-xs" style={{ borderColor: 'var(--border-subtle)' }}>
+                <button
+                  type="button"
+                  onClick={() => setTrimUnit('km')}
+                  className={`px-3 py-1 font-medium ${trimUnit === 'km' ? 'bg-primary text-onprimary' : ''}`}
+                >
+                  Distancia (km)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTrimUnit('sec')}
+                  className={`px-3 py-1 font-medium ${trimUnit === 'sec' ? 'bg-primary text-onprimary' : ''}`}
+                >
+                  Tiempo (mm:ss)
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {(
+              [
+                { id: 'start', label: 'Recortar inicio', hint: 'Quita desde 0 hasta X' },
+                { id: 'end', label: 'Recortar final', hint: 'Quita desde X hasta el final' },
+                { id: 'middle', label: 'Cortar tramo medio', hint: 'Elimina entre A y B' },
+                { id: 'range', label: 'Conservar rango [A–B]', hint: 'Mantiene solo A hasta B' },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => handleSelectTrimMode(opt.id)}
+                className={`text-left rounded-xl border p-2.5 transition-colors ${
+                  trimMode === opt.id
+                    ? 'border-amber-400 bg-amber-500/10'
+                    : 'hover:bg-sunken'
+                }`}
+                style={trimMode !== opt.id ? { borderColor: 'var(--border-subtle)' } : undefined}
+              >
+                <div className="text-xs font-bold">{opt.label}</div>
+                <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{opt.hint}</div>
+              </button>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {(trimMode === 'start' || trimMode === 'middle' || trimMode === 'range') && (
+              <div className="space-y-1.5">
+                <label className="flex items-center justify-between text-xs" style={{ color: 'var(--text-secondary)' }}>
+                  <span>
+                    {trimMode === 'start'
+                      ? 'Nuevo inicio (quitar hasta)'
+                      : trimMode === 'middle'
+                        ? 'Inicio del tramo a eliminar (A)'
+                        : 'Inicio del tramo a conservar (A)'}
+                  </span>
+                  <strong className="tabular-nums text-amber-400">
+                    {trimUnit === 'km' ? `${trimStartKm.toFixed(2)} km` : formatDurationClock(trimStartSec)}
+                  </strong>
+                </label>
+                {trimUnit === 'km' ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={0}
+                      max={Math.max(0.05, Number((totalDistKm - 0.05).toFixed(2)))}
+                      step={0.05}
+                      value={trimStartKm}
+                      onChange={(e) => setTrimStartKm(Number(e.target.value))}
+                      className="w-full accent-amber-400"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      max={totalDistKm}
+                      step={0.05}
+                      value={trimStartKm}
+                      onChange={(e) => setTrimStartKm(Number(e.target.value) || 0)}
+                      className="w-20 rounded-lg border px-2 py-1 text-xs tabular-nums"
+                      style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
+                    />
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={0}
+                      max={Math.max(5, totalDurSec - 5)}
+                      step={5}
+                      value={trimStartSec}
+                      onChange={(e) => setTrimStartSec(Number(e.target.value))}
+                      className="w-full accent-amber-400"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      max={totalDurSec}
+                      step={5}
+                      value={trimStartSec}
+                      onChange={(e) => setTrimStartSec(Math.max(0, Number(e.target.value) || 0))}
+                      className="w-20 rounded-lg border px-2 py-1 text-xs tabular-nums"
+                      style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {(trimMode === 'end' || trimMode === 'middle' || trimMode === 'range') && (
+              <div className="space-y-1.5">
+                <label className="flex items-center justify-between text-xs" style={{ color: 'var(--text-secondary)' }}>
+                  <span>
+                    {trimMode === 'end'
+                      ? 'Nuevo final (quitar desde)'
+                      : trimMode === 'middle'
+                        ? 'Fin del tramo a eliminar (B)'
+                        : 'Fin del tramo a conservar (B)'}
+                  </span>
+                  <strong className="tabular-nums text-amber-400">
+                    {trimUnit === 'km' ? `${trimEndKm.toFixed(2)} km` : formatDurationClock(trimEndSec)}
+                  </strong>
+                </label>
+                {trimUnit === 'km' ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={0.05}
+                      max={totalDistKm}
+                      step={0.05}
+                      value={trimEndKm}
+                      onChange={(e) => setTrimEndKm(Number(e.target.value))}
+                      className="w-full accent-emerald-400"
+                    />
+                    <input
+                      type="number"
+                      min={0.05}
+                      max={totalDistKm}
+                      step={0.05}
+                      value={trimEndKm}
+                      onChange={(e) => setTrimEndKm(Number(e.target.value) || 0)}
+                      className="w-20 rounded-lg border px-2 py-1 text-xs tabular-nums"
+                      style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
+                    />
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={5}
+                      max={totalDurSec}
+                      step={5}
+                      value={trimEndSec}
+                      onChange={(e) => setTrimEndSec(Number(e.target.value))}
+                      className="w-full accent-emerald-400"
+                    />
+                    <input
+                      type="number"
+                      min={5}
+                      max={totalDurSec}
+                      step={5}
+                      value={trimEndSec}
+                      onChange={(e) => setTrimEndSec(Math.max(0, Number(e.target.value) || 0))}
+                      className="w-20 rounded-lg border px-2 py-1 text-xs tabular-nums"
+                      style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {trimPreviewResult.preview && (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+              <div className="card-elevated p-2.5 text-xs">
+                <div style={{ color: 'var(--text-muted)' }}>Nueva distancia</div>
+                <div className="font-bold tabular-nums">
+                  {formatDistanceKm(trimPreviewResult.preview.newDistanceMeters)}
+                </div>
+                <div className="text-[10px] text-rose-400 tabular-nums">
+                  -{formatDistanceKm(trimPreviewResult.preview.removedDistanceMeters)}
+                </div>
+              </div>
+              <div className="card-elevated p-2.5 text-xs">
+                <div style={{ color: 'var(--text-muted)' }}>Nuevo tiempo</div>
+                <div className="font-bold tabular-nums">
+                  {formatDuration(
+                    activity.excludePausedTime
+                      ? trimPreviewResult.preview.newMovingTimeSec
+                      : trimPreviewResult.preview.newDurationSec
+                  )}
+                </div>
+                <div className="text-[10px] text-rose-400 tabular-nums">
+                  -{formatDuration(trimPreviewResult.preview.removedDurationSec)}
+                </div>
+              </div>
+              <div className="card-elevated p-2.5 text-xs">
+                <div style={{ color: 'var(--text-muted)' }}>Nuevo desnivel +</div>
+                <div className="font-bold text-emerald-400 tabular-nums">
+                  +{trimPreviewResult.preview.newElevationGain} m
+                </div>
+                <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                  Antes: +{activity.elevationGain} m
+                </div>
+              </div>
+              <div className="card-elevated p-2.5 text-xs">
+                <div style={{ color: 'var(--text-muted)' }}>
+                  {isPaceSport ? 'Nuevo ritmo' : 'Nueva vel.'}
+                </div>
+                <div className="font-bold text-primary tabular-nums">
+                  {trimPreviewResult.preview.newAvgSpeedMs
+                    ? isPaceSport
+                      ? formatPaceMinKm(trimPreviewResult.preview.newAvgSpeedMs)
+                      : formatSpeedKmh(trimPreviewResult.preview.newAvgSpeedMs)
+                    : '--'}
+                </div>
+              </div>
+              <div className="card-elevated p-2.5 text-xs">
+                <div style={{ color: 'var(--text-muted)' }}>Puntos GPS</div>
+                <div className="font-bold tabular-nums">
+                  {trimPreviewResult.preview.keptCount} / {activity.points.length}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {(trimPreviewResult.error || trimError) && (
+            <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-400">
+              {trimError || trimPreviewResult.error}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowTrimPanel(false);
+                setTrimError(null);
+              }}
+              className="rounded-xl border px-4 py-2 text-xs font-semibold hover:bg-sunken"
+              style={{ borderColor: 'var(--border-subtle)' }}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={trimBusy || !trimPreviewResult.preview}
+              onClick={handleConfirmTrim}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 px-4 py-2 text-xs font-semibold text-slate-950"
+            >
+              <Scissors className="h-3.5 w-3.5" />
+              {trimBusy ? 'Recortando...' : 'Confirmar recorte permanente'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Mapa GPS o Mapa Virtual MyWhoosh */}
       {hasGps && (
         <div className="card-surface p-5 space-y-3">
@@ -595,7 +1127,10 @@ export default function ActivityDetailPage() {
             {highlightPolyline && (
               <button
                 type="button"
-                onClick={() => setHighlightPolyline(null)}
+                onClick={() => {
+                  setHighlightPolyline(null);
+                  setSelectedLapNum(null);
+                }}
                 className="text-xs px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
               >
                 Limpiar resaltado de segmento
@@ -616,6 +1151,14 @@ export default function ActivityDetailPage() {
             }
             hoverPoint={hoverPoint}
             highlightPolyline={highlightPolyline}
+            trimPreview={
+              showTrimPanel && trimPreviewResult.preview
+                ? {
+                    keepPolyline: trimPreviewResult.preview.keepPolyline,
+                    removedPolylines: trimPreviewResult.preview.removedPolylines,
+                  }
+                : null
+            }
             heightClass="h-[440px]"
           />
         </div>
@@ -820,7 +1363,7 @@ export default function ActivityDetailPage() {
       )}
 
       {/* Pestañas de Análisis Completo */}
-      {activity.points.length > 3 && (
+      {(activity.points.length > 3 || (activity.laps?.length ?? 0) > 0) && (
         <div className="card-surface p-5 space-y-5">
           <div className="flex flex-wrap gap-2 border-b pb-3" style={{ borderColor: 'var(--border-subtle)' }}>
             {[
@@ -847,12 +1390,14 @@ export default function ActivityDetailPage() {
             })}
           </div>
 
-          {/* TAB 1: Parciales por Km & Laps del dispositivo */}
+          {/* TAB 1: Parciales por Km & Laps / Segmentos del dispositivo */}
           {activeTab === 'splits' && (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-sm font-semibold">
-                  {splitView === 'km' ? 'Parciales por kilómetro' : 'Vueltas registradas por el dispositivo (.FIT / .TCX)'}
+                  {splitView === 'km'
+                    ? 'Parciales por kilómetro'
+                    : 'Segmentos y vueltas registradas por el dispositivo (pulsa una fila para resaltarla en el mapa)'}
                 </div>
                 {activity.laps && activity.laps.length > 0 && (
                   <div className="inline-flex rounded-lg border overflow-hidden text-xs" style={{ borderColor: 'var(--border-subtle)' }}>
@@ -868,7 +1413,7 @@ export default function ActivityDetailPage() {
                       onClick={() => setSplitView('laps')}
                       className={`px-3 py-1 ${splitView === 'laps' ? 'bg-primary text-onprimary' : ''}`}
                     >
-                      Vueltas / Laps ({activity.laps.length})
+                      Segmentos / Laps ({activity.laps.length})
                     </button>
                   </div>
                 )}
@@ -892,7 +1437,10 @@ export default function ActivityDetailPage() {
                     </thead>
                     <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
                       {activity.kmSplits.map((sp) => {
-                        const spSpeed = sp.avgSpeedMs ?? 0;
+                        const spSpeed =
+                          activity.excludePausedTime && sp.movingTimeSec > 0 && sp.distanceMeters > 0
+                            ? sp.distanceMeters / sp.movingTimeSec
+                            : sp.avgSpeedMs ?? 0;
                         const barPct = Math.min(100, Math.max(18, Math.round((spSpeed / bestSplitSpeed) * 100)));
                         return (
                           <tr key={sp.lapNumber} className="tabular-nums hover:bg-sunken/50">
@@ -900,10 +1448,10 @@ export default function ActivityDetailPage() {
                               {sp.distanceMeters >= 950 ? `Km ${sp.lapNumber}` : `${(sp.distanceMeters / 1000).toFixed(2)} km`}
                             </td>
                             <td className="py-2 px-2 font-semibold text-primary">
-                              {sp.avgSpeedMs
+                              {spSpeed > 0
                                 ? isPaceSport
-                                  ? formatPaceMinKm(sp.avgSpeedMs)
-                                  : formatSpeedKmh(sp.avgSpeedMs)
+                                  ? formatPaceMinKm(spSpeed)
+                                  : formatSpeedKmh(spSpeed)
                                 : '--'}
                             </td>
                             {isPaceSport && (
@@ -940,39 +1488,76 @@ export default function ActivityDetailPage() {
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="text-left border-b" style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
-                        <th className="py-2 px-2">Vuelta</th>
+                        <th className="py-2 px-2">Segmento / Vuelta</th>
                         <th className="py-2 px-2">Distancia</th>
                         <th className="py-2 px-2">Tiempo</th>
                         <th className="py-2 px-2">{isPaceSport ? 'Ritmo' : 'Vel.'}</th>
+                        <th className="py-2 px-2">Desn. +/-</th>
                         <th className="py-2 px-2">FC Media/Máx</th>
                         <th className="py-2 px-2">Vatios (NP)</th>
                         <th className="py-2 px-2">Cadencia</th>
-                        <th className="py-2 px-2">Disparador</th>
+                        <th className="py-2 px-2">Origen</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-                      {activity.laps.map((lap) => (
-                        <tr key={lap.lapNumber} className="tabular-nums hover:bg-sunken/50">
-                          <td className="py-2 px-2 font-bold">{lap.name ?? `Lap ${lap.lapNumber}`}</td>
-                          <td className="py-2 px-2">{(lap.distanceMeters / 1000).toFixed(2)} km</td>
-                          <td className="py-2 px-2">{formatDurationClock(lap.durationSec)}</td>
-                          <td className="py-2 px-2 font-semibold text-primary">
-                            {lap.avgSpeedMs
-                              ? isPaceSport
-                                ? formatPaceMinKm(lap.avgSpeedMs)
-                                : formatSpeedKmh(lap.avgSpeedMs)
-                              : '--'}
-                          </td>
-                          <td className="py-2 px-2 text-rose-400">
-                            {lap.avgHr ?? '--'} / {lap.maxHr ?? '--'}
-                          </td>
-                          <td className="py-2 px-2 text-cyan-400">
-                            {lap.avgWatts ? `${lap.avgWatts} W${lap.normalizedPower ? ` (${lap.normalizedPower})` : ''}` : '--'}
-                          </td>
-                          <td className="py-2 px-2 text-purple-400">{lap.avgCadence ?? '--'}</td>
-                          <td className="py-2 px-2" style={{ color: 'var(--text-muted)' }}>{lap.trigger ?? 'auto'}</td>
-                        </tr>
-                      ))}
+                      {activity.laps.map((lap) => {
+                        const isSelected = selectedLapNum === lap.lapNumber;
+                        const lapDur = activity.excludePausedTime && lap.movingTimeSec > 0 ? lap.movingTimeSec : lap.durationSec;
+                        const lapSpeed =
+                          lap.distanceMeters > 0 && lapDur > 0 && (activity.excludePausedTime || lap.durationSec !== lap.movingTimeSec)
+                            ? lap.distanceMeters / lapDur
+                            : lap.avgSpeedMs;
+                        const triggerLabel =
+                          lap.trigger === 'segment'
+                            ? 'Segmento'
+                            : lap.trigger === 'manual'
+                              ? 'Manual'
+                              : lap.trigger === 'split'
+                                ? 'Parcial'
+                                : lap.trigger ?? 'auto';
+                        return (
+                          <tr
+                            key={lap.lapNumber}
+                            onClick={() => handleSelectLap(lap)}
+                            className={`tabular-nums cursor-pointer transition-colors ${
+                              isSelected ? 'bg-amber-500/15' : 'hover:bg-sunken/50'
+                            }`}
+                          >
+                            <td className="py-2 px-2 font-bold">
+                              <span className="inline-flex items-center gap-1.5">
+                                {isSelected && <span className="h-2 w-2 rounded-full bg-amber-400" />}
+                                {lap.name ?? `Lap ${lap.lapNumber}`}
+                              </span>
+                            </td>
+                            <td className="py-2 px-2">{(lap.distanceMeters / 1000).toFixed(2)} km</td>
+                            <td className="py-2 px-2">{formatDurationClock(lapDur)}</td>
+                            <td className="py-2 px-2 font-semibold text-primary">
+                              {lapSpeed
+                                ? isPaceSport
+                                  ? formatPaceMinKm(lapSpeed)
+                                  : formatSpeedKmh(lapSpeed)
+                                : '--'}
+                            </td>
+                            <td className="py-2 px-2 text-emerald-400">
+                              {lap.elevationGain > 0 || lap.elevationLoss > 0
+                                ? `+${lap.elevationGain}/-${lap.elevationLoss} m`
+                                : '--'}
+                            </td>
+                            <td className="py-2 px-2 text-rose-400">
+                              {lap.avgHr ?? '--'} / {lap.maxHr ?? '--'}
+                            </td>
+                            <td className="py-2 px-2 text-cyan-400">
+                              {lap.avgWatts ? `${lap.avgWatts} W${lap.normalizedPower ? ` (${lap.normalizedPower})` : ''}` : '--'}
+                            </td>
+                            <td className="py-2 px-2 text-purple-400">{lap.avgCadence ?? '--'}</td>
+                            <td className="py-2 px-2" style={{ color: 'var(--text-muted)' }}>
+                              <span className="px-1.5 py-0.5 rounded bg-sunken text-[10px] font-medium">
+                                {triggerLabel}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

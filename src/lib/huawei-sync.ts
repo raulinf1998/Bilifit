@@ -892,6 +892,22 @@ export async function syncHuaweiActivities(
                 // Ignorar CSV ilegible
               }
             }
+            if (grp.fallbackTrackItems?.length && activities.length > 0 && (activities[0].laps?.length ?? 0) <= 1) {
+              for (const sib of grp.fallbackTrackItems) {
+                if (!sib.fileName.toLowerCase().endsWith('.tcx')) continue;
+                try {
+                  const sibBuf = fs.readFileSync(sib.item.fullPath);
+                  const sibParsed = await parseUploadedActivityFile(sib.fileName, sibBuf);
+                  const sibLaps = sibParsed.activities[0]?.laps ?? [];
+                  if (sibLaps.length > (activities[0].laps?.length ?? 0)) {
+                    activities[0].laps = sibLaps;
+                    break;
+                  }
+                } catch {
+                  // Ignorar fallback secundario
+                }
+              }
+            }
 
             const res = persistHuaweiParsedActivities(itemKey, grp.primary.fileName, null, 'folder', activities);
             imported += res.imported;
@@ -943,6 +959,22 @@ export async function syncHuaweiActivities(
                 activities = activities.map((a) => applyHealthSyncMetadata(a, meta));
               } catch {
                 // Ignorar error de CSV secundario
+              }
+            }
+            if (grp.fallbackTrackItems?.length && activities.length > 0 && (activities[0].laps?.length ?? 0) <= 1) {
+              for (const sib of grp.fallbackTrackItems) {
+                if (!sib.fileName.toLowerCase().endsWith('.tcx')) continue;
+                try {
+                  const sibBuf = await downloadDriveFileBuffer(sib.item.id, fetchImpl);
+                  const sibParsed = await parseUploadedActivityFile(sib.fileName, sibBuf);
+                  const sibLaps = sibParsed.activities[0]?.laps ?? [];
+                  if (sibLaps.length > (activities[0].laps?.length ?? 0)) {
+                    activities[0].laps = sibLaps;
+                    break;
+                  }
+                } catch {
+                  // Ignorar fallback secundario
+                }
               }
             }
 

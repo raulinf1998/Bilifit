@@ -1,4 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
+import { resolveActivityTitle } from '@/lib/activity-naming';
 import { computeSessionExtras, enrichPointsTelemetry } from '@/lib/analytics';
 import { calculateNormalizedPower } from '@/lib/metrics';
 import { computeElevationGainLoss, downsamplePoints, encodePolyline, haversineMeters } from '@/lib/polyline';
@@ -148,21 +149,38 @@ export function parseTcxString(xmlText: string, fileName = 'actividad.tcx'): Par
     const lapSlice = points.slice(lapStartPointIdx);
     const lapEle = computeElevationGainLoss(lapSlice, 1.5);
     const lapDur = Math.round(toNum(lap.TotalTimeSeconds) ?? (lapSlice.length > 1 ? lapSlice[lapSlice.length - 1].t - lapSlice[0].t : 0));
+    let lapMov = 0;
+    for (let i = 1; i < lapSlice.length; i++) {
+      const dt = lapSlice[i].t - lapSlice[i - 1].t;
+      if (dt > 0 && dt <= 60 && ((lapSlice[i].speed ?? 0) > 0.35 || (lapSlice[i].watts ?? 0) > 15)) {
+        lapMov += dt;
+      }
+    }
+    const lapMoving = lapMov > 0 ? Math.min(lapDur, Math.round(lapMov)) : lapDur;
     const lapDist = Math.round(toNum(lap.DistanceMeters) ?? Math.max(0, cumDist - lapStartDist));
     const lapAvgHr = toNum((lap.AverageHeartRateBpm as Record<string, unknown> | undefined)?.Value);
     const lapMaxHr = toNum((lap.MaximumHeartRateBpm as Record<string, unknown> | undefined)?.Value);
     const lapCad = toNum(lap.Cadence);
+    const triggerStr = lap.TriggerMethod ? String(lap.TriggerMethod) : null;
+    const lapIntensity = lap.Intensity ? String(lap.Intensity).toLowerCase() : '';
+    const rawLapName = typeof lap.Notes === 'string' && lap.Notes.trim()
+      ? lap.Notes.trim()
+      : lapIntensity === 'resting'
+        ? 'Recuperación'
+        : triggerStr?.toLowerCase() === 'manual' && rawLaps.length > 1
+          ? `Segmento ${lapIndex + 1}`
+          : `Vuelta ${lapIndex + 1}`;
 
     if (lapDur > 0 || lapDist > 0) {
       parsedLaps.push({
         lapNumber: lapIndex + 1,
-        name: `Vuelta ${lapIndex + 1}`,
+        name: rawLapName,
         startDistM: Math.round(lapStartDist),
         endDistM: Math.round(lapStartDist + lapDist),
         distanceMeters: lapDist,
         durationSec: lapDur,
-        movingTimeSec: lapDur,
-        avgSpeedMs: lapDur > 0 && lapDist > 0 ? Math.round((lapDist / lapDur) * 100) / 100 : null,
+        movingTimeSec: lapMoving,
+        avgSpeedMs: lapMoving > 0 && lapDist > 0 ? Math.round((lapDist / lapMoving) * 100) / 100 : null,
         maxSpeedMs: toNum(lap.MaximumSpeed) ?? null,
         elevationGain: lapEle.gain,
         elevationLoss: lapEle.loss,
@@ -170,7 +188,7 @@ export function parseTcxString(xmlText: string, fileName = 'actividad.tcx'): Par
         maxHr: lapMaxHr ? Math.round(lapMaxHr) : null,
         avgCadence: lapCad ? Math.round(lapCad) : null,
         calories: lapCalories > 0 ? Math.round(lapCalories) : null,
-        trigger: lap.TriggerMethod ? String(lap.TriggerMethod) : null,
+        trigger: triggerStr,
       });
     }
   });
@@ -221,12 +239,14 @@ export function parseTcxString(xmlText: string, fileName = 'actividad.tcx'): Par
     enrichedPoints
   );
 
+  const startedAt = startMs !== null ? new Date(startMs).toISOString() : new Date().toISOString();
+
   return {
     source: 'tcx',
     sport: inferred.sport,
     subSport: inferred.subSport,
-    title: title || 'Actividad importada (TCX)',
-    startedAt: startMs !== null ? new Date(startMs).toISOString() : new Date().toISOString(),
+    title: resolveActivityTitle(title, inferred.sport, startedAt),
+    startedAt,
     durationSec: Math.round(durationSec),
     movingTimeSec: effectiveMoving,
     distanceMeters,

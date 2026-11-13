@@ -1,7 +1,421 @@
-import type { StyleSpecification } from 'maplibre-gl';
+import type { LayerSpecification, StyleSpecification } from 'maplibre-gl';
 
 export const DARK_MAP_BACKGROUND = '#212121';
 export const DARK_MAP_ATTRIBUTION = '© OpenFreeMap · OpenMapTiles · OpenStreetMap';
+
+export type RgbTuple = [number, number, number];
+
+export interface MapThemePalette {
+  bg: RgbTuple;
+  surface: RgbTuple;
+  raised: RgbTuple;
+  sunken: RgbTuple;
+  line: RgbTuple;
+  ink: RgbTuple;
+  ink2: RgbTuple;
+  primary: RgbTuple;
+  accent: RgbTuple;
+  accent2: RgbTuple;
+}
+
+export interface DarkMapThemeColors {
+  background: string;
+  residential: string;
+  park: string;
+  wood: string;
+  institutional: string;
+  water: string;
+  aerowayArea: string;
+  aerowayTaxiway: string;
+  aerowayRunway: string;
+  building: string;
+  buildingOutline: string;
+  pier: string;
+  tunnelMinor: string;
+  tunnelMajor: string;
+  path: string;
+  roadMinor: string;
+  roadRamp: string;
+  roadCasing: string;
+  roadTertiary: string;
+  roadMajorSubtle: string;
+  roadMajor: string;
+  roadMotorwaySubtle: string;
+  roadMotorwayCasing: string;
+  roadMotorway: string;
+  railway: string;
+  boundaryState: string;
+  boundaryCountry: string;
+  waterLabel: string;
+  roadLabel: string;
+  motorwayLabel: string;
+  placeSubtle: string;
+  placeTown: string;
+  placeCity: string;
+  halo: string;
+  rasterTintFilter: string;
+  controlBg: string;
+  controlBorder: string;
+  controlText: string;
+}
+
+function clampByte(n: number): number {
+  return Math.max(0, Math.min(255, Math.round(n)));
+}
+
+function rgbToHex(rgb: RgbTuple): string {
+  return (
+    '#' +
+    rgb
+      .map((c) => clampByte(c).toString(16).padStart(2, '0'))
+      .join('')
+  );
+}
+
+function rgbToCss(rgb: RgbTuple, alpha?: number): string {
+  const r = clampByte(rgb[0]);
+  const g = clampByte(rgb[1]);
+  const b = clampByte(rgb[2]);
+  return alpha !== undefined ? `rgba(${r}, ${g}, ${b}, ${alpha})` : `rgb(${r}, ${g}, ${b})`;
+}
+
+function mixRgb(a: RgbTuple, b: RgbTuple, weightB: number): RgbTuple {
+  const t = Math.max(0, Math.min(1, weightB));
+  const s = 1 - t;
+  return [
+    clampByte(a[0] * s + b[0] * t),
+    clampByte(a[1] * s + b[1] * t),
+    clampByte(a[2] * s + b[2] * t),
+  ];
+}
+
+function liftRgb(rgb: RgbTuple, amount: number): RgbTuple {
+  return mixRgb(rgb, [255, 255, 255], amount);
+}
+
+function darkenRgb(rgb: RgbTuple, amount: number): RgbTuple {
+  return mixRgb(rgb, [0, 0, 0], amount);
+}
+
+function relativeLuminance([r, g, b]: RgbTuple): number {
+  const lin = [r, g, b].map((c) => {
+    const x = c / 255;
+    return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+}
+
+export function parseCssRgbTuple(raw: string | null | undefined): RgbTuple | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  const spaceNums = trimmed.match(/(\d{1,3})\s+(\d{1,3})\s+(\d{1,3})/);
+  if (spaceNums) {
+    return [Number(spaceNums[1]), Number(spaceNums[2]), Number(spaceNums[3])];
+  }
+  const hex = trimmed.match(/^#([0-9a-f]{6})$/i);
+  if (hex) {
+    return [
+      parseInt(hex[1].slice(0, 2), 16),
+      parseInt(hex[1].slice(2, 4), 16),
+      parseInt(hex[1].slice(4, 6), 16),
+    ];
+  }
+  return null;
+}
+
+export function readMapThemePaletteFromDocument(): MapThemePalette | null {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return null;
+  const cs = getComputedStyle(document.documentElement);
+  const bg = parseCssRgbTuple(cs.getPropertyValue('--bg'));
+  const surface = parseCssRgbTuple(cs.getPropertyValue('--surface'));
+  const raised = parseCssRgbTuple(cs.getPropertyValue('--raised'));
+  const sunken = parseCssRgbTuple(cs.getPropertyValue('--sunken'));
+  const line = parseCssRgbTuple(cs.getPropertyValue('--line'));
+  const ink = parseCssRgbTuple(cs.getPropertyValue('--ink'));
+  const ink2 = parseCssRgbTuple(cs.getPropertyValue('--ink-2'));
+  const primary = parseCssRgbTuple(cs.getPropertyValue('--primary'));
+  const accent = parseCssRgbTuple(cs.getPropertyValue('--accent'));
+  const accent2 = parseCssRgbTuple(cs.getPropertyValue('--accent-2'));
+
+  if (!bg || !surface || !primary || !accent) return null;
+  return {
+    bg,
+    surface,
+    raised: raised ?? surface,
+    sunken: sunken ?? bg,
+    line: line ?? surface,
+    ink: ink ?? [238, 240, 244],
+    ink2: ink2 ?? ink ?? [180, 186, 196],
+    primary,
+    accent,
+    accent2: accent2 ?? accent,
+  };
+}
+
+function toDarkSignature(rgb: RgbTuple, baseDark: RgbTuple, tintWeight: number): RgbTuple {
+  const lum = relativeLuminance(rgb);
+  const normalized = lum > 0.35 ? darkenRgb(rgb, 0.55) : rgb;
+  return mixRgb(baseDark, normalized, tintWeight);
+}
+
+export function resolveDarkMapColors(palette: MapThemePalette | null): DarkMapThemeColors {
+  if (!palette) {
+    return {
+      background: DARK_MAP_BACKGROUND,
+      residential: '#242424',
+      park: '#1a1c1b',
+      wood: '#1c1e1d',
+      institutional: '#252629',
+      water: '#131518',
+      aerowayArea: '#26282c',
+      aerowayTaxiway: '#2f3136',
+      aerowayRunway: '#383a40',
+      building: '#27282b',
+      buildingOutline: '#222326',
+      pier: '#292a2e',
+      tunnelMinor: '#2b2d31',
+      tunnelMajor: '#36383e',
+      path: '#2b2c31',
+      roadMinor: '#33353a',
+      roadRamp: '#42454c',
+      roadCasing: '#242529',
+      roadTertiary: '#41444a',
+      roadMajorSubtle: '#3f4248',
+      roadMajor: '#4d5058',
+      roadMotorwaySubtle: '#494c54',
+      roadMotorwayCasing: '#232428',
+      roadMotorway: '#5c6069',
+      railway: '#2c2e33',
+      boundaryState: '#35373d',
+      boundaryCountry: '#454850',
+      waterLabel: '#676c73',
+      roadLabel: '#8b9199',
+      motorwayLabel: '#9da2a8',
+      placeSubtle: '#9ca2aa',
+      placeTown: '#b8bec6',
+      placeCity: '#d1d5db',
+      halo: '#18191c',
+      rasterTintFilter: 'grayscale(100%) invert(94%) contrast(90%) brightness(88%)',
+      controlBg: 'rgba(15, 23, 42, 0.88)',
+      controlBorder: 'rgba(51, 65, 85, 0.7)',
+      controlText: '#e2e8f0',
+    };
+  }
+
+  const isDarkTheme = relativeLuminance(palette.bg) < 0.16;
+  const accentSignature = mixRgb(palette.primary, palette.accent, 0.45);
+  const secondarySignature = palette.accent2;
+
+  const baseBg: RgbTuple = isDarkTheme
+    ? mixRgb(palette.bg, palette.surface, 0.42)
+    : mixRgb(toDarkSignature(palette.sunken, [17, 19, 23], 0.34), accentSignature, 0.09);
+
+  const waterBase: RgbTuple = isDarkTheme
+    ? mixRgb(darkenRgb(palette.sunken, 0.25), secondarySignature, 0.14)
+    : mixRgb([12, 16, 22], secondarySignature, 0.16);
+
+  const surfaceTone: RgbTuple = isDarkTheme
+    ? mixRgb(palette.surface, palette.raised, 0.4)
+    : liftRgb(baseBg, 0.06);
+
+  const raisedTone: RgbTuple = isDarkTheme
+    ? mixRgb(palette.raised, palette.line, 0.45)
+    : mixRgb(liftRgb(baseBg, 0.11), accentSignature, 0.12);
+
+  const lineTone: RgbTuple = isDarkTheme
+    ? mixRgb(palette.line, accentSignature, 0.14)
+    : mixRgb(liftRgb(baseBg, 0.16), accentSignature, 0.22);
+
+  const parkTone = mixRgb(baseBg, secondarySignature, isDarkTheme ? 0.18 : 0.14);
+  const woodTone = mixRgb(baseBg, secondarySignature, isDarkTheme ? 0.13 : 0.1);
+  const roadMinorTone = mixRgb(raisedTone, accentSignature, 0.12);
+  const roadTertiaryTone = liftRgb(mixRgb(lineTone, accentSignature, 0.2), 0.08);
+  const roadMajorTone = liftRgb(mixRgb(lineTone, accentSignature, 0.26), 0.15);
+  const roadMotorwayTone = liftRgb(mixRgb(lineTone, palette.primary, 0.3), 0.22);
+  const labelLight = isDarkTheme ? palette.ink : liftRgb(mixRgb([220, 225, 235], accentSignature, 0.18), 0.2);
+  const labelMid = isDarkTheme ? palette.ink2 : mixRgb(labelLight, baseBg, 0.34);
+
+  const hueShiftFilter = `grayscale(82%) invert(93%) sepia(18%) contrast(92%) brightness(86%) drop-shadow(0 0 0 ${rgbToCss(accentSignature, 0.16)})`;
+
+  return {
+    background: rgbToHex(baseBg),
+    residential: rgbToHex(surfaceTone),
+    park: rgbToHex(parkTone),
+    wood: rgbToHex(woodTone),
+    institutional: rgbToHex(mixRgb(surfaceTone, raisedTone, 0.55)),
+    water: rgbToHex(waterBase),
+    aerowayArea: rgbToHex(surfaceTone),
+    aerowayTaxiway: rgbToHex(raisedTone),
+    aerowayRunway: rgbToHex(lineTone),
+    building: rgbToHex(raisedTone),
+    buildingOutline: rgbToHex(darkenRgb(raisedTone, 0.2)),
+    pier: rgbToHex(raisedTone),
+    tunnelMinor: rgbToHex(mixRgb(baseBg, roadMinorTone, 0.7)),
+    tunnelMajor: rgbToHex(mixRgb(baseBg, roadTertiaryTone, 0.7)),
+    path: rgbToHex(mixRgb(baseBg, lineTone, 0.55)),
+    roadMinor: rgbToHex(roadMinorTone),
+    roadRamp: rgbToHex(mixRgb(roadMinorTone, roadTertiaryTone, 0.65)),
+    roadCasing: rgbToHex(darkenRgb(baseBg, 0.2)),
+    roadTertiary: rgbToHex(roadTertiaryTone),
+    roadMajorSubtle: rgbToHex(mixRgb(roadMinorTone, roadMajorTone, 0.5)),
+    roadMajor: rgbToHex(roadMajorTone),
+    roadMotorwaySubtle: rgbToHex(mixRgb(roadTertiaryTone, roadMotorwayTone, 0.5)),
+    roadMotorwayCasing: rgbToHex(darkenRgb(baseBg, 0.28)),
+    roadMotorway: rgbToHex(roadMotorwayTone),
+    railway: rgbToHex(mixRgb(baseBg, lineTone, 0.5)),
+    boundaryState: rgbToHex(mixRgb(lineTone, secondarySignature, 0.25)),
+    boundaryCountry: rgbToHex(mixRgb(lineTone, accentSignature, 0.32)),
+    waterLabel: rgbToHex(mixRgb(labelMid, secondarySignature, 0.35)),
+    roadLabel: rgbToHex(mixRgb(labelMid, labelLight, 0.25)),
+    motorwayLabel: rgbToHex(mixRgb(labelMid, accentSignature, 0.2)),
+    placeSubtle: rgbToHex(mixRgb(labelMid, labelLight, 0.35)),
+    placeTown: rgbToHex(mixRgb(labelMid, labelLight, 0.65)),
+    placeCity: rgbToHex(labelLight),
+    halo: rgbToHex(darkenRgb(baseBg, 0.22)),
+    rasterTintFilter: hueShiftFilter,
+    controlBg: rgbToCss(surfaceTone, 0.9),
+    controlBorder: rgbToCss(lineTone, 0.85),
+    controlText: rgbToHex(labelLight),
+  };
+}
+
+export function buildThemedDarkMapStyle(palette: MapThemePalette | null): StyleSpecification {
+  const c = resolveDarkMapColors(palette);
+
+  const recoloredLayers = DARK_MAP_STYLE.layers.map((layer): LayerSpecification => {
+    const next = {
+      ...layer,
+      paint: { ...(layer.paint as Record<string, unknown>) },
+    } as Record<string, unknown>;
+    const paint = next.paint as Record<string, unknown>;
+
+    switch (layer.id) {
+      case 'background':
+        paint['background-color'] = c.background;
+        break;
+      case 'landuse_residential':
+        paint['fill-color'] = c.residential;
+        break;
+      case 'park':
+      case 'landuse_park':
+        paint['fill-color'] = c.park;
+        break;
+      case 'landcover_wood':
+        paint['fill-color'] = c.wood;
+        break;
+      case 'landuse_institutional':
+        paint['fill-color'] = c.institutional;
+        break;
+      case 'water':
+        paint['fill-color'] = c.water;
+        break;
+      case 'waterway':
+        paint['line-color'] = c.water;
+        break;
+      case 'aeroway_area':
+        paint['fill-color'] = c.aerowayArea;
+        break;
+      case 'aeroway_taxiway':
+        paint['line-color'] = c.aerowayTaxiway;
+        break;
+      case 'aeroway_runway':
+        paint['line-color'] = c.aerowayRunway;
+        break;
+      case 'building':
+        paint['fill-color'] = c.building;
+        paint['fill-outline-color'] = c.buildingOutline;
+        break;
+      case 'road_area_pier':
+        paint['fill-color'] = c.pier;
+        break;
+      case 'tunnel_minor':
+        paint['line-color'] = c.tunnelMinor;
+        break;
+      case 'tunnel_major':
+        paint['line-color'] = c.tunnelMajor;
+        break;
+      case 'highway_path':
+        paint['line-color'] = c.path;
+        break;
+      case 'highway_minor':
+        paint['line-color'] = c.roadMinor;
+        break;
+      case 'highway_ramp':
+        paint['line-color'] = c.roadRamp;
+        break;
+      case 'highway_tertiary_casing':
+      case 'highway_major_casing':
+        paint['line-color'] = c.roadCasing;
+        break;
+      case 'highway_tertiary_inner':
+        paint['line-color'] = c.roadTertiary;
+        break;
+      case 'highway_major_subtle':
+        paint['line-color'] = c.roadMajorSubtle;
+        break;
+      case 'highway_major_inner':
+        paint['line-color'] = c.roadMajor;
+        break;
+      case 'highway_motorway_subtle':
+        paint['line-color'] = c.roadMotorwaySubtle;
+        break;
+      case 'highway_motorway_casing':
+        paint['line-color'] = c.roadMotorwayCasing;
+        break;
+      case 'highway_motorway_inner':
+        paint['line-color'] = c.roadMotorway;
+        break;
+      case 'railway':
+        paint['line-color'] = c.railway;
+        break;
+      case 'railway_dashline':
+        paint['line-color'] = c.background;
+        break;
+      case 'boundary_state':
+        paint['line-color'] = c.boundaryState;
+        break;
+      case 'boundary_country':
+        paint['line-color'] = c.boundaryCountry;
+        break;
+      case 'water_name_line':
+      case 'water_name_point':
+        paint['text-color'] = c.waterLabel;
+        paint['text-halo-color'] = c.water;
+        break;
+      case 'highway_name_minor':
+        paint['text-color'] = c.roadLabel;
+        paint['text-halo-color'] = c.halo;
+        break;
+      case 'highway_name_motorway':
+        paint['text-color'] = c.motorwayLabel;
+        paint['text-halo-color'] = c.halo;
+        break;
+      case 'place_other':
+      case 'place_village':
+      case 'place_state':
+      case 'place_country':
+        paint['text-color'] = c.placeSubtle;
+        paint['text-halo-color'] = c.halo;
+        break;
+      case 'place_town':
+        paint['text-color'] = c.placeTown;
+        paint['text-halo-color'] = c.halo;
+        break;
+      case 'place_city':
+        paint['text-color'] = c.placeCity;
+        paint['text-halo-color'] = c.halo;
+        break;
+    }
+
+    return next as unknown as LayerSpecification;
+  });
+
+  return {
+    ...DARK_MAP_STYLE,
+    name: 'Bilifit Theme-Tinted Dark',
+    layers: recoloredLayers,
+  };
+}
 
 /**
  * Estilo vectorial oscuro monocromo inspirado en Huawei Health / Google Maps Dark.

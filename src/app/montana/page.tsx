@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle2, Compass, Download, MapPin, Mountain, Plus, Trash2, Upload, X } from 'lucide-react';
 import MultiRouteMap from '@/components/MultiRouteMap';
 import { SportBadge } from '@/components/SportBadge';
-import { formatDistanceKm, formatDuration } from '@/lib/metrics';
+import { formatDistanceKm, formatDuration, getEffectiveDurationSec } from '@/lib/metrics';
 import type { Activity, MountainRoute } from '@/types';
 
 export default function MountainRoutesPage() {
@@ -377,7 +377,7 @@ export default function MountainRoutesPage() {
                 </div>
                 <div>
                   <span style={{ color: 'var(--text-muted)' }}>Tiempo: </span>
-                  <strong>{formatDuration(act.durationSec)}</strong>
+                  <strong>{formatDuration(getEffectiveDurationSec(act))}</strong>
                 </div>
               </div>
             </Link>

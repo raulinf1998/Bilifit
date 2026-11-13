@@ -56,6 +56,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         gearId: body.gearId,
         worldName: body.worldName,
         doneTogether: typeof body.doneTogether === 'boolean' ? body.doneTogether : undefined,
+        excludePausedTime: typeof body.excludePausedTime === 'boolean' ? body.excludePausedTime : undefined,
       });
       if (!updated) {
         return NextResponse.json({ error: 'Actividad no encontrada' }, { status: 404 });
