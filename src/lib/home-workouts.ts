@@ -146,6 +146,13 @@ const AI_EXERCISE_IMAGE_IDS = new Set([
   'ex_plate_crunch',
   'ex_bb_rdl',
   'ex_bb_hip_thrust',
+  'ex_bb_good_morning',
+  'ex_side_plank',
+  'ex_band_monster_walk',
+  'ex_db_single_leg_rdl',
+  'ex_nordic_eccentric_calf',
+  'ex_side_plank_clam',
+  'ex_foam_thoracic_ext',
 ]);
 
 export function defaultExerciseImageUrl(id: string): string {
