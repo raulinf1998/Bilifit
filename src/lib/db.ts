@@ -24,7 +24,14 @@ import { DEFAULT_EXERCISES, DEFAULT_HOME_EQUIPMENT } from '@/lib/home-workouts';
 import { defaultSubSportForSport, estimateActivityTSS, isMismatchedSubSport } from '@/lib/metrics';
 import { isMyWhooshContext, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
 import { decodePolyline } from '@/lib/polyline';
-import { buildSeedActivityRows, SEED_GEAR, SEED_PROFILE, SEED_ROUTES, SEED_ROUTINES } from '@/lib/seed';
+import {
+  buildSeedActivityRows,
+  PRESET_5DAY_ROUTINES,
+  SEED_GEAR,
+  SEED_PROFILE,
+  SEED_ROUTES,
+  SEED_ROUTINES,
+} from '@/lib/seed';
 import { buildSegmentFromRange, matchPointsToSegment } from '@/lib/segments';
 import { emitSettingsEvent } from '@/lib/settings-events';
 import {
@@ -102,6 +109,8 @@ export function getDb(account: AccountId = currentAccountId()): Database.Databas
 
   initSchema(db);
   seedIfEmpty(db, account);
+  ensureHomeEquipmentDefaults(db, account);
+  ensurePreset5DayRoutines(db, account);
   backfillMyWhooshWorlds(db);
   backfillWalkingActivities(db);
   backfillSplitTrailActivities(db);
@@ -109,6 +118,69 @@ export function getDb(account: AccountId = currentAccountId()): Database.Databas
 
   dbInstances.set(dbPath, db);
   return db;
+}
+
+export function ensureHomeEquipmentDefaults(db: Database.Database, account: AccountId = 'raul') {
+  const migrationId = 'home_equipment_defaults_v2_cable';
+  const applied = db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(migrationId);
+  if (applied) return;
+
+  const tx = db.transaction(() => {
+    const stmt = db.prepare(`
+      INSERT OR IGNORE INTO home_equipment (id, name, category, description, owned, details, is_custom)
+      VALUES (?, ?, ?, ?, ?, ?, 0)
+    `);
+    for (const eq of DEFAULT_HOME_EQUIPMENT) {
+      stmt.run(
+        eq.id,
+        eq.name,
+        eq.category,
+        eq.description,
+        account === 'pequenaja' ? 0 : eq.owned ? 1 : 0,
+        eq.details ?? null
+      );
+    }
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(
+      migrationId,
+      new Date().toISOString()
+    );
+  });
+  tx();
+}
+
+export function ensurePreset5DayRoutines(db: Database.Database, account: AccountId = 'raul') {
+  if (account === 'pequenaja') return;
+  const migrationId = 'preset_5day_routines_v1';
+  const applied = db.prepare('SELECT 1 FROM schema_migrations WHERE id = ?').get(migrationId);
+  if (applied) return;
+
+  const tx = db.transaction(() => {
+    const rtStmt = db.prepare(`
+      INSERT OR IGNORE INTO routines (
+        id, name, goal, level, estimated_minutes, equipment_ids_json, items_json, notes, times_completed, last_completed_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const rt of PRESET_5DAY_ROUTINES) {
+      rtStmt.run(
+        rt.id,
+        rt.name,
+        rt.goal,
+        rt.level,
+        rt.estimatedMinutes,
+        JSON.stringify(rt.equipmentIds),
+        JSON.stringify(rt.items),
+        rt.notes ?? null,
+        rt.timesCompleted,
+        rt.lastCompletedAt ?? null,
+        rt.createdAt
+      );
+    }
+    db.prepare('INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(
+      migrationId,
+      new Date().toISOString()
+    );
+  });
+  tx();
 }
 
 export function backfillWalkingActivities(db: Database.Database = getDb()): number {
@@ -526,6 +598,11 @@ function initSchema(db: Database.Database) {
       custom_palette_id TEXT,
       settings_version INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
     );
   `);
 
@@ -1808,6 +1885,50 @@ export function updateRoutine(id: string, patch: Partial<Routine>): Routine | nu
 export function deleteRoutine(id: string): boolean {
   const res = getDb().prepare('DELETE FROM routines WHERE id = ?').run(id);
   return res.changes > 0;
+}
+
+export interface LastExerciseLogSummary {
+  startedAt: string;
+  sets: Array<{ reps: number; weightKg: number; durationSec?: number }>;
+}
+
+export function getLastExerciseLogs(): Record<string, LastExerciseLogSummary> {
+  const rows = getDb()
+    .prepare(
+      `SELECT started_at, strength_logs_json
+       FROM activities
+       WHERE sport = 'strength' AND strength_logs_json IS NOT NULL
+       ORDER BY started_at DESC
+       LIMIT 60`
+    )
+    .all() as Array<{ started_at: string; strength_logs_json: string }>;
+
+  const result: Record<string, LastExerciseLogSummary> = {};
+  for (const row of rows) {
+    let logs: StrengthSetLog[] = [];
+    try {
+      logs = JSON.parse(row.strength_logs_json) as StrengthSetLog[];
+    } catch {
+      continue;
+    }
+    for (const ex of logs) {
+      if (!ex?.exerciseId || result[ex.exerciseId]) continue;
+      const completedSets = (ex.sets ?? [])
+        .filter((s) => s.completed)
+        .map((s) => ({
+          reps: Number(s.reps) || 0,
+          weightKg: Number(s.weightKg) || 0,
+          ...(typeof s.durationSec === 'number' && s.durationSec > 0 ? { durationSec: s.durationSec } : {}),
+        }));
+      if (completedSets.length > 0) {
+        result[ex.exerciseId] = {
+          startedAt: row.started_at,
+          sets: completedSets,
+        };
+      }
+    }
+  }
+  return result;
 }
 
 // ===== SEGMENTS & EFFORTS =====

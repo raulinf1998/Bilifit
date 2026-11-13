@@ -1,10 +1,15 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Check, CheckCircle2, Clock, Pause, Play, Plus, SkipForward, Volume2, X } from 'lucide-react';
+import { Check, CheckCircle2, Clock, Copy, Pause, Play, Plus, SkipForward, Volume2, X } from 'lucide-react';
 import { TogetherToggleButton } from '@/components/TogetherControl';
 import { formatDurationClock } from '@/lib/metrics';
 import type { RoutineExerciseItem, StrengthSetLog } from '@/types';
+
+export interface LastExerciseLogRef {
+  startedAt: string;
+  sets: Array<{ reps: number; weightKg: number; durationSec?: number }>;
+}
 
 function playTimerBeep() {
   try {
@@ -31,16 +36,29 @@ function parseNumericReps(repsLabel: string): number {
   return m ? Number(m[0]) : 10;
 }
 
+function isTimedReps(repsLabel?: string): boolean {
+  return Boolean(repsLabel && /\bseg\b/i.test(repsLabel));
+}
+
+function parseDecimalInput(raw: string): number {
+  const normalized = raw.replace(',', '.').trim();
+  if (!normalized) return 0;
+  const n = Number(normalized);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
 export default function WorkoutPlayer({
   routineId,
   routineName,
   items,
+  lastExerciseLogs,
   onClose,
   onCompleted,
 }: {
   routineId?: string;
   routineName: string;
   items: RoutineExerciseItem[];
+  lastExerciseLogs?: Record<string, LastExerciseLogRef>;
   onClose: () => void;
   onCompleted: () => void;
 }) {
@@ -54,16 +72,31 @@ export default function WorkoutPlayer({
   const [saving, setSaving] = useState(false);
 
   const [logs, setLogs] = useState<StrengthSetLog[]>(() =>
-    items.map((item) => ({
-      exerciseId: item.exerciseId,
-      exerciseName: item.exerciseName,
-      equipmentUsed: item.requiredEquipment,
-      sets: Array.from({ length: item.sets }, () => ({
-        reps: parseNumericReps(item.reps),
-        weightKg: item.suggestedWeightKg ?? 0,
-        completed: false,
-      })),
-    }))
+    items.map((item) => {
+      const timed = isTimedReps(item.reps);
+      const targetVal = parseNumericReps(item.reps);
+      return {
+        exerciseId: item.exerciseId,
+        exerciseName: item.exerciseName,
+        equipmentUsed: item.requiredEquipment,
+        sets: Array.from({ length: item.sets }, () => ({
+          reps: timed ? 1 : targetVal,
+          ...(timed ? { durationSec: targetVal } : {}),
+          weightKg: item.suggestedWeightKg ?? 0,
+          completed: false,
+        })),
+      };
+    })
+  );
+
+  const [repsInputs, setRepsInputs] = useState<string[][]>(() =>
+    items.map((item) => Array.from({ length: item.sets }, () => String(parseNumericReps(item.reps))))
+  );
+
+  const [weightInputs, setWeightInputs] = useState<string[][]>(() =>
+    items.map((item) =>
+      Array.from({ length: item.sets }, () => (item.suggestedWeightKg ? String(item.suggestedWeightKg) : ''))
+    )
   );
 
   // Cronómetro global de sesión
@@ -106,13 +139,54 @@ export default function WorkoutPlayer({
     );
   }
 
-  function updateSetField(exIdx: number, setIdx: number, field: 'reps' | 'weightKg', value: number) {
+  function updateSetRepsInput(exIdx: number, setIdx: number, raw: string) {
+    setRepsInputs((prev) =>
+      prev.map((row, i) => (i === exIdx ? row.map((v, j) => (j === setIdx ? raw : v)) : row))
+    );
+    const val = Math.max(0, Math.round(parseDecimalInput(raw)));
+    const timed = isTimedReps(items[exIdx]?.reps);
     setLogs((prev) =>
       prev.map((ex, i) => {
         if (i !== exIdx) return ex;
         return {
           ...ex,
-          sets: ex.sets.map((s, j) => (j === setIdx ? { ...s, [field]: Math.max(0, value) } : s)),
+          sets: ex.sets.map((s, j) =>
+            j === setIdx ? (timed ? { ...s, reps: 1, durationSec: val } : { ...s, reps: val }) : s
+          ),
+        };
+      })
+    );
+  }
+
+  function updateSetWeightInput(exIdx: number, setIdx: number, raw: string) {
+    setWeightInputs((prev) =>
+      prev.map((row, i) => (i === exIdx ? row.map((v, j) => (j === setIdx ? raw : v)) : row))
+    );
+    const val = parseDecimalInput(raw);
+    setLogs((prev) =>
+      prev.map((ex, i) => {
+        if (i !== exIdx) return ex;
+        return {
+          ...ex,
+          sets: ex.sets.map((s, j) => (j === setIdx ? { ...s, weightKg: val } : s)),
+        };
+      })
+    );
+  }
+
+  function applyWeightToEmptySets(exIdx: number, rawWeight: string) {
+    const val = parseDecimalInput(rawWeight);
+    setWeightInputs((prev) =>
+      prev.map((row, i) => (i === exIdx ? row.map((v) => (v.trim() === '' ? rawWeight : v)) : row))
+    );
+    setLogs((prev) =>
+      prev.map((ex, i) => {
+        if (i !== exIdx) return ex;
+        return {
+          ...ex,
+          sets: ex.sets.map((s, j) =>
+            weightInputs[exIdx]?.[j]?.trim() === '' ? { ...s, weightKg: val } : s
+          ),
         };
       })
     );
@@ -126,12 +200,22 @@ export default function WorkoutPlayer({
         return { ...ex, sets: [...ex.sets, { ...last, completed: false }] };
       })
     );
+    setRepsInputs((prev) =>
+      prev.map((row, i) => (i === exIdx ? [...row, row[row.length - 1] ?? '10'] : row))
+    );
+    setWeightInputs((prev) =>
+      prev.map((row, i) => (i === exIdx ? [...row, row[row.length - 1] ?? ''] : row))
+    );
   }
 
   const completedSets = logs.reduce((acc, ex) => acc + ex.sets.filter((s) => s.completed).length, 0);
   const totalSets = logs.reduce((acc, ex) => acc + ex.sets.length, 0);
   const totalVolumeKg = logs.reduce(
-    (acc, ex) => acc + ex.sets.filter((s) => s.completed).reduce((sAcc, s) => sAcc + s.reps * s.weightKg, 0),
+    (acc, ex) =>
+      acc +
+      ex.sets
+        .filter((s) => s.completed)
+        .reduce((sAcc, s) => sAcc + (s.durationSec && s.durationSec > 0 ? 1 : s.reps) * s.weightKg, 0),
     0
   );
 
@@ -242,6 +326,11 @@ export default function WorkoutPlayer({
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
           {logs.map((ex, exIdx) => {
             const spec = items[exIdx];
+            const timed = isTimedReps(spec?.reps);
+            const rowWeights = weightInputs[exIdx] ?? [];
+            const firstWeightRaw = rowWeights.find((w) => parseDecimalInput(w) > 0) ?? '';
+            const hasEmptyWeightSlot = rowWeights.some((w) => w.trim() === '');
+            const prevLog = lastExerciseLogs?.[ex.exerciseId];
             return (
               <div
                 key={`${ex.exerciseId}-${exIdx}`}
@@ -250,19 +339,42 @@ export default function WorkoutPlayer({
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
-                    <div className="font-semibold text-sm sm:text-base">{ex.exerciseName}</div>
+                    <div className="font-semibold text-sm sm:text-base">
+                      {exIdx + 1}. {ex.exerciseName}
+                    </div>
                     <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
                       Objetivo: {spec?.reps} · Descanso: {spec?.restSeconds ?? 60}s
                     </div>
+                    {prevLog && prevLog.sets.length > 0 && (
+                      <div className="text-[11px] mt-0.5 text-cyan-600 dark:text-cyan-400 tabular-nums">
+                        Último ({new Date(prevLog.startedAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}):{' '}
+                        {prevLog.sets
+                          .map((s) => (s.weightKg > 0 ? `${s.weightKg} kg` : 'corporal'))
+                          .join(' / ')}
+                      </div>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => addExtraSet(exIdx)}
-                    className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg border hover:bg-sunken"
-                    style={{ borderColor: 'var(--border-subtle)' }}
-                  >
-                    <Plus className="h-3.5 w-3.5" /> Serie
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    {firstWeightRaw && hasEmptyWeightSlot && ex.sets.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => applyWeightToEmptySets(exIdx, firstWeightRaw)}
+                        title="Copiar este peso al resto de series vacías"
+                        className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg border hover:bg-sunken"
+                        style={{ borderColor: 'var(--border-subtle)' }}
+                      >
+                        <Copy className="h-3 w-3" /> Igualar {firstWeightRaw} kg
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => addExtraSet(exIdx)}
+                      className="inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-lg border hover:bg-sunken"
+                      style={{ borderColor: 'var(--border-subtle)' }}
+                    >
+                      <Plus className="h-3.5 w-3.5" /> Serie
+                    </button>
+                  </div>
                 </div>
 
                 {spec?.notes && (
@@ -287,22 +399,26 @@ export default function WorkoutPlayer({
                         <input
                           type="number"
                           min={0}
-                          value={set.reps}
-                          onChange={(e) => updateSetField(exIdx, setIdx, 'reps', Number(e.target.value))}
+                          inputMode="numeric"
+                          placeholder="0"
+                          value={repsInputs[exIdx]?.[setIdx] ?? ''}
+                          onChange={(e) => updateSetRepsInput(exIdx, setIdx, e.target.value)}
                           className="w-16 rounded border px-2 py-1 text-xs tabular-nums"
                           style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
                         />
                         <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                          reps
+                          {timed ? 'seg' : 'reps'}
                         </span>
                       </div>
                       <div className="col-span-4 flex items-center gap-1.5">
                         <input
                           type="number"
                           min={0}
-                          step={0.5}
-                          value={set.weightKg}
-                          onChange={(e) => updateSetField(exIdx, setIdx, 'weightKg', Number(e.target.value))}
+                          step="any"
+                          inputMode="decimal"
+                          placeholder="Peso"
+                          value={weightInputs[exIdx]?.[setIdx] ?? ''}
+                          onChange={(e) => updateSetWeightInput(exIdx, setIdx, e.target.value)}
                           className="w-16 rounded border px-2 py-1 text-xs tabular-nums"
                           style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
                         />

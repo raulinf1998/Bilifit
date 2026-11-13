@@ -1,11 +1,16 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { withAccount } from '@/lib/account-context';
-import { createRoutine, listRoutines } from '@/lib/db';
+import { createRoutine, getLastExerciseLogs, listRoutines } from '@/lib/db';
 import type { Routine } from '@/types';
 
 export async function GET(req: NextRequest) {
-  return withAccount(req, () => NextResponse.json({ routines: listRoutines() }));
+  return withAccount(req, () =>
+    NextResponse.json({
+      routines: listRoutines(),
+      lastExerciseLogs: getLastExerciseLogs(),
+    })
+  );
 }
 
 export async function POST(req: NextRequest) {

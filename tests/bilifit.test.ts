@@ -69,6 +69,8 @@ import {
   createCustomEquipment,
   createSegmentAndMatch,
   deleteCustomPalette,
+  deleteRoutine,
+  ensurePreset5DayRoutines,
   getActivityById,
   getAppSettings,
   getAthleteProfile,
@@ -77,6 +79,7 @@ import {
   getSegmentWithEfforts,
   listActivities,
   listHomeEquipment,
+  listRoutines,
   listSegments,
   toggleHomeEquipment,
   updateActivity,
@@ -99,6 +102,8 @@ import { GET as getDashboardRoute } from '../src/app/api/dashboard/route';
 import { GET as getProfileRoute } from '../src/app/api/profile/route';
 import { GET as getHuaweiGoogleAuthRoute } from '../src/app/api/huawei/google/auth/route';
 import { GET as getStravaAuthRoute } from '../src/app/api/strava/auth/route';
+import { GET as getRoutinesRoute } from '../src/app/api/routines/route';
+import { POST as postCompleteRoutineRoute } from '../src/app/api/routines/complete/route';
 import {
   calculateMinettiGapFactor,
   computeBestEfforts,
@@ -3083,4 +3088,160 @@ test('Running and walking activities and segments default to dark map layer', ()
   assert.ok(activityDetailSrc.includes('defaultMapLayerForSport(activity.sport, Boolean(worldInfo))'));
   assert.ok(segmentsPageSrc.includes('defaultMapLayerForSport(selectedSegment.sport, Boolean(selectedSegment.worldName))'));
   assert.ok(activityMapSrc.includes('prevDefaultLayerRef'));
+});
+
+test('5-day strength split routines preserve exact names, exercises, sets, reps without preset weights and support daily manual weight logging', async () => {
+  const routines = listRoutines();
+  const expected = [
+    {
+      name: 'Día 1 – Empuje A',
+      items: [
+        ['Press de banca con barra', 4, '6-8'],
+        ['Press inclinado con mancuernas', 3, '8-10'],
+        ['Aperturas con mancuernas', 3, '12-15'],
+        ['Press militar sentado', 4, '8-10'],
+        ['Elevaciones laterales', 3, '12-15'],
+        ['Extensión de tríceps en polea', 3, '12'],
+        ['Flexiones agarre cerrado', 3, 'Al fallo técnico'],
+      ],
+    },
+    {
+      name: 'Día 2 – Tirón A',
+      items: [
+        ['Dominadas (pronación)', 4, 'Al fallo técnico'],
+        ['Remo con barra', 4, '8'],
+        ['Remo unilateral con mancuerna', 3, '10 por lado'],
+        ['Jalón en polea (al pecho)', 3, '12'],
+        ['Pájaros con mancuernas', 3, '15'],
+        ['Curl con barra (recta)', 3, '8-10'],
+        ['Curl martillo con mancuernas', 3, '10-12'],
+      ],
+    },
+    {
+      name: 'Día 3 – Pierna A (Cuádriceps) + Core',
+      items: [
+        ['Sentadilla con barra', 4, '8'],
+        ['Sentadilla búlgara con mancuernas', 3, '10 por pierna'],
+        ['Zancadas caminando con mancuernas', 3, '10-12 por pierna'],
+        ['Elevaciones de gemelos (de pie)', 5, '15-20'],
+        ['Elevación de piernas colgado', 3, '15'],
+        ['Russian twist con disco', 3, '20 (total)'],
+      ],
+    },
+    {
+      name: 'Día 5 – Empuje B + Core',
+      items: [
+        ['Press de banca con barra', 4, '6-8'],
+        ['Press inclinado con mancuernas', 3, '8-10'],
+        ['Aperturas con mancuernas', 3, '12-15'],
+        ['Press francés con barra Z', 3, '10-12'],
+        ['Extensión de tríceps en polea', 3, '10-12'],
+        ['Plancha con peso en la espalda', 3, '45-60 seg'],
+        ['Crunch con disco', 3, '15-20'],
+      ],
+    },
+    {
+      name: 'Día 6 – Tirón B + Cadena Posterior',
+      items: [
+        ['Peso muerto rumano', 4, '6-8'],
+        ['Hip Thrust con barra', 3, '8-10'],
+        ['Buenos días con barra', 3, '10-12'],
+        ['Dominadas (pronación)', 3, '6-10'],
+        ['Remo con barra', 3, '8-10'],
+        ['Pájaros con mancuernas', 3, '12-15'],
+        ['Curl inclinado con mancuernas', 3, '10-12'],
+        ['Elevaciones de gemelos (de pie)', 4, '15-20'],
+        ['Plancha lateral', 3, '30-45 seg por lado'],
+      ],
+    },
+  ] as const;
+
+  const firstFiveNames = routines.slice(0, 5).map((r) => r.name);
+  assert.deepEqual(
+    firstFiveNames,
+    expected.map((e) => e.name)
+  );
+
+  for (const spec of expected) {
+    const rt = routines.find((r) => r.name === spec.name);
+    assert.ok(rt, `Routine "${spec.name}" must exist`);
+    assert.equal(rt.items.length, spec.items.length);
+    rt.items.forEach((item, idx) => {
+      const [exName, sets, reps] = spec.items[idx];
+      assert.equal(item.exerciseName, exName);
+      assert.equal(item.sets, sets);
+      assert.equal(item.reps, reps);
+      assert.equal(item.suggestedWeightKg, undefined, `Routine item "${exName}" must not prefill a fixed weight`);
+    });
+  }
+
+  // Cable equipment is present in the catalog
+  assert.ok(listHomeEquipment().some((eq) => eq.id === 'cable'));
+
+  // Idempotent existing-DB backfill: removing migration + one routine restores it once, and subsequent deletion persists
+  const db = getDb();
+  db.prepare('DELETE FROM schema_migrations WHERE id = ?').run('preset_5day_routines_v1');
+  assert.equal(deleteRoutine('routine_push_b_day5'), true);
+  assert.equal(listRoutines().some((r) => r.id === 'routine_push_b_day5'), false);
+  ensurePreset5DayRoutines(db, 'raul');
+  assert.equal(listRoutines().some((r) => r.id === 'routine_push_b_day5'), true);
+  assert.equal(deleteRoutine('routine_push_b_day5'), true);
+  ensurePreset5DayRoutines(db, 'raul');
+  assert.equal(listRoutines().some((r) => r.id === 'routine_push_b_day5'), false);
+  // Restore Día 5 for API completion test
+  db.prepare('DELETE FROM schema_migrations WHERE id = ?').run('preset_5day_routines_v1');
+  ensurePreset5DayRoutines(db, 'raul');
+
+  // Complete Día 5 with manual weights per set + timed plank hold
+  const completeRes = await postCompleteRoutineRoute(
+    new NextRequest('http://localhost:3000/api/routines/complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        routineId: 'routine_push_b_day5',
+        title: 'Día 5 – Empuje B + Core',
+        durationSec: 2700,
+        rpe: 8,
+        strengthLogs: [
+          {
+            exerciseId: 'ex_bb_bench_press',
+            exerciseName: 'Press de banca con barra',
+            equipmentUsed: ['barbell', 'bench'],
+            sets: [
+              { reps: 8, weightKg: 30, completed: true },
+              { reps: 8, weightKg: 32.5, completed: true },
+              { reps: 7, weightKg: 32.5, completed: true },
+              { reps: 6, weightKg: 35, completed: true },
+            ],
+          },
+          {
+            exerciseId: 'ex_weighted_plank',
+            exerciseName: 'Plancha con peso en la espalda',
+            equipmentUsed: ['mat', 'barbell'],
+            sets: [
+              { reps: 1, durationSec: 50, weightKg: 15, completed: true },
+              { reps: 1, durationSec: 45, weightKg: 15, completed: true },
+            ],
+          },
+        ],
+      }),
+    })
+  );
+  assert.equal(completeRes.status, 201);
+  const completeJson = (await completeRes.json()) as { activity: { totalVolumeKg: number } };
+  // 8*30 + 8*32.5 + 7*32.5 + 6*35 + 15 + 15 = 240 + 260 + 227.5 + 210 + 30 = 967.5 -> rounded 968
+  assert.equal(completeJson.activity.totalVolumeKg, 968);
+
+  const getRoutinesRes = await getRoutinesRoute(new NextRequest('http://localhost:3000/api/routines'));
+  assert.equal(getRoutinesRes.status, 200);
+  const routinesPayload = (await getRoutinesRes.json()) as {
+    routines: Array<{ id: string; timesCompleted: number }>;
+    lastExerciseLogs: Record<string, { sets: Array<{ weightKg: number }> }>;
+  };
+  const day5After = routinesPayload.routines.find((r) => r.id === 'routine_push_b_day5');
+  assert.equal(day5After?.timesCompleted, 1);
+  assert.deepEqual(
+    routinesPayload.lastExerciseLogs.ex_bb_bench_press?.sets.map((s) => s.weightKg),
+    [30, 32.5, 32.5, 35]
+  );
 });

@@ -15,7 +15,7 @@ import {
   Trash2,
   Wrench,
 } from 'lucide-react';
-import WorkoutPlayer from '@/components/WorkoutPlayer';
+import WorkoutPlayer, { type LastExerciseLogRef } from '@/components/WorkoutPlayer';
 import { ROUTINE_GOAL_LABELS } from '@/lib/home-workouts';
 import type {
   Exercise,
@@ -44,6 +44,7 @@ export default function HomeWorkoutsPage() {
   const [equipment, setEquipment] = useState<HomeEquipment[]>([]);
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [routines, setRoutines] = useState<Routine[]>([]);
+  const [lastExerciseLogs, setLastExerciseLogs] = useState<Record<string, LastExerciseLogRef>>({});
   const [loading, setLoading] = useState(true);
 
   // Estado equipamiento nuevo
@@ -101,6 +102,7 @@ export default function HomeWorkoutsPage() {
     setEquipment(eqList);
     setExercises(exRes.exercises ?? []);
     setRoutines(rtRes.routines ?? []);
+    setLastExerciseLogs(rtRes.lastExerciseLogs ?? {});
     setSessionEquipmentIds(eqList.filter((e) => e.owned).map((e) => e.id));
     setLoading(false);
   }, []);
@@ -108,6 +110,19 @@ export default function HomeWorkoutsPage() {
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const requestedTab = new URLSearchParams(window.location.search).get('tab');
+    if (
+      requestedTab === 'generator' ||
+      requestedTab === 'equipment' ||
+      requestedTab === 'routines' ||
+      requestedTab === 'builder'
+    ) {
+      setTab(requestedTab);
+    }
+  }, []);
 
   const ownedEquipment = equipment.filter((e) => e.owned);
   const ownedSet = new Set(ownedEquipment.map((e) => e.id));
@@ -518,6 +533,17 @@ export default function HomeWorkoutsPage() {
                   Elige si quieres complementar tus salidas de <strong>correr / montaña</strong>, tus sesiones de{' '}
                   <strong>MyWhoosh</strong> o hacer fuerza general. Pulsa &quot;Generar Rutina con mi Material&quot; para obtener tu sesión.
                 </p>
+                {routines.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setTab('routines')}
+                    className="inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold hover:bg-sunken"
+                    style={{ borderColor: 'var(--border-subtle)' }}
+                  >
+                    <ListChecks className="h-3.5 w-3.5 text-purple-400" />
+                    Ver Mis Rutinas ({routines.length})
+                  </button>
+                )}
               </div>
             ) : (
               <div className="space-y-4">
@@ -808,9 +834,14 @@ export default function HomeWorkoutsPage() {
                       className="flex items-center justify-between text-xs rounded-lg px-3 py-1.5"
                       style={{ background: 'var(--bg-card-elevated)' }}
                     >
-                      <span className="font-medium truncate pr-2">{item.exerciseName}</span>
+                      <span className="font-medium truncate pr-2">
+                        {idx + 1}. {item.exerciseName}
+                      </span>
                       <span className="tabular-nums shrink-0" style={{ color: 'var(--text-muted)' }}>
                         {item.sets} × {item.reps}
+                        {typeof item.suggestedWeightKg === 'number' && item.suggestedWeightKg > 0
+                          ? ` (${item.suggestedWeightKg} kg)`
+                          : ''}
                       </span>
                     </div>
                   ))}
@@ -1155,6 +1186,7 @@ export default function HomeWorkoutsPage() {
           routineId={activeWorkout.routineId}
           routineName={activeWorkout.name}
           items={activeWorkout.items}
+          lastExerciseLogs={lastExerciseLogs}
           onClose={() => setActiveWorkout(null)}
           onCompleted={() => {
             setActiveWorkout(null);

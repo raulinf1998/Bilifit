@@ -1802,7 +1802,8 @@ export default function ActivityDetailPage() {
                     <div key={sIdx} className="flex justify-between text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>
                       <span>Serie {sIdx + 1}</span>
                       <span>
-                        {s.reps} reps {s.weightKg > 0 ? `× ${s.weightKg} kg` : '(peso corporal)'}
+                        {s.durationSec && s.durationSec > 0 ? `${s.durationSec} seg` : `${s.reps} reps`}{' '}
+                        {s.weightKg > 0 ? `× ${s.weightKg} kg` : '(peso corporal)'}
                       </span>
                     </div>
                   ))}

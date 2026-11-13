@@ -18,7 +18,9 @@ export async function POST(req: NextRequest) {
       for (const ex of strengthLogs) {
         for (const s of ex.sets) {
           if (s.completed) {
-            totalVolumeKg += (Number(s.reps) || 0) * (Number(s.weightKg) || 0);
+            const weight = Number(s.weightKg) || 0;
+            const factor = s.durationSec && s.durationSec > 0 ? 1 : Number(s.reps) || 0;
+            totalVolumeKg += factor * weight;
           }
         }
       }
