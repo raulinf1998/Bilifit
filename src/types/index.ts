@@ -152,12 +152,37 @@ export interface StrengthSetLog {
   }>;
 }
 
+/** Series ya completadas de un ejercicio en una sesión anterior (sin `completed`). */
+export interface StrengthPrefillSet {
+  reps: number;
+  weightKg: number;
+  durationSec?: number;
+}
+
+export interface StrengthPrefillExercise {
+  perDumbbell?: boolean;
+  sets: StrengthPrefillSet[];
+}
+
+/**
+ * Última sesión de un mismo tipo de entrenamiento (misma rutina o mismo nombre
+ * de plan). Sirve para precargar repeticiones y peso al repetir un entreno.
+ */
+export interface StrengthSessionPrefill {
+  activityId: string;
+  startedAt: string;
+  title: string;
+  logs: Record<string, StrengthPrefillExercise>;
+}
+
 export interface Activity {
   id: string;
   externalId?: string | null;
   source: 'manual' | 'gpx' | 'fit' | 'tcx' | 'strava' | 'mywhoosh' | 'huawei' | 'bilifit_home';
   sport: SportType;
   subSport?: string | null;
+  /** Rutina de la que nació la sesión (solo en sesiones registradas desde Bilifit Casa) */
+  routineId?: string | null;
   title: string;
   description?: string | null;
   startedAt: string; // ISO date string

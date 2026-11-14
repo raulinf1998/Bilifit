@@ -79,6 +79,8 @@ import {
   PER_DUMBBELL_EXERCISE_IDS,
   SINGLE_DUMBBELL_EXERCISE_IDS,
 } from '../src/lib/home-workouts';
+import { countPrefilledExercises, planSetRows } from '../src/lib/workout-prefill';
+import type { RoutineExerciseItem } from '../src/types';
 import {
   backfillMismatchedSubSports,
   backfillMyWhooshWorlds,
@@ -87,6 +89,7 @@ import {
   createActivity,
   createCustomEquipment,
   createSegmentAndMatch,
+  deleteActivity,
   deleteCustomPalette,
   deleteRoutine,
   ensurePreset5DayRoutines,
@@ -125,6 +128,7 @@ import { GET as getStravaAuthRoute } from '../src/app/api/strava/auth/route';
 import { GET as getExercisesRoute, POST as postExercisesRoute } from '../src/app/api/exercises/route';
 import { PATCH as patchExerciseRoute } from '../src/app/api/exercises/[id]/route';
 import { GET as getRoutinesRoute, POST as postRoutinesRoute } from '../src/app/api/routines/route';
+import { GET as getRoutineLastSessionRoute } from '../src/app/api/routines/last-session/route';
 import { PATCH as patchRoutineRoute } from '../src/app/api/routines/[id]/route';
 import { POST as postCompleteRoutineRoute } from '../src/app/api/routines/complete/route';
 import { POST as postUploadRoute } from '../src/app/api/uploads/route';
@@ -4112,4 +4116,261 @@ test('El catálogo de casa incluye los ejercicios nuevos de core y cadera con su
   // El russian twist pedido es la versión SIN peso; el existente con disco sigue intacto.
   assert.ok(!byId.get('ex_russian_twist_bw')!.name.toLowerCase().includes('disco'));
   assert.ok(byId.get('ex_plate_russian_twist')!.name.toLowerCase().includes('disco'));
+});
+
+test('Repetir entreno: precarga repeticiones y peso de la última sesión de esa misma rutina', async () => {
+  const dbItem: RoutineExerciseItem = {
+    exerciseId: 'ex_db_bench_press',
+    exerciseName: 'Press en banco con mancuernas',
+    muscleGroup: 'pecho',
+    requiredEquipment: ['dumbbells'],
+    sets: 4,
+    reps: '10-12',
+    restSeconds: 90,
+    suggestedWeightKg: 20,
+  };
+  const bwItem: RoutineExerciseItem = {
+    exerciseId: 'ex_pushup',
+    exerciseName: 'Flexiones de pecho',
+    muscleGroup: 'pecho',
+    requiredEquipment: [],
+    sets: 2,
+    reps: '15',
+    restSeconds: 60,
+  };
+
+  // --- 1) planSetRows: lo que se hizo la última vez manda; lo demás, valor de la rutina ---
+  const rows = planSetRows(dbItem, {
+    sets: [
+      { reps: 10, weightKg: 20 },
+      { reps: 12, weightKg: 20 },
+      { reps: 8, weightKg: 22.5 },
+    ],
+  });
+  assert.equal(rows.sets.length, 4, 'la rutina pide 4 series aunque anoche se hicieran 3');
+  assert.deepEqual(rows.reps, ['10', '12', '8', '10'], 'la 4ª serie vuelve al objetivo de la rutina');
+  assert.deepEqual(rows.weights, ['20', '20', '22.5', '20']);
+  assert.equal(rows.prefilledSets, 3);
+  assert.ok(rows.sets.every((s) => s.completed === false), 'nada empieza marcado como hecho');
+
+  // Sin sesión anterior todo es el valor por defecto de la rutina
+  const noPrev = planSetRows(dbItem, null);
+  assert.deepEqual(noPrev.weights, ['20', '20', '20', '20']);
+  assert.deepEqual(noPrev.reps, ['10', '10', '10', '10']);
+  assert.equal(noPrev.prefilledSets, 0);
+
+  // Peso corporal (0 kg) deja el input vacío en lugar de escribir un 0
+  const bodyweight = planSetRows(bwItem, {
+    sets: [
+      { reps: 15, weightKg: 0 },
+      { reps: 12, weightKg: 0 },
+    ],
+  });
+  assert.deepEqual(bodyweight.weights, ['', '']);
+  assert.deepEqual(bodyweight.reps, ['15', '12']);
+
+  // Series por tiempo: se recupera la duración anotada
+  const timedItem: RoutineExerciseItem = { ...bwItem, reps: '45 seg' };
+  const timed = planSetRows(timedItem, { sets: [{ reps: 1, weightKg: 0, durationSec: 60 }] });
+  assert.equal(timed.sets[0].durationSec, 60);
+  assert.equal(timed.sets[1].durationSec, 45, 'la segunda serie sin dato previo usa el objetivo');
+  assert.deepEqual(timed.reps, ['60', '45']);
+
+  // Si aquella vez se hicieron más series que las que pide la rutina, no se inventan filas
+  const extra = planSetRows(dbItem, {
+    sets: Array.from({ length: 6 }, (_, i) => ({ reps: 10, weightKg: 20 + i })),
+  });
+  assert.equal(extra.sets.length, 4);
+  assert.deepEqual(extra.weights, ['20', '21', '22', '23']);
+
+  assert.equal(
+    countPrefilledExercises([dbItem, bwItem], { ex_db_bench_press: { sets: [{ reps: 10, weightKg: 20 }] } }),
+    1
+  );
+  assert.equal(countPrefilledExercises([dbItem, bwItem], {}), 0);
+
+  // --- 2) API: la última sesión de la rutina manda y no se mezcla con otras rutinas ---
+  const mkItems = (extraNote?: string): RoutineExerciseItem[] => [
+    { ...dbItem, ...(extraNote ? { notes: extraNote } : {}) },
+    bwItem,
+  ];
+  const { routine: rtA } = (await (
+    await postRoutinesRoute(
+      new NextRequest('http://localhost:3000/api/routines', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Rutina A repetir', items: mkItems() }),
+      })
+    )
+  ).json()) as { routine: { id: string; name: string } };
+  const { routine: rtB } = (await (
+    await postRoutinesRoute(
+      new NextRequest('http://localhost:3000/api/routines', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Rutina B repetir', items: mkItems() }),
+      })
+    )
+  ).json()) as { routine: { id: string; name: string } };
+
+  const completeWith = (routineId: string, benchWeight: number, doPushups: boolean) =>
+    postCompleteRoutineRoute(
+      new NextRequest('http://localhost:3000/api/routines/complete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          routineId,
+          title: 'Sesión de prueba de precarga',
+          durationSec: 2400,
+          rpe: 7,
+          strengthLogs: [
+            {
+              exerciseId: 'ex_db_bench_press',
+              exerciseName: dbItem.exerciseName,
+              equipmentUsed: ['dumbbells'],
+              sets: [
+                { reps: 10, weightKg: benchWeight, completed: true },
+                { reps: 8, weightKg: benchWeight + 2.5, completed: true },
+              ],
+            },
+            ...(doPushups
+              ? [
+                  {
+                    exerciseId: 'ex_pushup',
+                    exerciseName: bwItem.exerciseName,
+                    equipmentUsed: [],
+                    sets: [{ reps: 20, weightKg: 0, completed: true }],
+                  },
+                ]
+              : [
+                  {
+                    exerciseId: 'ex_pushup',
+                    exerciseName: bwItem.exerciseName,
+                    equipmentUsed: [],
+                    sets: [{ reps: 15, weightKg: 0, completed: false }],
+                  },
+                ]),
+          ],
+        }),
+      })
+    );
+
+  // Sesión antigua de la rutina A: las flexiones NO se marcaron como hechas
+  const actA1 = (await (await completeWith(rtA.id, 20, false)).json()) as {
+    activity: { id: string; routineId?: string | null };
+  };
+  assert.equal(actA1.activity.routineId, rtA.id, 'la sesión queda vinculada a su rutina');
+
+  const lastA = (await (
+    await getRoutineLastSessionRoute(
+      new NextRequest(`http://localhost:3000/api/routines/last-session?routineId=${rtA.id}`)
+    )
+  ).json()) as {
+    prefill: {
+      activityId: string;
+      logs: Record<string, { perDumbbell?: boolean; sets: Array<{ reps: number; weightKg: number }> }>;
+    } | null;
+  };
+  assert.ok(lastA.prefill);
+  assert.equal(lastA.prefill!.activityId, actA1.activity.id);
+  assert.deepEqual(
+    lastA.prefill!.logs.ex_db_bench_press?.sets.map((x) => x.weightKg),
+    [20, 22.5]
+  );
+  assert.equal(lastA.prefill!.logs.ex_db_bench_press?.perDumbbell, true, 'el ×2 se arrastra a la precarga');
+  assert.equal(lastA.prefill!.logs.ex_pushup, undefined, 'lo no hecho aquella vez no se precarga');
+
+  // Una sesión de otra rutina no contamina la precarga de A
+  await completeWith(rtB.id, 30, true);
+  const lastA2 = (await (
+    await getRoutineLastSessionRoute(
+      new NextRequest(`http://localhost:3000/api/routines/last-session?routineId=${rtA.id}`)
+    )
+  ).json()) as { prefill: { logs: Record<string, { sets: Array<{ weightKg: number }> }> } };
+  assert.deepEqual(
+    lastA2.prefill.logs.ex_db_bench_press.sets.map((x) => x.weightKg),
+    [20, 22.5],
+    'deben ser los valores de A, no los de B'
+  );
+
+  // La sesión más reciente de la misma rutina es la que gana
+  const actA2 = (await (await completeWith(rtA.id, 25, true)).json()) as { activity: { id: string } };
+  getDb()
+    .prepare('UPDATE activities SET started_at = ? WHERE id = ?')
+    .run(new Date(Date.now() + 3600_000).toISOString(), actA2.activity.id);
+  const lastA3 = (await (
+    await getRoutineLastSessionRoute(
+      new NextRequest(`http://localhost:3000/api/routines/last-session?routineId=${rtA.id}`)
+    )
+  ).json()) as { prefill: { activityId: string; logs: Record<string, { sets: Array<{ weightKg: number }> }> } };
+  assert.equal(lastA3.prefill.activityId, actA2.activity.id);
+  assert.deepEqual(lastA3.prefill.logs.ex_db_bench_press.sets.map((x) => x.weightKg), [25, 27.5]);
+  assert.deepEqual(Object.keys(lastA3.prefill.logs).sort(), ['ex_db_bench_press', 'ex_pushup']);
+
+  // --- 3) Respaldo por título para sesiones sin vincular (histórico) ---
+  const legacyTitle = 'Plan heredado sin rutina';
+  const legacy = (await (
+    await postCompleteRoutineRoute(
+      new NextRequest('http://localhost:3000/api/routines/complete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: legacyTitle,
+          durationSec: 1800,
+          rpe: 6,
+          strengthLogs: [
+            {
+              exerciseId: 'ex_pushup',
+              exerciseName: bwItem.exerciseName,
+              equipmentUsed: [],
+              sets: [{ reps: 18, weightKg: 0, completed: true }],
+            },
+          ],
+        }),
+      })
+    )
+  ).json()) as { activity: { id: string } };
+  getDb().prepare('UPDATE activities SET routine_id = NULL WHERE id = ?').run(legacy.activity.id);
+
+  const byTitle = (await (
+    await getRoutineLastSessionRoute(
+      new NextRequest(
+        `http://localhost:3000/api/routines/last-session?title=${encodeURIComponent(legacyTitle)}`
+      )
+    )
+  ).json()) as { prefill: { activityId: string } };
+  assert.equal(byTitle.prefill.activityId, legacy.activity.id, 'el respaldo por título encuentra la sesión antigua');
+
+  // Una rutina sin sesiones no devuelve precarga
+  const { routine: rtC } = (await (
+    await postRoutinesRoute(
+      new NextRequest('http://localhost:3000/api/routines', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Rutina virgin', items: mkItems('sin historial') }),
+      })
+    )
+  ).json()) as { routine: { id: string; name: string } };
+  const empty = (await (
+    await getRoutineLastSessionRoute(
+      new NextRequest(
+        `http://localhost:3000/api/routines/last-session?routineId=${rtC.id}&title=${encodeURIComponent(rtC.name)}`
+      )
+    )
+  ).json()) as { prefill: unknown };
+  assert.equal(empty.prefill, null);
+
+  // Falta de parámetros -> 400
+  const bad = await getRoutineLastSessionRoute(new NextRequest('http://localhost:3000/api/routines/last-session'));
+  assert.equal(bad.status, 400);
+
+  // Limpieza
+  for (const id of [actA1.activity.id, actA2.activity.id, legacy.activity.id]) deleteActivity(id);
+  const bActs = getDb()
+    .prepare('SELECT id FROM activities WHERE title = ?')
+    .all('Sesión de prueba de precarga') as Array<{ id: string }>;
+  for (const row of bActs) deleteActivity(row.id);
+  deleteRoutine(rtA.id);
+  deleteRoutine(rtB.id);
+  deleteRoutine(rtC.id);
 });

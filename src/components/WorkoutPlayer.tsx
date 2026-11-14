@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Clock,
   Copy,
+  History,
   Image as ImageIcon,
   Loader2,
   Maximize2,
@@ -21,6 +22,12 @@ import {
 } from 'lucide-react';
 import ImageLightboxModal from '@/components/ImageLightboxModal';
 import { TogetherToggleButton } from '@/components/TogetherControl';
+import {
+  countPrefilledExercises,
+  isTimedReps,
+  parseDecimalInput,
+  planSetRows,
+} from '@/lib/workout-prefill';
 import { uploadExerciseOrWorkoutImage } from '@/lib/client-image';
 import {
   calculateStrengthSetVolumeKg,
@@ -28,7 +35,7 @@ import {
   resolveIsPerDumbbell,
 } from '@/lib/home-workouts';
 import { formatDurationClock } from '@/lib/metrics';
-import type { RoutineExerciseItem, StrengthSetLog } from '@/types';
+import type { RoutineExerciseItem, StrengthSessionPrefill, StrengthSetLog } from '@/types';
 
 export interface LastExerciseLogRef {
   startedAt: string;
@@ -56,22 +63,6 @@ function playTimerBeep() {
   }
 }
 
-function parseNumericReps(repsLabel: string): number {
-  const m = repsLabel.match(/\d+/);
-  return m ? Number(m[0]) : 10;
-}
-
-function isTimedReps(repsLabel?: string): boolean {
-  return Boolean(repsLabel && /\bseg\b/i.test(repsLabel));
-}
-
-function parseDecimalInput(raw: string): number {
-  const normalized = raw.replace(',', '.').trim();
-  if (!normalized) return 0;
-  const n = Number(normalized);
-  return Number.isFinite(n) && n >= 0 ? n : 0;
-}
-
 export default function WorkoutPlayer({
   routineId,
   routineName,
@@ -79,6 +70,7 @@ export default function WorkoutPlayer({
   exerciseImages,
   exercisePerDumbbell,
   lastExerciseLogs,
+  previousSession,
   onExerciseImageUpdated,
   onClose,
   onCompleted,
@@ -89,6 +81,8 @@ export default function WorkoutPlayer({
   exerciseImages?: Record<string, string | null | undefined>;
   exercisePerDumbbell?: Record<string, boolean>;
   lastExerciseLogs?: Record<string, LastExerciseLogRef>;
+  /** Última sesión del mismo tipo: sus series precargan reps y peso. */
+  previousSession?: StrengthSessionPrefill | null;
   onExerciseImageUpdated?: (exerciseId: string, nextUrl: string | null) => void;
   onClose: () => void;
   onCompleted: () => void;
@@ -119,35 +113,28 @@ export default function WorkoutPlayer({
     description?: string;
   } | null>(null);
 
+  // Series iniciales: las que se hicieron la última vez que se entrenó este mismo
+  // tipo de sesión; el resto (y los ejercicios nuevos) mantienen lo que dice la rutina.
+  const previousLogs = previousSession?.logs ?? null;
+  const initialRows = items.map((item) => planSetRows(item, previousLogs?.[item.exerciseId]));
+  const prefilledExerciseCount = countPrefilledExercises(items, previousLogs);
+
   const [logs, setLogs] = useState<StrengthSetLog[]>(() =>
-    items.map((item) => {
-      const timed = isTimedReps(item.reps);
-      const targetVal = parseNumericReps(item.reps);
+    items.map((item, idx) => {
       const perDumbbell = resolveIsPerDumbbell(item, exercisePerDumbbell?.[item.exerciseId]);
       return {
         exerciseId: item.exerciseId,
         exerciseName: item.exerciseName,
         equipmentUsed: item.requiredEquipment,
         ...(perDumbbell ? { perDumbbell: true } : {}),
-        sets: Array.from({ length: item.sets }, () => ({
-          reps: timed ? 1 : targetVal,
-          ...(timed ? { durationSec: targetVal } : {}),
-          weightKg: item.suggestedWeightKg ?? 0,
-          completed: false,
-        })),
+        sets: initialRows[idx].sets,
       };
     })
   );
 
-  const [repsInputs, setRepsInputs] = useState<string[][]>(() =>
-    items.map((item) => Array.from({ length: item.sets }, () => String(parseNumericReps(item.reps))))
-  );
+  const [repsInputs, setRepsInputs] = useState<string[][]>(() => initialRows.map((row) => [...row.reps]));
 
-  const [weightInputs, setWeightInputs] = useState<string[][]>(() =>
-    items.map((item) =>
-      Array.from({ length: item.sets }, () => (item.suggestedWeightKg ? String(item.suggestedWeightKg) : ''))
-    )
-  );
+  const [weightInputs, setWeightInputs] = useState<string[][]>(() => initialRows.map((row) => [...row.weights]));
 
   // Cronómetro global de sesión
   useEffect(() => {
@@ -490,6 +477,30 @@ export default function WorkoutPlayer({
           </div>
         )}
 
+        {previousSession && prefilledExerciseCount > 0 && (
+          <div
+            className="mx-3 mt-3 sm:mx-5 sm:mt-4 rounded-xl border px-3 py-2 text-[11px] sm:text-xs flex items-start gap-2 animate-fade-in"
+            style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card-elevated)', color: 'var(--text-secondary)' }}
+          >
+            <History className="h-3.5 w-3.5 mt-0.5 shrink-0 text-cyan-500" />
+            <span>
+              Repeticiones y peso precargados de tu sesión del{' '}
+              <strong className="font-semibold">
+                {new Date(previousSession.startedAt).toLocaleDateString('es-ES', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: previousSession.startedAt.includes('-') ? '2-digit' : undefined,
+                })}
+              </strong>{' '}
+              ({prefilledExerciseCount} de {items.length}{' '}
+              {prefilledExerciseCount === 1 ? 'ejercicio' : 'ejercicios'}).
+              {prefilledExerciseCount < items.length
+                ? ' Los que no hiciste aquella vez mantienen los valores de la rutina.'
+                : ''}
+            </span>
+          </div>
+        )}
+
         {/* Lista de ejercicios y series */}
         <div className="flex-1 overflow-y-auto overscroll-contain p-3 sm:p-5 space-y-4">
           {logs.map((ex, exIdx) => {
@@ -506,7 +517,14 @@ export default function WorkoutPlayer({
             const firstWeightRaw = rowWeights.find((w) => parseDecimalInput(w) > 0) ?? '';
             const latestWeightNum = [...rowWeights].reverse().map(parseDecimalInput).find((w) => w > 0) ?? 0;
             const hasEmptyWeightSlot = rowWeights.some((w) => w.trim() === '');
-            const prevLog = lastExerciseLogs?.[ex.exerciseId];
+            // Referencia de la última vez: la de esta misma rutina si existe,
+            // si no la última vez global que se hizo ese ejercicio.
+            const prevSets = previousLogs?.[ex.exerciseId]?.sets ?? lastExerciseLogs?.[ex.exerciseId]?.sets ?? [];
+            const prevDate =
+              previousLogs?.[ex.exerciseId]
+                ? previousSession?.startedAt ?? null
+                : lastExerciseLogs?.[ex.exerciseId]?.startedAt ?? null;
+            const prefilledSets = initialRows[exIdx]?.prefilledSets ?? 0;
             const imageUrl = resolveItemImage(spec);
             const exVolumeKg = Math.round(
               ex.sets
@@ -597,13 +615,27 @@ export default function WorkoutPlayer({
                             </span>
                           )}
                         </div>
-                        <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                          Objetivo: {spec?.reps} · Descanso: {spec?.restSeconds ?? 60}s
+                        <div className="text-xs mt-0.5 flex flex-wrap items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                          <span>
+                            Objetivo: {spec?.reps} · Descanso: {spec?.restSeconds ?? 60}s
+                          </span>
+                          {prefilledSets > 0 && (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded border border-cyan-500/35 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300"
+                              title={`Series ${prefilledSets} de ${ex.sets.length} copiadas de tu última sesión de esta rutina`}
+                            >
+                              <History className="h-2.5 w-2.5" />
+                              {prefilledSets === ex.sets.length
+                                ? 'Última sesión cargada'
+                                : `${prefilledSets} serie(s) de la última sesión`}
+                            </span>
+                          )}
                         </div>
-                        {prevLog && prevLog.sets.length > 0 && (
+                        {prevDate && prevSets.length > 0 && (
                           <div className="text-[11px] mt-0.5 text-cyan-600 dark:text-cyan-400 tabular-nums">
-                            Último ({new Date(prevLog.startedAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}):{' '}
-                            {prevLog.sets
+                            Último ({new Date(prevDate).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })})
+                            {previousLogs?.[ex.exerciseId] ? ' en esta rutina' : ''}:{' '}
+                            {prevSets
                               .map((s) => (s.weightKg > 0 ? `${s.weightKg} kg${perDb ? ' c/u' : ''}` : 'corporal'))
                               .join(' / ')}
                           </div>
