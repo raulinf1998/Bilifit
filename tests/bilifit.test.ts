@@ -69,6 +69,7 @@ import {
   updateHuaweiPreferences,
 } from '../src/lib/huawei-sync';
 import {
+  buildRoutineItemFromExercise,
   calculateStrengthSetVolumeKg,
   DEFAULT_EXERCISES,
   generateHomeRoutine,
@@ -3984,4 +3985,84 @@ test('Selector de franjas de tiempo: ventanas locales (día/semana/mes), estadí
   getDb()
     .prepare('DELETE FROM activities WHERE id IN (?, ?, ?)')
     .run(idFriday, idSaturday, idOutsideWeek);
+});
+
+test('Constructor y editor de rutinas: alta compartida de ejercicios y PATCH con ejercicios añadidos', async () => {
+  const dumbbellEx = DEFAULT_EXERCISES.find((ex) => ex.id === 'ex_db_bench_press');
+  const bodyweightEx = DEFAULT_EXERCISES.find((ex) => ex.id === 'ex_pushup');
+  assert.ok(dumbbellEx && bodyweightEx);
+
+  // --- buildRoutineItemFromExercise hereda los valores por defecto del catálogo ---
+  const dbRow = buildRoutineItemFromExercise(dumbbellEx);
+  assert.equal(dbRow.exerciseId, dumbbellEx.id);
+  assert.equal(dbRow.exerciseName, dumbbellEx.name);
+  assert.equal(dbRow.muscleGroup, dumbbellEx.muscleGroup);
+  assert.deepEqual(dbRow.requiredEquipment, dumbbellEx.requiredEquipment);
+  assert.equal(dbRow.sets, dumbbellEx.defaultSets);
+  assert.equal(dbRow.reps, dumbbellEx.defaultReps);
+  assert.equal(dbRow.restSeconds, dumbbellEx.restSeconds);
+  assert.equal(dbRow.notes, dumbbellEx.instructions);
+  assert.equal(dbRow.suggestedWeightKg, 10); // solo se sugiere peso en mancuernas
+  assert.equal(dbRow.perDumbbell, dumbbellEx.perDumbbell ?? PER_DUMBBELL_EXERCISE_IDS.has(dumbbellEx.id));
+  assert.equal(buildRoutineItemFromExercise(bodyweightEx).suggestedWeightKg, undefined);
+
+  // --- Alta de una rutina de un solo ejercicio (la que luego se edita) ---
+  const createRes = await postRoutinesRoute(
+    new NextRequest('http://localhost:3000/api/routines', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Rutina editable desde el modal',
+        estimatedMinutes: 40,
+        equipmentIds: [],
+        items: [buildRoutineItemFromExercise(bodyweightEx)],
+      }),
+    })
+  );
+  assert.equal(createRes.status, 201);
+  const created = (await createRes.json()) as { routine: { id: string; items: unknown[] } };
+  assert.equal(created.routine.items.length, 1);
+
+  // --- El editor añade un ejercicio nuevo: items, material y duración ---
+  const editedItems = [{ ...dbRow, sets: 5, imageUrl: 'javascript:alert(1)' }, buildRoutineItemFromExercise(bodyweightEx)];
+  const patchRes = await patchRoutineRoute(
+    new NextRequest(`http://localhost:3000/api/routines/${created.routine.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        items: editedItems,
+        estimatedMinutes: Math.max(15, editedItems.length * 6),
+        equipmentIds: Array.from(new Set(editedItems.flatMap((it) => it.requiredEquipment))),
+      }),
+    }),
+    { params: Promise.resolve({ id: created.routine.id }) }
+  );
+  assert.equal(patchRes.status, 200);
+  const patched = (await patchRes.json()) as {
+    routine: { items: Array<{ exerciseId: string; sets: number; imageUrl?: string | null }>; estimatedMinutes: number; equipmentIds: string[] };
+  };
+  assert.equal(patched.routine.items.length, 2);
+  assert.equal(patched.routine.items[0].exerciseId, dumbbellEx.id);
+  assert.equal(patched.routine.items[0].sets, 5);
+  assert.equal(patched.routine.items[0].imageUrl, null); // la API sanea la imagen
+  // 2 ejercicios × 6 min = 12, pero el constructor aplica un mínimo de 15 minutos.
+  assert.equal(patched.routine.estimatedMinutes, 15);
+  assert.ok(patched.routine.equipmentIds.includes('dumbbells'));
+
+  // --- Quitar el ejercicio añadido revierte el material de la rutina ---
+  const trimRes = await patchRoutineRoute(
+    new NextRequest(`http://localhost:3000/api/routines/${created.routine.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ items: [buildRoutineItemFromExercise(bodyweightEx)], equipmentIds: [] }),
+    }),
+    { params: Promise.resolve({ id: created.routine.id }) }
+  );
+  assert.equal(trimRes.status, 200);
+  const trimmed = (await trimRes.json()) as { routine: { items: unknown[]; equipmentIds: string[] } };
+  assert.equal(trimmed.routine.items.length, 1);
+  assert.deepEqual(trimmed.routine.equipmentIds, []);
+
+  // Limpieza
+  deleteRoutine(created.routine.id);
 });
