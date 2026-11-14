@@ -143,6 +143,8 @@ export default function ActivityDetailPage() {
   const [worldName, setWorldName] = useState('');
   const [gearId, setGearId] = useState('');
   const [rpe, setRpe] = useState(6);
+  // Minutos editables: sirve para corregir sesiones cuyo cronómetro se quedó corto
+  const [durationMin, setDurationMin] = useState(0);
   const [doneTogether, setDoneTogether] = useState(false);
   const [togglingTogether, setTogglingTogether] = useState(false);
   const [togglingPaused, setTogglingPaused] = useState(false);
@@ -286,6 +288,7 @@ export default function ActivityDetailPage() {
       setRpe(activity.rpe ?? 6);
       setDoneTogether(Boolean(activity.doneTogether));
       setDescription(activity.description ?? '');
+      setDurationMin(Math.round((activity.durationSec / 60) * 10) / 10);
       setDraftStrength(buildDraftStrengthFromLogs(activity.strengthLogs, exercisePerDumbbellMap));
     }
     setSaveError(null);
@@ -378,6 +381,12 @@ export default function ActivityDetailPage() {
           rpe,
           doneTogether,
           description,
+          // Sólo se manda si cambia de verdad: así no se redondean las sesiones importadas
+          ...(activity &&
+          durationMin > 0 &&
+          Math.abs(Math.round(durationMin * 60) - activity.durationSec) >= 1
+            ? { durationSec: Math.round(durationMin * 60) }
+            : {}),
           ...(serializedLogs !== undefined ? { strengthLogs: serializedLogs } : {}),
         }),
       });
@@ -896,6 +905,24 @@ export default function ActivityDetailPage() {
                   <option key={g.id} value={g.id}>{g.name}</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className="block text-xs mb-1" style={{ color: 'var(--text-secondary)' }}>
+                Duración (min)
+              </label>
+              <input
+                type="number"
+                min={1}
+                step={0.5}
+                inputMode="decimal"
+                value={durationMin || ''}
+                onChange={(e) => setDurationMin(Math.max(0, Number(e.target.value)))}
+                className="w-full rounded-lg border px-3 py-2 text-sm tabular-nums"
+                style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
+              />
+              <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                Ahora: {formatDurationClock(activity.durationSec)}
+              </div>
             </div>
             <div>
               <label className="block text-xs mb-1" style={{ color: 'var(--text-secondary)' }}>RPE ({rpe}/10)</label>

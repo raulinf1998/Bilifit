@@ -28,6 +28,20 @@ import {
   parseDecimalInput,
   planSetRows,
 } from '@/lib/workout-prefill';
+import {
+  clearSessionClock,
+  createSessionClock,
+  elapsedSessionSec,
+  isSessionClockPaused,
+  keepAwayTime,
+  pauseSessionClock,
+  readSessionClock,
+  resumeSessionClock,
+  sessionClockStorageKey,
+  sumTimedSetSec,
+  writeSessionClock,
+  type SessionClock,
+} from '@/lib/session-clock';
 import { uploadExerciseOrWorkoutImage } from '@/lib/client-image';
 import {
   calculateStrengthSetVolumeKg,
@@ -87,10 +101,28 @@ export default function WorkoutPlayer({
   onClose: () => void;
   onCompleted: () => void;
 }) {
-  const [elapsedSec, setElapsedSec] = useState(0);
-  const [paused, setPaused] = useState(false);
-  const [restLeft, setRestLeft] = useState<number>(0);
+  // Una rutina tiene su propio cronómetro guardado; los entrenos generados al momento
+  // se distinguen por la lista de ejercicios (mismo nombre, distinto entreno).
+  const clockKey = sessionClockStorageKey(
+    routineId ?? `name:${routineName}:${items.map((it) => `${it.exerciseId}x${it.sets}`).join(',')}`
+  );
+  // El ancla del cronómetro vive en `SessionClock` (tiempo real), no en un contador
+  // de ticks: así la duración sigue siendo correcta aunque el navegador congele el
+  // intervalo con la pantalla apagada, y se puede recuperar si la página se recarga.
+  const [clock, setClock] = useState<SessionClock | null>(null);
+  const [nowTick, setNowTick] = useState(0);
+  // Fin (epoch ms) del descanso en curso y segundos que llevaba al arrancar.
+  const [restEndsAtMs, setRestEndsAtMs] = useState<number | null>(null);
+  const [restBeeped, setRestBeeped] = useState(false);
+  // Aviso de que se ha recuperado una sesión empezada antes (y su pausa por estar cerrada).
+  const [resumedInfo, setResumedInfo] = useState<{ startedAtMs: number; deductedSec: number } | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const clockRef = useRef<SessionClock | null>(null);
+  clockRef.current = clock;
+  const completedSetsRef = useRef(0);
+  // Momento del último ancla guardada y bandera de "esta sesión ya no se guarda"
+  const clockSavedAtRef = useRef(0);
+  const draftDisabledRef = useRef(false);
   const [largeImages, setLargeImages] = useState(false);
   const [rpe, setRpe] = useState(7);
   const [notes, setNotes] = useState('');
@@ -136,28 +168,109 @@ export default function WorkoutPlayer({
 
   const [weightInputs, setWeightInputs] = useState<string[][]>(() => initialRows.map((row) => [...row.weights]));
 
-  // Cronómetro global de sesión
-  useEffect(() => {
-    if (paused) return;
-    const id = window.setInterval(() => {
-      setElapsedSec((prev) => prev + 1);
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [paused]);
+  function clockStorage() {
+    return typeof window !== 'undefined' ? window.localStorage : null;
+  }
 
-  // Temporizador de descanso entre series
+  /**
+   * Guarda el ancla de la sesión en curso. Solo la persiste cuando la sesión ya es
+   * real (un minuto hecho o alguna serie marcada) y como mucho cada 10 s, salvo en
+   * los momentos clave (pausa, ocultar la pestaña, desmontar), para que al volver a
+   * abrir la app sólo se descuente el rato en que de verdad no pudo medir.
+   */
+  function persistClock(nowMs = Date.now(), options: { immediate?: boolean; next?: SessionClock | null } = {}) {
+    if (draftDisabledRef.current) return;
+    const current = options.next ?? clockRef.current;
+    if (!current) return;
+    if (!options.immediate && nowMs - clockSavedAtRef.current < 10_000) return;
+    if (elapsedSessionSec(current, nowMs) < 60 && completedSetsRef.current === 0) return;
+    clockSavedAtRef.current = nowMs;
+    writeSessionClock(clockStorage(), clockKey, current, nowMs);
+  }
+
+  // Sesión guardada o descartada: el ancla deja de existir y ya no se reescribe
+  // (ni siquiera cuando el reproductor se desmonte justo después).
+  function forgetSessionDraft() {
+    draftDisabledRef.current = true;
+    clearSessionClock(clockStorage(), clockKey);
+  }
+
+  // Al abrir el reproductor se retoma la sesión en curso si la había (misma rutina
+  // y empezada en las últimas 6 h); si no, se arranca un cronómetro nuevo.
   useEffect(() => {
-    if (restLeft <= 0) return;
-    const id = window.setInterval(() => {
-      setRestLeft((prev) => {
-        if (prev === 1 && soundEnabled) {
-          playTimerBeep();
-        }
-        return Math.max(0, prev - 1);
+    draftDisabledRef.current = false;
+    clockSavedAtRef.current = 0;
+    const restored = readSessionClock(clockStorage(), clockKey, Date.now());
+    if (restored) {
+      clockSavedAtRef.current = Date.now();
+      setClock(restored);
+      setResumedInfo({
+        startedAtMs: restored.startedAtMs,
+        deductedSec: Math.round(restored.awayDeductedMs / 1000),
       });
+      writeSessionClock(clockStorage(), clockKey, restored, Date.now());
+    } else {
+      setClock(createSessionClock(Date.now()));
+    }
+  }, [clockKey]);
+
+  // El reloj sólo alimenta el render: la duración real se deriva del ancla, así que
+  // aunque este intervalo se estrangule en segundo plano el tiempo no se pierde.
+  useEffect(() => {
+    if (!clock) return;
+    setNowTick(Date.now());
+    const id = window.setInterval(() => {
+      const nowMs = Date.now();
+      setNowTick(nowMs);
+      persistClock(nowMs);
     }, 1000);
-    return () => window.clearInterval(id);
-  }, [restLeft, soundEnabled]);
+    const onVisibility = () => {
+      const nowMs = Date.now();
+      setNowTick(nowMs);
+      if (document.visibilityState === 'hidden') persistClock(nowMs, { immediate: true });
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisibility);
+      persistClock(Date.now(), { immediate: true });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clock, clockKey]);
+
+  // Fin de descanso: se detecta por marca de tiempo, no restando segundos, para que
+  // el aviso suene (o se corrija al volver) aunque el navegador congele el intervalo.
+  useEffect(() => {
+    if (restEndsAtMs === null) return;
+    const leftMs = restEndsAtMs - Date.now();
+    if (leftMs > 0) {
+      const id = window.setTimeout(() => setNowTick(Date.now()), Math.min(leftMs, 1000));
+      return () => window.clearTimeout(id);
+    }
+    if (!restBeeped) {
+      setRestBeeped(true);
+      if (soundEnabled) playTimerBeep();
+    }
+    setRestEndsAtMs(null);
+    return undefined;
+  }, [restEndsAtMs, restBeeped, soundEnabled]);
+
+  function startRestTimer(seconds: number) {
+    if (seconds <= 0) return;
+    setRestEndsAtMs(Date.now() + seconds * 1000);
+    setRestBeeped(false);
+  }
+
+  function skipRest() {
+    setRestEndsAtMs(null);
+    setRestBeeped(false);
+  }
+
+  function extendRest(seconds: number) {
+    const nowMs = Date.now();
+    setRestEndsAtMs((prev) => (prev === null ? nowMs + seconds * 1000 : Math.max(prev, nowMs) + seconds * 1000));
+    setRestBeeped(false);
+  }
 
   // Cerrar popup de confirmación con Escape si no se está guardando
   useEffect(() => {
@@ -170,6 +283,20 @@ export default function WorkoutPlayer({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [confirmAction, saving]);
+
+  const elapsedSec = clock ? elapsedSessionSec(clock, nowTick || Date.now()) : 0;
+  const paused = clock ? isSessionClockPaused(clock) : false;
+  const restLeft =
+    restEndsAtMs === null ? 0 : Math.max(0, Math.ceil((restEndsAtMs - (nowTick || Date.now())) / 1000));
+  function togglePauseClock() {
+    const nowMs = Date.now();
+    const base = clock ?? createSessionClock(nowMs);
+    const next = isSessionClockPaused(base) ? resumeSessionClock(base, nowMs) : pauseSessionClock(base, nowMs);
+    clockRef.current = next;
+    setClock(next);
+    persistClock(nowMs, { immediate: true, next });
+    setNowTick(nowMs);
+  }
 
   function resolveItemImage(spec: RoutineExerciseItem | undefined): string | null {
     if (!spec) return null;
@@ -216,18 +343,19 @@ export default function WorkoutPlayer({
   }
 
   function toggleSet(exIdx: number, setIdx: number, restSeconds: number) {
+    // Al marcar la serie arranca el descanso; al desmarcar no se corta el que hubiera.
+    if (!logs[exIdx]?.sets[setIdx]?.completed) {
+      startRestTimer(restSeconds);
+      // Marcar serie convierte la sesión en algo que merece la pena recuperar
+      persistClock(Date.now(), { immediate: completedSetsRef.current === 0 });
+    }
     setLogs((prev) =>
       prev.map((ex, i) => {
         if (i !== exIdx) return ex;
-        const nextSets = ex.sets.map((s, j) => {
-          if (j !== setIdx) return s;
-          const nextCompleted = !s.completed;
-          if (nextCompleted) {
-            setRestLeft(restSeconds);
-          }
-          return { ...s, completed: nextCompleted };
-        });
-        return { ...ex, sets: nextSets };
+        return {
+          ...ex,
+          sets: ex.sets.map((s, j) => (j === setIdx ? { ...s, completed: !s.completed } : s)),
+        };
       })
     );
   }
@@ -302,6 +430,7 @@ export default function WorkoutPlayer({
   }
 
   const completedSets = logs.reduce((acc, ex) => acc + ex.sets.filter((s) => s.completed).length, 0);
+  completedSetsRef.current = completedSets;
   const completedExercises = logs.filter((ex) => ex.sets.some((s) => s.completed)).length;
   const totalSets = logs.reduce((acc, ex) => acc + ex.sets.length, 0);
   const progressPct = totalSets > 0 ? Math.round((completedSets / totalSets) * 100) : 0;
@@ -328,6 +457,10 @@ export default function WorkoutPlayer({
         sets: ex.sets.filter((s) => s.completed),
       }))
       .filter((ex) => ex.sets.length > 0);
+    // Medición honesta: lo que dice el cronómetro (con sus pausas descontadas) y,
+    // como red de seguridad, la suma de las series temporizadas completadas.
+    const measuredSec = clock ? elapsedSessionSec(clock, Date.now()) : 0;
+    const timedSetSec = sumTimedSetSec(completedLogs);
     try {
       const res = await fetch('/api/routines/complete', {
         method: 'POST',
@@ -335,7 +468,8 @@ export default function WorkoutPlayer({
         body: JSON.stringify({
           routineId,
           title: routineName,
-          durationSec: Math.max(300, elapsedSec),
+          durationSec: Math.max(measuredSec, timedSetSec),
+          startedAtMs: clock?.startedAtMs ?? null,
           rpe,
           notes,
           doneTogether,
@@ -344,6 +478,7 @@ export default function WorkoutPlayer({
         }),
       });
       if (res.ok) {
+        forgetSessionDraft();
         setConfirmAction(null);
         onCompleted();
       } else {
@@ -362,7 +497,21 @@ export default function WorkoutPlayer({
       setConfirmAction('discard');
       return;
     }
+    // Cierre trivial (nada hecho y casi sin tiempo): se descarta el ancla para que
+    // la próxima sesión de esta rutina no arrastre este rato perdido.
+    forgetSessionDraft();
     onClose();
+  }
+
+  function resetSessionClock() {
+    const nowMs = Date.now();
+    const fresh = createSessionClock(nowMs);
+    draftDisabledRef.current = false;
+    clockRef.current = fresh;
+    setClock(fresh);
+    persistClock(nowMs, { immediate: true, next: fresh });
+    setResumedInfo(null);
+    setNowTick(nowMs);
   }
 
   return (
@@ -400,14 +549,16 @@ export default function WorkoutPlayer({
             <div className="flex items-center gap-1.5">
               <div
                 className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 border text-xs sm:text-sm font-mono font-bold tabular-nums"
-                style={{ borderColor: 'var(--border-subtle)' }}
+                style={{ borderColor: 'var(--border-subtle)', opacity: paused ? 0.6 : 1 }}
+                title={paused ? 'Cronómetro en pausa: este tiempo no se cuenta' : 'Tiempo de la sesión'}
               >
-                <Clock className="h-3.5 w-3.5 text-primary" />
+                <Clock className={`h-3.5 w-3.5 ${paused ? 'text-amber-500' : 'text-primary'}`} />
                 {formatDurationClock(elapsedSec)}
+                {paused && <span className="font-sans text-[10px] uppercase tracking-wide">pausa</span>}
               </div>
               <button
                 type="button"
-                onClick={() => setPaused((p) => !p)}
+                onClick={togglePauseClock}
                 className="h-9 w-9 rounded-xl border hover:bg-sunken flex items-center justify-center"
                 style={{ borderColor: 'var(--border-subtle)' }}
                 title={paused ? 'Reanudar' : 'Pausar'}
@@ -461,14 +612,14 @@ export default function WorkoutPlayer({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setRestLeft((r) => r + 15)}
+                onClick={() => extendRest(15)}
                 className="px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 text-xs font-semibold hover:bg-cyan-500/30 min-h-[34px]"
               >
                 +15s
               </button>
               <button
                 type="button"
-                onClick={() => setRestLeft(0)}
+                onClick={skipRest}
                 className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-sunken text-ink text-xs font-semibold border border-line min-h-[34px]"
               >
                 <SkipForward className="h-3.5 w-3.5" /> Saltar
@@ -501,7 +652,49 @@ export default function WorkoutPlayer({
           </div>
         )}
 
-        {/* Lista de ejercicios y series */}
+        {resumedInfo && (
+          <div
+            className="mx-3 mt-3 sm:mx-5 sm:mt-4 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-[11px] sm:text-xs flex flex-wrap items-center gap-2 animate-fade-in"
+          >
+            <Clock className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span className="flex-1 min-w-[180px] text-amber-800 dark:text-amber-300">
+              Sesión retomada: empezó a las{' '}
+              <strong className="font-semibold">
+                {new Date(resumedInfo.startedAtMs).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+              </strong>
+              . El cronómetro sigue contando aunque el navegador congele la pestaña o apagues la pantalla.
+              {resumedInfo.deductedSec > 0
+                ? ` Se han descontado ${formatDurationClock(resumedInfo.deductedSec)} con la app cerrada.`
+                : ''}
+            </span>
+            {resumedInfo.deductedSec > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (!clock) return;
+                  const nowMs = Date.now();
+                  const next = keepAwayTime(clock, nowMs);
+                  clockRef.current = next;
+                  setClock(next);
+                  persistClock(nowMs, { immediate: true, next });
+                  setNowTick(nowMs);
+                  setResumedInfo((prev) => (prev ? { ...prev, deductedSec: 0 } : prev));
+                }}
+                className="rounded-lg border border-amber-500/40 px-2 py-1 text-[11px] font-semibold text-amber-800 dark:text-amber-300 hover:bg-amber-500/15 min-h-[32px]"
+              >
+                Contar igualmente
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={resetSessionClock}
+              className="rounded-lg border border-amber-500/40 px-2 py-1 text-[11px] font-semibold text-amber-800 dark:text-amber-300 hover:bg-amber-500/15 min-h-[32px]"
+            >
+              Empezar de cero
+            </button>
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto overscroll-contain p-3 sm:p-5 space-y-4">
           {logs.map((ex, exIdx) => {
             const spec = items[exIdx];
@@ -998,12 +1191,13 @@ export default function WorkoutPlayer({
                 <button
                   type="button"
                   onClick={() => {
+                    forgetSessionDraft();
                     setConfirmAction(null);
                     onClose();
                   }}
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-rose-600 hover:bg-rose-700 px-4 py-2.5 text-sm font-bold text-white transition-colors min-h-[44px]"
                 >
-                  Salir sin guardar
+                  Descartar sesión
                 </button>
               )}
             </div>

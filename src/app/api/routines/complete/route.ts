@@ -4,6 +4,7 @@ import { withAccount } from '@/lib/account-context';
 import { createActivity, getAthleteProfile, listAllExercises, listRoutines, updateRoutine } from '@/lib/db';
 import { calculateStrengthSetVolumeKg, resolveIsPerDumbbell } from '@/lib/home-workouts';
 import { estimateActivityTSS } from '@/lib/metrics';
+import { MAX_TRACKED_SESSION_SEC, resolveSessionDurationSec, sumTimedSetSec } from '@/lib/session-clock';
 import { sanitizeImageList } from '@/lib/uploads';
 import type { StrengthSetLog } from '@/types';
 
@@ -12,7 +13,6 @@ export async function POST(req: NextRequest) {
     try {
       const body = await req.json();
       const title = String(body.title || 'Rutina de Fuerza en Casa').trim();
-      const durationSec = Math.max(120, Math.round(Number(body.durationSec || 1800)));
       const rpe = Math.min(10, Math.max(1, Number(body.rpe || 7)));
       const rawLogs: StrengthSetLog[] = Array.isArray(body.strengthLogs) ? body.strengthLogs : [];
 
@@ -33,6 +33,14 @@ export async function POST(req: NextRequest) {
         })
         .filter((ex) => ex.sets.length > 0);
 
+      // La duración es la medida por el cronómetro de la sesión; sólo si no llega
+      // una medición se usa el trabajo temporalizado de las series. No se rellena
+      // con una duración supuesta (antes: 30 min por defecto y 2 min de mínimos).
+      const durationSec = resolveSessionDurationSec({
+        reportedSec: body.durationSec,
+        timedSetSec: sumTimedSetSec(strengthLogs),
+      });
+
       const profile = getAthleteProfile();
       const tss = estimateActivityTSS(
         {
@@ -44,7 +52,18 @@ export async function POST(req: NextRequest) {
         profile
       );
 
-      const nowIso = new Date().toISOString();
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      // La sesión empieza cuando se abrió el reproductor, no cuando se guardó:
+      // así la duración y el día de la calendarización coinciden con lo hecho.
+      const reportedStartMs = Number(body.startedAtMs);
+      const startedAtIso =
+        Number.isFinite(reportedStartMs) &&
+        reportedStartMs > 0 &&
+        reportedStartMs <= nowMs &&
+        nowMs - reportedStartMs <= MAX_TRACKED_SESSION_SEC * 1000
+          ? new Date(reportedStartMs).toISOString()
+          : nowIso;
       const routineId = body.routineId ? String(body.routineId) : null;
       const activity = createActivity({
         id: `act_home_${crypto.randomUUID().slice(0, 10)}`,
@@ -56,7 +75,7 @@ export async function POST(req: NextRequest) {
         description: body.notes
           ? String(body.notes)
           : `Sesión en casa completada (${strengthLogs.length} ${strengthLogs.length === 1 ? 'ejercicio' : 'ejercicios'} · ${Math.round(totalVolumeKg)} kg movidos).`,
-        startedAt: nowIso,
+        startedAt: startedAtIso,
         durationSec,
         movingTimeSec: durationSec,
         distanceMeters: 0,
