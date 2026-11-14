@@ -80,6 +80,25 @@ import {
   SINGLE_DUMBBELL_EXERCISE_IDS,
 } from '../src/lib/home-workouts';
 import { countPrefilledExercises, planSetRows } from '../src/lib/workout-prefill';
+import {
+  MAX_TRACKED_SESSION_SEC,
+  OFFAPP_GRACE_SEC,
+  adoptResumedClock,
+  clearSessionClock,
+  createSessionClock,
+  elapsedSessionSec,
+  isSessionClockPaused,
+  keepAwayTime,
+  parseSessionClock,
+  pauseSessionClock,
+  readSessionClock,
+  resolveSessionDurationSec,
+  resumeSessionClock,
+  serializeSessionClock,
+  sessionClockStorageKey,
+  sumTimedSetSec,
+  writeSessionClock,
+} from '../src/lib/session-clock';
 import type { RoutineExerciseItem } from '../src/types';
 import {
   backfillMismatchedSubSports,
@@ -4373,4 +4392,250 @@ test('Repetir entreno: precarga repeticiones y peso de la última sesión de esa
   deleteRoutine(rtA.id);
   deleteRoutine(rtB.id);
   deleteRoutine(rtC.id);
+});
+
+test('El cronómetro de la sesión mide tiempo real y no ticks de intervalo', () => {
+  const T0 = 1_780_000_000_000;
+  const at = (sec: number) => T0 + sec * 1000;
+  const mkStorage = () => {
+    const map = new Map<string, string>();
+    return {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => void map.set(k, v),
+      removeItem: (k: string) => void map.delete(k),
+      map,
+    };
+  };
+
+  // 1) Una hora con la pantalla apagada: el navegador apenas dispara timers,
+  //    pero la duración se deriva del reloj del sistema, no de cuántas veces
+  //    se haya ejecutado el intervalo (el bug que acortaba las sesiones).
+  const clock = createSessionClock(at(0));
+  assert.equal(elapsedSessionSec(clock, at(0)), 0);
+  assert.equal(elapsedSessionSec(clock, at(3600)), 3600);
+
+  // 1b) El caso denunciado: una hora larga de entreno con el móvil en el bolsillo.
+  //     Con el antiguo contador, el navegador estrangulado sólo había sumado 4 ticks
+  //     y la sesión se guardaba como 4 min (5 min por el suelo de Math.max(300, ...)).
+  let throttledTicks = 0;
+  for (let i = 0; i < 4; i++) throttledTicks += 1;
+  assert.equal(throttledTicks, 4, 'así de pocas veces llega a ticar el intervalo en segundo plano');
+  assert.equal(elapsedSessionSec(clock, at(3900)), 3900);
+  assert.equal(resolveSessionDurationSec({ reportedSec: elapsedSessionSec(clock, at(3900)) }), 3900);
+
+  // 2) La pausa manual sí se descuenta
+  const paused = pauseSessionClock(clock, at(600));
+  assert.equal(isSessionClockPaused(paused), true);
+  assert.equal(elapsedSessionSec(paused, at(1200)), 600, 'los 10 min en pausa no cuentan');
+  const resumed = resumeSessionClock(paused, at(1200));
+  assert.equal(isSessionClockPaused(resumed), false);
+  assert.equal(elapsedSessionSec(resumed, at(1500)), 900);
+  assert.equal(elapsedSessionSec(pauseSessionClock(resumed, at(1500)), at(1500)), 900, 'pausar dos veces no resta de más');
+
+  // 3) La sesión sobrevive a un cierre/recarga de la pestaña
+  const storage = mkStorage();
+  const key = sessionClockStorageKey('routine_push_a_day1');
+  const running = { ...clock, savedAtMs: at(1200) }; // 20 min hechos y guardados
+  writeSessionClock(storage, key, running, at(1200));
+  const backSoon = readSessionClock(storage, key, at(1500)); // vuelve a los 5 min
+  assert.ok(backSoon);
+  assert.equal(elapsedSessionSec(backSoon!, at(1500)), 1500, 'un refresco rápido no pierde tiempo');
+  assert.equal(backSoon!.awayDeductedMs, 0);
+
+  // 4) Media hora con la app cerrada: sólo cuenta la tolerancia
+  const backLong = readSessionClock(storage, key, at(3000));
+  assert.ok(backLong);
+  assert.equal(backLong!.awayDeductedMs, (1800 - OFFAPP_GRACE_SEC) * 1000);
+  assert.equal(elapsedSessionSec(backLong!, at(3000)), 1200 + OFFAPP_GRACE_SEC);
+  const undo = keepAwayTime(backLong!, at(3000));
+  assert.equal(elapsedSessionSec(undo, at(3000)), 3000, '«Contar igualmente» recupera el tiempo descontado');
+  assert.equal(keepAwayTime(undo, at(3000)).awayDeductedMs, 0);
+
+  // 5) Si se cerró en pausa, se sigue en pausa
+  const pausedKey = sessionClockStorageKey('routine_pausada');
+  writeSessionClock(storage, pausedKey, pauseSessionClock(clock, at(600)), at(600));
+  const backPaused = readSessionClock(storage, pausedKey, at(3000));
+  assert.ok(backPaused && isSessionClockPaused(backPaused));
+  assert.equal(elapsedSessionSec(backPaused!, at(3000)), 600);
+  assert.equal(adoptResumedClock(backPaused!, at(3000)).awayDeductedMs, 0);
+
+  // 6) Datos corruptos, futuros o demasiado viejos no se recuperan
+  assert.equal(parseSessionClock('esto-no-es-json', at(0)), null);
+  assert.equal(parseSessionClock(null, at(0)), null);
+  assert.equal(parseSessionClock(JSON.stringify({ startedAtMs: at(100) }), at(0)), null, 'un ancla del futuro se ignora');
+  const staleKey = sessionClockStorageKey('routine_vieja');
+  storage.setItem(
+    staleKey,
+    serializeSessionClock({ ...clock, savedAtMs: at(0) - 7 * 3600 * 1000, startedAtMs: at(0) - 7 * 3600 * 1000 }, at(0) - 7 * 3600 * 1000)
+  );
+  assert.equal(readSessionClock(storage, staleKey, at(0)), null, 'una sesión de hace un día no se retoma');
+  assert.equal(readSessionClock(null, key, at(1500)), null, 'sin localStorage no hay error');
+  clearSessionClock(storage, key);
+  assert.equal(readSessionClock(storage, key, at(1500)), null);
+
+  // 7) La duración final: lo medido manda, sin mínimos ni rellenos inventados
+  assert.equal(resolveSessionDurationSec({ reportedSec: 3900 }), 3900, '65 min reales se guardan como 65 min');
+  assert.equal(resolveSessionDurationSec({ reportedSec: 25 }), 60, 'el suelo es 1 min, no 5');
+  assert.equal(resolveSessionDurationSec({}), 60, 'sin medición no se rellena con 30 min');
+  assert.equal(resolveSessionDurationSec({ reportedSec: NaN }), 60);
+  assert.equal(resolveSessionDurationSec({ reportedSec: 0, timedSetSec: 2700 }), 2700, 'red de seguridad: series temporizadas');
+  assert.equal(resolveSessionDurationSec({ reportedSec: 40000 }), MAX_TRACKED_SESSION_SEC, 'techo de 8 h');
+  assert.equal(
+    sumTimedSetSec([
+      { sets: [{ completed: true, durationSec: 45 }, { completed: false, durationSec: 45 }] },
+      { sets: [{ completed: true, durationSec: 60 }, { completed: true }] },
+    ]),
+    105
+  );
+  assert.equal(sumTimedSetSec(undefined), 0);
+
+  // 8) Regresión: el reproductor ya no cuenta ticks ni fabrica duraciones al guardar
+  const playerSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'WorkoutPlayer.tsx'), 'utf8');
+  assert.doesNotMatch(playerSrc, /setElapsedSec\(\s*\(prev\)\s*=>\s*prev \+ 1\s*\)/);
+  assert.doesNotMatch(playerSrc, /durationSec:\s*Math\.max\(300,/);
+  assert.match(playerSrc, /readSessionClock|elapsedSessionSec/, 'el reproductor usa el ancla de tiempo real');
+});
+
+test('La sesión de fuerza guarda la duración medida y su hora de inicio real', async () => {
+  const T0 = Date.now();
+  const startedAtMs = T0 - 3900 * 1000; // sesión de 65 min empezada hace una hora y pico
+  const res = await postCompleteRoutineRoute(
+    new NextRequest('http://localhost:3000/api/routines/complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Sesión larga contada a mano',
+        durationSec: 3900,
+        startedAtMs,
+        rpe: 6,
+        strengthLogs: [
+          {
+            exerciseId: 'ex_plank',
+            exerciseName: 'Plancha',
+            equipmentUsed: [],
+            sets: [
+              { reps: 1, weightKg: 0, completed: true, durationSec: 60 },
+              { reps: 1, weightKg: 0, completed: true, durationSec: 60 },
+            ],
+          },
+        ],
+      }),
+    })
+  );
+  assert.equal(res.status, 201);
+  const { activity } = (await res.json()) as {
+    activity: { durationSec: number; movingTimeSec: number; startedAt: string; calories: number; tss: number };
+  };
+  assert.equal(activity.durationSec, 3900, 'se respeta el tiempo real medido');
+  assert.equal(activity.movingTimeSec, 3900);
+  assert.equal(Math.abs(Date.parse(activity.startedAt) - startedAtMs) < 2000, true, 'la sesión empieza al abrir el reproductor');
+  assert.equal(activity.calories, Math.round(65 * 6.8));
+
+  // Sin medición (duración ausente) ya no se rellena con 30 minutos: manda el trabajo temporizado
+  const noClock = await postCompleteRoutineRoute(
+    new NextRequest('http://localhost:3000/api/routines/complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Sesión sin cronómetro',
+        rpe: 6,
+        strengthLogs: [
+          {
+            exerciseId: 'ex_plank',
+            exerciseName: 'Plancha',
+            equipmentUsed: [],
+            sets: [{ reps: 1, weightKg: 0, completed: true, durationSec: 90 }],
+          },
+        ],
+      }),
+    })
+  );
+  const noClockBody = (await noClock.json()) as { activity: { durationSec: number } };
+  assert.equal(noClockBody.activity.durationSec, 90);
+
+  // Un ancla absurda (futura o de hace un día) no se cuela en el historial
+  const bogus = await postCompleteRoutineRoute(
+    new NextRequest('http://localhost:3000/api/routines/complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Sesión con ancla inválida',
+        durationSec: 120,
+        startedAtMs: Date.now() + 3600 * 1000,
+        rpe: 6,
+        strengthLogs: [],
+      }),
+    })
+  );
+  const bogusBody = (await bogus.json()) as { activity: { startedAt: string; durationSec: number } };
+  assert.ok(Date.parse(bogusBody.activity.startedAt) <= Date.now() + 2000);
+  assert.equal(bogusBody.activity.durationSec, 120);
+});
+
+test('La duración de una sesión guardada se puede corregir (y arrastra TSS, calorías y tiempo en movimiento)', async () => {
+  const created = await postCompleteRoutineRoute(
+    new NextRequest('http://localhost:3000/api/routines/complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Sesión contada de menos',
+        durationSec: 1500,
+        rpe: 7,
+        strengthLogs: [
+          {
+            exerciseId: 'ex_db_bench_press',
+            exerciseName: 'Press en banco con mancuernas',
+            equipmentUsed: ['dumbbells'],
+            sets: [
+              { reps: 10, weightKg: 20, completed: true },
+              { reps: 10, weightKg: 20, completed: true },
+            ],
+          },
+        ],
+      }),
+    })
+  );
+  const { activity } = (await created.json()) as {
+    activity: { id: string; durationSec: number; movingTimeSec: number; calories: number; tss: number };
+  };
+  assert.equal(activity.durationSec, 1500);
+  const tssBefore = activity.tss;
+  assert.ok(tssBefore > 0);
+
+  const patchDur = (payload: Record<string, unknown>) =>
+    patchActivityRoute(
+      new NextRequest(`http://localhost:3000/api/activities/${activity.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      }),
+      { params: Promise.resolve({ id: activity.id }) }
+    );
+
+  // El usuario corrige 25 min -> 65 min desde el editor de la sesión
+  const fixedRes = await patchDur({ durationSec: 3900 });
+  assert.equal(fixedRes.status, 200);
+  const fixed = (await fixedRes.json()) as { activity: typeof activity };
+  assert.equal(fixed.activity.durationSec, 3900);
+  assert.equal(fixed.activity.movingTimeSec, 3900, 'en las sesiones de Bilifit el tiempo en movimiento va a la par');
+  assert.equal(fixed.activity.calories, Math.round(65 * 6.8));
+  assert.ok(fixed.activity.tss > tssBefore, 'la carga física (TSS) se recalcula con los minutos reales');
+
+  // Un PATCH sin duración no la toca; los valores imposibles se recortan o se ignoran
+  const renamed = (await (await patchDur({ title: 'Sesión corregida' })).json()) as { activity: typeof activity };
+  assert.equal(renamed.activity.durationSec, 3900);
+  const junk = (await (await patchDur({ durationSec: 'no-numero' })).json()) as { activity: typeof activity };
+  assert.equal(junk.activity.durationSec, 3900);
+  const huge = (await (await patchDur({ durationSec: 999_999 })).json()) as { activity: typeof activity };
+  assert.equal(huge.activity.durationSec, MAX_TRACKED_SESSION_SEC);
+
+  deleteActivity(activity.id);
+});
+
+test('Las fichas de ejercicio mantienen su fondo sólido al resaltarse (opacidad coherente)', () => {
+  const src = fs.readFileSync(path.join(process.cwd(), 'src', 'components', 'RoutineItemEditor.tsx'), 'utf8');
+  // El highlight de "añadido" debe superponerse al color de tarjeta, no reemplazarlo
+  assert.doesNotMatch(src, /justAdded \? undefined : 'var\(--bg-card-elevated\)'/);
+  assert.match(src, /background: justAdded\s*\?\s*'linear-gradient/);
+  assert.doesNotMatch(src, /justAdded \? 'border-emerald-500\/60 bg-emerald-500\/10'/);
 });

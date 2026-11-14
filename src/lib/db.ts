@@ -29,6 +29,7 @@ import {
   resolveIsPerDumbbell,
 } from '@/lib/home-workouts';
 import { defaultSubSportForSport, estimateActivityTSS, isMismatchedSubSport } from '@/lib/metrics';
+import { MAX_TRACKED_SESSION_SEC } from '@/lib/session-clock';
 import { isMyWhooshContext, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
 import { decodePolyline } from '@/lib/polyline';
 import { sanitizeImageList, sanitizeImageUrl } from '@/lib/uploads';
@@ -1427,6 +1428,8 @@ export function updateActivity(
     excludePausedTime: boolean;
     images: string[];
     strengthLogs: StrengthSetLog[];
+    /** Duración total en segundos; corrige también el tiempo en movimiento. */
+    durationSec: number;
   }>
 ): ActivityDetail | null {
   const existing = getActivityById(id);
@@ -1440,6 +1443,26 @@ export function updateActivity(
   const nextExcludePaused =
     patch.excludePausedTime !== undefined ? Boolean(patch.excludePausedTime) : Boolean(existing.excludePausedTime);
   const nextImages = patch.images !== undefined ? sanitizeImageList(patch.images) : existing.images ?? [];
+
+  // Corregir la duración arrastra al tiempo en movimiento (que en las sesiones de
+  // Bilifit es el mismo valor) y a las calorías/TSS, derivados de los minutos.
+  const durationRaw = Number(patch.durationSec);
+  const durationChanged = Number.isFinite(durationRaw) && durationRaw > 0;
+  const nextDurationSec = durationChanged
+    ? Math.min(MAX_TRACKED_SESSION_SEC, Math.max(60, Math.round(durationRaw)))
+    : existing.durationSec;
+  const nextMovingTimeSec = durationChanged
+    ? existing.movingTimeSec === existing.durationSec || existing.movingTimeSec <= 0
+      ? nextDurationSec
+      : Math.min(nextDurationSec, existing.movingTimeSec)
+    : existing.movingTimeSec;
+  const nextCalories =
+    durationChanged && (existing.source === 'bilifit_home' || existing.source === 'manual')
+      ? Math.round(
+          (nextDurationSec / 60) *
+            (existing.source === 'bilifit_home' ? 6.8 : nextSport === 'strength' ? 6.5 : 10)
+        )
+      : existing.calories;
 
   let nextStrengthLogs = existing.strengthLogs ?? [];
   let nextTotalVolumeKg = existing.totalVolumeKg ?? null;
@@ -1507,12 +1530,14 @@ export function updateActivity(
           : existing.subSport ?? null;
 
   const nextTss =
-    sportChanged || (patch.rpe !== undefined && patch.rpe !== existing.rpe && !existing.avgHr && !existing.avgWatts)
+    sportChanged ||
+    durationChanged ||
+    (patch.rpe !== undefined && patch.rpe !== existing.rpe && !existing.avgHr && !existing.avgWatts)
       ? estimateActivityTSS(
           {
             sport: nextSport,
-            durationSec: existing.durationSec,
-            movingTimeSec: existing.movingTimeSec,
+            durationSec: nextDurationSec,
+            movingTimeSec: nextMovingTimeSec,
             avgWatts: existing.avgWatts ?? null,
             normalizedPower: existing.normalizedPower ?? null,
             avgHr: existing.avgHr ?? null,
@@ -1525,7 +1550,7 @@ export function updateActivity(
 
   db.prepare(`
       UPDATE activities
-      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?, tss = ?, done_together = ?, exclude_paused_time = ?, images_json = ?, strength_logs_json = ?, total_volume_kg = ?
+      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?, tss = ?, done_together = ?, exclude_paused_time = ?, images_json = ?, strength_logs_json = ?, total_volume_kg = ?, duration_sec = ?, moving_time_sec = ?, calories = ?
       WHERE id = ?
     `).run(
     patch.title ?? existing.title,
@@ -1541,6 +1566,9 @@ export function updateActivity(
     JSON.stringify(nextImages),
     JSON.stringify(nextStrengthLogs),
     nextTotalVolumeKg,
+    nextDurationSec,
+    nextMovingTimeSec,
+    nextCalories,
     id
   );
 

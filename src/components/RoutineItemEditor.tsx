@@ -36,10 +36,15 @@ export function RoutineItemEditor({
   return (
     <div
       className={`rounded-xl border p-3 space-y-2 transition-colors ${
-        justAdded ? 'border-emerald-500/60 bg-emerald-500/10' : ''
+        justAdded ? 'border-emerald-500/60' : ''
       }`}
       style={{
-        background: justAdded ? undefined : 'var(--bg-card-elevated)',
+        // El tinte verde se superpone al fondo del bloque en vez de sustituirlo: si no,
+        // durante el check de "añadido" la ficha queda translúcida y su opacidad no
+        // coincide con la del resto de tarjetas de la app.
+        background: justAdded
+          ? 'linear-gradient(rgb(16 185 129 / 0.12), rgb(16 185 129 / 0.12)), var(--bg-card-elevated)'
+          : 'var(--bg-card-elevated)',
         borderColor: justAdded ? undefined : 'var(--border-subtle)',
       }}
     >
