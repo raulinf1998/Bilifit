@@ -10,6 +10,7 @@ import {
   Flame,
   Image as ImageIcon,
   ListChecks,
+  Loader2,
   Pencil,
   Play,
   Plus,
@@ -40,6 +41,7 @@ import type {
   Routine,
   RoutineExerciseItem,
   RoutineGoal,
+  StrengthSessionPrefill,
 } from '@/types';
 
 type CasaTab = 'generator' | 'equipment' | 'routines' | 'builder';
@@ -174,7 +176,37 @@ export default function HomeWorkoutsPage() {
     routineId?: string;
     name: string;
     items: RoutineExerciseItem[];
+    /** Última sesión del mismo tipo: de aquí se precargan repeticiones y peso. */
+    previousSession: StrengthSessionPrefill | null;
   } | null>(null);
+  // Mientras se consulta la sesión anterior se bloquea el botón de inicio
+  const [startingWorkoutKey, setStartingWorkoutKey] = useState<string | null>(null);
+
+  // El reproductor lee la precarga solo al montarse, así que se trae antes de abrirlo.
+  const startWorkout = useCallback(
+    async (
+      key: string,
+      workout: { routineId?: string; name: string; items: RoutineExerciseItem[] }
+    ) => {
+      setStartingWorkoutKey(key);
+      let previousSession: StrengthSessionPrefill | null = null;
+      try {
+        const q = new URLSearchParams({ title: workout.name });
+        if (workout.routineId) q.set('routineId', workout.routineId);
+        const res = await fetch(`/api/routines/last-session?${q.toString()}`);
+        if (res.ok) {
+          const data = (await res.json()) as { prefill?: StrengthSessionPrefill | null };
+          previousSession = data.prefill ?? null;
+        }
+      } catch {
+        previousSession = null; // sin precarga: se usan los valores de la rutina
+      } finally {
+        setStartingWorkoutKey(null);
+      }
+      setActiveWorkout({ ...workout, previousSession });
+    },
+    []
+  );
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -759,14 +791,16 @@ export default function HomeWorkoutsPage() {
                     <button
                       type="button"
                       onClick={() =>
-                        setActiveWorkout({
+                        startWorkout('generated', {
                           name: generatedPlan.name,
                           items: generatedPlan.items,
                         })
                       }
-                      className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 px-4 py-2 text-xs font-bold text-white min-h-[40px]"
+                      disabled={startingWorkoutKey === 'generated'}
+                      className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 px-4 py-2 text-xs font-bold text-white min-h-[40px]"
                     >
-                      <Play className="h-3.5 w-3.5" /> Empezar Ahora
+                      <Play className="h-3.5 w-3.5" />
+                      {startingWorkoutKey === 'generated' ? 'Cargando última sesión...' : 'Empezar Ahora'}
                     </button>
                   </div>
                 </div>
@@ -1172,19 +1206,36 @@ export default function HomeWorkoutsPage() {
                     <Trash2 className="h-3.5 w-3.5" /> Eliminar
                   </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setActiveWorkout({
-                      routineId: rt.id,
-                      name: rt.name,
-                      items: rt.items,
-                    })
-                  }
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white min-h-[44px]"
-                >
-                  <Play className="h-3.5 w-3.5" /> Empezar Entreno
-                </button>
+                <div className="flex flex-col items-stretch sm:items-end gap-1">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      startWorkout(rt.id, {
+                        routineId: rt.id,
+                        name: rt.name,
+                        items: rt.items,
+                      })
+                    }
+                    disabled={startingWorkoutKey === rt.id}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 px-4 py-2.5 text-xs font-bold text-white min-h-[44px]"
+                  >
+                    {startingWorkoutKey === rt.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Play className="h-3.5 w-3.5" />
+                    )}
+                    {startingWorkoutKey === rt.id
+                      ? 'Cargando...'
+                      : rt.timesCompleted > 0
+                        ? 'Repetir Entreno'
+                        : 'Empezar Entreno'}
+                  </button>
+                  {rt.timesCompleted > 0 && (
+                    <span className="text-[10px] sm:text-right" style={{ color: 'var(--text-muted)' }}>
+                      Se cargarán las repeticiones y el peso de tu última sesión
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -1714,6 +1765,7 @@ export default function HomeWorkoutsPage() {
           exerciseImages={exerciseImagesMap}
           exercisePerDumbbell={exercisePerDumbbellMap}
           lastExerciseLogs={lastExerciseLogs}
+          previousSession={activeWorkout.previousSession}
           onExerciseImageUpdated={(exerciseId, nextUrl) => {
             setExercises((prev) =>
               prev.map((e) => (e.id === exerciseId ? { ...e, imageUrl: nextUrl } : e))

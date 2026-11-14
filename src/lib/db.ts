@@ -58,6 +58,7 @@ import {
 import type {
   Activity,
   ActivityDetail,
+  StrengthSessionPrefill,
   ActivityExtras,
   ActivityLap,
   ActivityPoint,
@@ -498,6 +499,7 @@ function initSchema(db: Database.Database) {
       points_json TEXT,
       strength_logs_json TEXT,
       total_volume_kg REAL,
+      routine_id TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -628,6 +630,8 @@ function initSchema(db: Database.Database) {
   ensureColumn(db, 'activities', 'exclude_paused_time', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'activities', 'trimmed', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'activities', 'images_json', 'TEXT');
+  ensureColumn(db, 'activities', 'routine_id', 'TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_activities_routine ON activities(routine_id, started_at DESC)');
   ensureColumn(db, 'custom_exercises', 'image_url', 'TEXT');
   ensureColumn(db, 'custom_exercises', 'per_dumbbell', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'routines', 'cover_image_url', 'TEXT');
@@ -1000,6 +1004,7 @@ function mapActivityRow(row: Record<string, unknown>): Activity {
     startLon: row.start_lon != null ? Number(row.start_lon) : null,
     totalVolumeKg: row.total_volume_kg != null ? Number(row.total_volume_kg) : null,
     doneTogether: Boolean(row.done_together),
+    routineId: row.routine_id ? String(row.routine_id) : null,
     excludePausedTime: Boolean(row.exclude_paused_time),
     trimmed: Boolean(row.trimmed),
     images,
@@ -1138,8 +1143,8 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
       duration_sec, moving_time_sec, distance_meters, elevation_gain, elevation_loss,
       avg_speed_ms, max_speed_ms, avg_hr, max_hr, avg_watts, normalized_power, max_watts,
       avg_cadence, calories, tss, rpe, gear_id, world_name, polyline, start_lat, start_lon,
-      points_json, strength_logs_json, total_volume_kg, done_together, exclude_paused_time, images_json, laps_json, extras_json, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      points_json, strength_logs_json, total_volume_kg, done_together, exclude_paused_time, images_json, laps_json, extras_json, routine_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.id,
     input.externalId ?? null,
@@ -1178,6 +1183,7 @@ export function createActivity(input: Omit<ActivityDetail, 'gearName' | 'powerCu
     JSON.stringify(sanitizeImageList(input.images ?? [])),
     JSON.stringify(input.laps ?? []),
     JSON.stringify(extras),
+    input.routineId ?? null,
     input.createdAt
   );
 
@@ -2075,6 +2081,75 @@ export interface LastExerciseLogSummary {
   startedAt: string;
   perDumbbell?: boolean;
   sets: Array<{ reps: number; weightKg: number; durationSec?: number }>;
+}
+
+/**
+ * Series de la última sesión de un mismo tipo de entrenamiento (la misma rutina).
+ *
+ * Se usa para precargar repeticiones y peso al repetir un entreno: solo entran
+ * los ejercicios que llegaron a completarse aquella vez; el resto mantiene los
+ * valores por defecto de la rutina. Si no hay ninguna sesión vinculada por id
+ * (planes generados que no se guardaron como rutina, o sesiones antiguas) se
+ * prueba por título exacto entre las sesiones registradas desde Bilifit Casa.
+ */
+export function getLastStrengthSessionPrefill(opts: {
+  routineId?: string | null;
+  title?: string | null;
+}): StrengthSessionPrefill | null {
+  const db = getDb();
+  const base = `
+    SELECT id, started_at, title, strength_logs_json
+    FROM activities
+    WHERE sport = 'strength' AND strength_logs_json IS NOT NULL`;
+
+  type Row = { id: string; started_at: string; title: string; strength_logs_json: string };
+  let row: Row | undefined;
+  if (opts.routineId) {
+    row = db
+      .prepare(`${base} AND routine_id = ? ORDER BY started_at DESC LIMIT 1`)
+      .get(opts.routineId) as Row | undefined;
+  }
+  const title = opts.title?.trim();
+  if (!row && title) {
+    row = db
+      .prepare(`${base} AND source = 'bilifit_home' AND title = ? ORDER BY started_at DESC LIMIT 1`)
+      .get(title) as Row | undefined;
+  }
+  if (!row) return null;
+
+  let logs: StrengthSetLog[] = [];
+  try {
+    logs = JSON.parse(row.strength_logs_json) as StrengthSetLog[];
+  } catch {
+    return null;
+  }
+
+  const exLookup = new Map(listAllExercises().map((ex) => [ex.id, ex]));
+  const result: StrengthSessionPrefill['logs'] = {};
+  for (const ex of logs) {
+    if (!ex?.exerciseId || result[ex.exerciseId]) continue;
+    const sets = (ex.sets ?? [])
+      .filter((s) => s && s.completed !== false)
+      .map((s) => ({
+        reps: Number(s.reps) || 0,
+        weightKg: Number(s.weightKg) || 0,
+        ...(typeof s.durationSec === 'number' && s.durationSec > 0 ? { durationSec: s.durationSec } : {}),
+      }));
+    if (sets.length === 0) continue;
+    const perDumbbell = resolveIsPerDumbbell(ex, exLookup.get(ex.exerciseId)?.perDumbbell);
+    result[ex.exerciseId] = {
+      ...(perDumbbell ? { perDumbbell: true } : {}),
+      sets,
+    };
+  }
+
+  if (Object.keys(result).length === 0) return null;
+  return {
+    activityId: String(row.id),
+    startedAt: String(row.started_at),
+    title: String(row.title),
+    logs: result,
+  };
 }
 
 export function getLastExerciseLogs(): Record<string, LastExerciseLogSummary> {

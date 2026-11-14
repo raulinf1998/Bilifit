@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
       );
 
       const nowIso = new Date().toISOString();
+      const routineId = body.routineId ? String(body.routineId) : null;
       const activity = createActivity({
         id: `act_home_${crypto.randomUUID().slice(0, 10)}`,
         externalId: null,
@@ -79,14 +80,17 @@ export async function POST(req: NextRequest) {
         startLon: null,
         points: [],
         strengthLogs,
+        // Vincula la sesión con su rutina: es lo que permite precargar los valores
+        // de la última sesión del mismo tipo al repetir el entreno.
+        routineId,
         totalVolumeKg: Math.round(totalVolumeKg),
         doneTogether: Boolean(body.doneTogether),
         images: sanitizeImageList(body.images),
         createdAt: nowIso,
       });
 
-      if (body.routineId) {
-        const rt = listRoutines().find((r) => r.id === body.routineId);
+      if (routineId) {
+        const rt = listRoutines().find((r) => r.id === routineId);
         if (rt) {
           updateRoutine(rt.id, {
             timesCompleted: rt.timesCompleted + 1,
