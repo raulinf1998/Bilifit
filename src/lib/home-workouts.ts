@@ -1,9 +1,22 @@
 import type {
   Exercise,
   HomeEquipment,
+  MuscleGroup,
   RoutineExerciseItem,
   RoutineGoal,
 } from '@/types';
+
+/** Etiquetas en español de cada grupo muscular (biblioteca, constructor y editor). */
+export const MUSCLE_LABELS: Record<MuscleGroup, string> = {
+  piernas: 'Piernas y Glúteo',
+  pecho: 'Pecho',
+  espalda: 'Espalda',
+  hombros: 'Hombros',
+  brazos: 'Brazos',
+  core: 'Core / Abdomen',
+  full_body: 'Full Body',
+  movilidad: 'Movilidad',
+};
 
 export const DEFAULT_HOME_EQUIPMENT: HomeEquipment[] = [
   {
@@ -174,6 +187,37 @@ export function calculateStrengthSetVolumeKg(
 
 export function defaultExerciseImageUrl(id: string): string {
   return `/exercises/${id}.jpg`;
+}
+
+/**
+ * Construye la línea de rutina a partir de un ejercicio de la biblioteca.
+ * Se comparte entre el constructor manual y el editor de rutinas para que
+ * ambos añadan los mismos datos (series, reps, peso sugerido, ×2, imagen...).
+ */
+export function buildRoutineItemFromExercise(
+  exercise: Exercise,
+  opts?: { defaultWeightKg?: number }
+): RoutineExerciseItem {
+  const perDumbbell = resolveIsPerDumbbell({
+    exerciseId: exercise.id,
+    perDumbbell: exercise.perDumbbell,
+  });
+  const usesDumbbells = exercise.requiredEquipment.includes('dumbbells');
+  const weightKg = opts?.defaultWeightKg ?? (usesDumbbells ? 10 : undefined);
+
+  return {
+    exerciseId: exercise.id,
+    exerciseName: exercise.name,
+    muscleGroup: exercise.muscleGroup,
+    requiredEquipment: exercise.requiredEquipment,
+    sets: exercise.defaultSets,
+    reps: exercise.defaultReps,
+    ...(typeof weightKg === 'number' && weightKg > 0 ? { suggestedWeightKg: weightKg } : {}),
+    perDumbbell,
+    restSeconds: exercise.restSeconds,
+    notes: exercise.instructions,
+    imageUrl: exercise.imageUrl ?? null,
+  };
 }
 
 const RAW_DEFAULT_EXERCISES: Exercise[] = [

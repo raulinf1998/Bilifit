@@ -20,14 +20,19 @@ import {
   X,
   ZoomIn,
 } from 'lucide-react';
+import { ExercisePickerList } from '@/components/ExercisePickerList';
 import ImageLightboxModal from '@/components/ImageLightboxModal';
 import ImageUploadControl from '@/components/ImageUploadControl';
+import { RoutineItemEditor } from '@/components/RoutineItemEditor';
 import WorkoutPlayer, { type LastExerciseLogRef } from '@/components/WorkoutPlayer';
 import {
+  buildRoutineItemFromExercise,
   isSingleDumbbellByDefault,
+  MUSCLE_LABELS,
   resolveIsPerDumbbell,
   ROUTINE_GOAL_LABELS,
 } from '@/lib/home-workouts';
+import { useAddTick } from '@/lib/use-add-tick';
 import type {
   Exercise,
   HomeEquipment,
@@ -38,17 +43,6 @@ import type {
 } from '@/types';
 
 type CasaTab = 'generator' | 'equipment' | 'routines' | 'builder';
-
-const MUSCLE_LABELS: Record<MuscleGroup, string> = {
-  piernas: 'Piernas y Glúteo',
-  pecho: 'Pecho',
-  espalda: 'Espalda',
-  hombros: 'Hombros',
-  brazos: 'Brazos',
-  core: 'Core / Abdomen',
-  full_body: 'Full Body',
-  movilidad: 'Movilidad',
-};
 
 export default function HomeWorkoutsPage() {
   const [tab, setTab] = useState<CasaTab>('generator');
@@ -98,9 +92,72 @@ export default function HomeWorkoutsPage() {
   const [newExInstructions, setNewExInstructions] = useState('');
   const [newExImageUrl, setNewExImageUrl] = useState<string | null>(null);
 
+  // Confirmación visual del constructor: cada botón «+ Añadir» y la ficha recién
+  // creada muestran un tick durante unos segundos (claves «lib:» / «row:»).
+  const addTick = useAddTick();
+
+  function addExerciseToBuilder(ex: Exercise) {
+    const indexAtAdd = builderItems.length;
+    setBuilderItems((prev) => [...prev, buildRoutineItemFromExercise(ex)]);
+    addTick.flash(`lib:${ex.id}`);
+    addTick.flash(`row:${indexAtAdd}:${ex.id}`);
+  }
+
+  function patchBuilderItem(index: number, patch: Partial<RoutineExerciseItem>) {
+    setBuilderItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)));
+  }
+
+  function removeBuilderItem(index: number) {
+    setBuilderItems((prev) => prev.filter((_, i) => i !== index));
+    // Al reindexarse las filas, los destellos activos dejarían de corresponderse.
+    addTick.clearAll();
+  }
+
+  // Veces que un ejercicio ya está en el borrador (para «en rutina ×N»).
+  const builderOccurrences = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const it of builderItems) map[it.exerciseId] = (map[it.exerciseId] ?? 0) + 1;
+    return map;
+  }, [builderItems]);
+
   // Modal de edición de rutina e imágenes
   const [editingRoutine, setEditingRoutine] = useState<Routine | null>(null);
   const [savingRoutineEdit, setSavingRoutineEdit] = useState(false);
+  const [editPickerOpen, setEditPickerOpen] = useState(false);
+  const [routineEditError, setRoutineEditError] = useState<string | null>(null);
+  const editAddTick = useAddTick();
+
+  function addExerciseToEditingRoutine(ex: Exercise) {
+    const indexAtAdd = editingRoutine?.items.length ?? 0;
+    setEditingRoutine((prev) =>
+      prev ? { ...prev, items: [...prev.items, buildRoutineItemFromExercise(ex)] } : prev
+    );
+    editAddTick.flash(`row:${indexAtAdd}:${ex.id}`);
+    setRoutineEditError(null);
+  }
+
+  function patchEditingItem(index: number, patch: Partial<RoutineExerciseItem>) {
+    setEditingRoutine((prev) =>
+      prev ? { ...prev, items: prev.items.map((it, i) => (i === index ? { ...it, ...patch } : it)) } : prev
+    );
+  }
+
+  function removeEditingItem(index: number) {
+    setEditingRoutine((prev) => (prev ? { ...prev, items: prev.items.filter((_, i) => i !== index) } : prev));
+    editAddTick.clearAll();
+  }
+
+  const editingOccurrences = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const it of editingRoutine?.items ?? []) map[it.exerciseId] = (map[it.exerciseId] ?? 0) + 1;
+    return map;
+  }, [editingRoutine]);
+
+  // Al abrir/cerrar el modal de edición se parte con el catálogo cerrado y sin avisos.
+  useEffect(() => {
+    setEditPickerOpen(false);
+    setRoutineEditError(null);
+  }, [editingRoutine?.id]);
 
   // Modal lightbox de imagen ampliada / cambio de foto
   const [lightbox, setLightbox] = useState<{
@@ -203,7 +260,22 @@ export default function HomeWorkoutsPage() {
   async function saveEditingRoutine(e: React.FormEvent) {
     e.preventDefault();
     if (!editingRoutine) return;
+    // La API exige al menos un ejercicio; si se han quitado todos, avisar en el modal.
+    if (editingRoutine.items.length === 0) {
+      setRoutineEditError('Añade al menos un ejercicio antes de guardar la rutina.');
+      return;
+    }
     setSavingRoutineEdit(true);
+    // Duración y material sólo se recalculan si la lista de ejercicios ha cambiado;
+    // así editar el nombre o una foto no altera la estimación original de la rutina.
+    const original = routines.find((r) => r.id === editingRoutine.id);
+    const itemsChanged =
+      !original || JSON.stringify(original.items) !== JSON.stringify(editingRoutine.items);
+    const newCount = editingRoutine.items.length;
+    const scaledMinutes =
+      original && original.items.length > 0
+        ? Math.round(((original.estimatedMinutes ?? 0) * newCount) / original.items.length)
+        : 0;
     try {
       const res = await fetch(`/api/routines/${editingRoutine.id}`, {
         method: 'PATCH',
@@ -213,6 +285,14 @@ export default function HomeWorkoutsPage() {
           notes: editingRoutine.notes ?? null,
           coverImageUrl: editingRoutine.coverImageUrl ?? null,
           items: editingRoutine.items,
+          ...(itemsChanged
+            ? {
+                estimatedMinutes: Math.max(15, scaledMinutes || newCount * 6),
+                equipmentIds: Array.from(
+                  new Set(editingRoutine.items.flatMap((it) => it.requiredEquipment))
+                ),
+              }
+            : {}),
         }),
       });
       if (res.ok) {
@@ -1331,33 +1411,31 @@ export default function HomeWorkoutsPage() {
                             ? 'Sin material'
                             : ex.requiredEquipment.map((id) => equipmentNameMap.get(id) ?? id).join(' + ')}{' '}
                           · {ex.defaultSets} × {ex.defaultReps}
+                          {(builderOccurrences[ex.id] ?? 0) > 0 ? ` · en rutina ×${builderOccurrences[ex.id]}` : ''}
                         </div>
                       </div>
                     </div>
 
                     <button
                       type="button"
-                      onClick={() =>
-                        setBuilderItems((prev) => [
-                          ...prev,
-                          {
-                            exerciseId: ex.id,
-                            exerciseName: ex.name,
-                            muscleGroup: ex.muscleGroup,
-                            requiredEquipment: ex.requiredEquipment,
-                            sets: ex.defaultSets,
-                            reps: ex.defaultReps,
-                            suggestedWeightKg: ex.requiredEquipment.includes('dumbbells') ? 10 : undefined,
-                            perDumbbell: perDb,
-                            restSeconds: ex.restSeconds,
-                            notes: ex.instructions,
-                            imageUrl: ex.imageUrl ?? null,
-                          },
-                        ])
+                      onClick={() => addExerciseToBuilder(ex)}
+                      className={`shrink-0 inline-flex items-center justify-center gap-1 rounded-xl border px-3 py-2 text-xs font-semibold min-h-[38px] min-w-[104px] transition-colors ${
+                        addTick.isFlashing(`lib:${ex.id}`)
+                          ? 'border-emerald-500/60 bg-emerald-500 text-white'
+                          : 'bg-purple-600/20 text-purple-700 dark:text-purple-300 border-purple-500/30 hover:bg-purple-600/30'
+                      }`}
+                      aria-label={
+                        addTick.isFlashing(`lib:${ex.id}`)
+                          ? `${ex.name} añadido a la rutina`
+                          : `Añadir ${ex.name} a la rutina`
                       }
-                      className="shrink-0 inline-flex items-center gap-1 rounded-xl bg-purple-600/20 text-purple-700 dark:text-purple-300 border border-purple-500/30 px-3 py-2 text-xs font-semibold hover:bg-purple-600/30 min-h-[38px]"
                     >
-                      <Plus className="h-3.5 w-3.5" /> Añadir
+                      {addTick.isFlashing(`lib:${ex.id}`) ? (
+                        <Check className="h-3.5 w-3.5 animate-fade-in" />
+                      ) : (
+                        <Plus className="h-3.5 w-3.5" />
+                      )}
+                      {addTick.isFlashing(`lib:${ex.id}`) ? 'Añadido' : 'Añadir'}
                     </button>
                   </div>
                 );
@@ -1413,91 +1491,18 @@ export default function HomeWorkoutsPage() {
               </div>
             ) : (
               <div className="space-y-2">
-                {builderItems.map((item, idx) => {
-                  const thumb = resolveItemImage(item.exerciseId, item.imageUrl);
-                  return (
-                    <div
-                      key={`${item.exerciseId}-${idx}`}
-                      className="rounded-xl border p-3 space-y-2"
-                      style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          {thumb && (
-                            <img src={thumb} alt={item.exerciseName} className="w-8 h-8 rounded-lg object-cover bg-[#161b26] shrink-0" />
-                          )}
-                          <span className="font-semibold text-xs truncate">{item.exerciseName}</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setBuilderItems((prev) => prev.filter((_, i) => i !== idx))}
-                          className="text-rose-400 p-1 shrink-0"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2 text-xs">
-                        <label className="space-y-0.5">
-                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Series</span>
-                          <input
-                            type="number"
-                            min={1}
-                            value={item.sets}
-                            onChange={(e) =>
-                              setBuilderItems((prev) =>
-                                prev.map((it, i) => (i === idx ? { ...it, sets: Number(e.target.value) } : it))
-                              )
-                            }
-                            className="w-full rounded border px-2 py-1.5 text-base sm:text-xs"
-                            style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
-                          />
-                        </label>
-                        <label className="space-y-0.5">
-                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Reps</span>
-                          <input
-                            value={item.reps}
-                            onChange={(e) =>
-                              setBuilderItems((prev) =>
-                                prev.map((it, i) => (i === idx ? { ...it, reps: e.target.value } : it))
-                              )
-                            }
-                            className="w-full rounded border px-2 py-1.5 text-base sm:text-xs"
-                            style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
-                          />
-                        </label>
-                        <label className="space-y-0.5">
-                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                            {resolveIsPerDumbbell(item, exercisePerDumbbellMap[item.exerciseId]) ? 'Kg c/u sug.' : 'Kg sug.'}
-                          </span>
-                          <input
-                            type="number"
-                            min={0}
-                            value={item.suggestedWeightKg ?? 0}
-                            onChange={(e) =>
-                              setBuilderItems((prev) =>
-                                prev.map((it, i) =>
-                                  i === idx ? { ...it, suggestedWeightKg: Number(e.target.value) || undefined } : it
-                                )
-                              )
-                            }
-                            className="w-full rounded border px-2 py-1.5 text-base sm:text-xs"
-                            style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
-                          />
-                        </label>
-                      </div>
-                      <ImageUploadControl
-                        label="Imagen del ejercicio en esta rutina"
-                        value={item.imageUrl ?? null}
-                        onChange={(nextUrl) =>
-                          setBuilderItems((prev) =>
-                            prev.map((it, i) => (i === idx ? { ...it, imageUrl: nextUrl } : it))
-                          )
-                        }
-                        compact
-                      />
-                    </div>
-                  );
-                })}
+                {builderItems.map((item, idx) => (
+                  <RoutineItemEditor
+                    key={`${item.exerciseId}-${idx}`}
+                    item={item}
+                    index={idx}
+                    thumbUrl={resolveItemImage(item.exerciseId, item.imageUrl)}
+                    perDumbbellLookup={exercisePerDumbbellMap[item.exerciseId]}
+                    justAdded={addTick.isFlashing(`row:${idx}:${item.exerciseId}`)}
+                    onChange={(next) => patchBuilderItem(idx, next)}
+                    onRemove={() => removeBuilderItem(idx)}
+                  />
+                ))}
               </div>
             )}
 
@@ -1580,50 +1585,77 @@ export default function HomeWorkoutsPage() {
               </div>
 
               <div className="space-y-2.5">
-                <div className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
-                  Imágenes de los ejercicios ({editingRoutine.items.length})
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div
+                    className="text-xs font-bold uppercase tracking-wider"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    Ejercicios de la rutina ({editingRoutine.items.length})
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditPickerOpen((v) => !v)}
+                    aria-expanded={editPickerOpen}
+                    className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold min-h-[34px] border-purple-500/35 bg-purple-600/20 text-purple-700 dark:text-purple-300 hover:bg-purple-600/30"
+                  >
+                    {editPickerOpen ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                    {editPickerOpen ? 'Ocultar catálogo' : 'Añadir ejercicios'}
+                  </button>
                 </div>
-                {editingRoutine.items.map((item, idx) => {
-                  const effectiveImg = resolveItemImage(item.exerciseId, item.imageUrl);
-                  return (
-                    <div
-                      key={`${item.exerciseId}-${idx}`}
-                      className="rounded-xl border p-3 space-y-2.5"
-                      style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card-elevated)' }}
-                    >
-                      <div className="flex items-center gap-3">
-                        {effectiveImg && (
-                          <img
-                            src={effectiveImg}
-                            alt={item.exerciseName}
-                            className="w-12 h-12 rounded-xl object-cover bg-[#161b26] shrink-0"
-                          />
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-semibold truncate">
-                            {idx + 1}. {item.exerciseName}
-                          </div>
-                          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                            {item.sets} × {item.reps}
-                          </div>
-                        </div>
-                      </div>
-                      <ImageUploadControl
-                        label="Foto propia en esta rutina"
-                        value={item.imageUrl ?? null}
-                        onChange={(nextUrl) =>
-                          setEditingRoutine({
-                            ...editingRoutine,
-                            items: editingRoutine.items.map((it, i) =>
-                              i === idx ? { ...it, imageUrl: nextUrl } : it
-                            ),
-                          })
-                        }
-                        compact
-                      />
+
+                {routineEditError && (
+                  <div
+                    className="rounded-lg border px-3 py-2 text-[11px] border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-300"
+                    role="alert"
+                  >
+                    {routineEditError}
+                  </div>
+                )}
+
+                {editPickerOpen && (
+                  <div
+                    className="rounded-xl border p-3 animate-fade-in"
+                    style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card-elevated)' }}
+                  >
+                    <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
+                      Pulsa «+ Añadir» en cualquier ejercicio para incorporarlo al final de la rutina; el tick
+                      confirma que ya está dentro.
                     </div>
-                  );
-                })}
+                    <ExercisePickerList
+                      exercises={exercises}
+                      occurrences={editingOccurrences}
+                      ownedEquipmentIds={ownedEquipment.map((e) => e.id)}
+                      onAdd={addExerciseToEditingRoutine}
+                      flashScope={`edit:${editingRoutine.id}`}
+                      maxHeightClass="max-h-[240px]"
+                      searchPlaceholder="Buscar ejercicio para añadir..."
+                    />
+                  </div>
+                )}
+
+                {editingRoutine.items.length === 0 ? (
+                  <div
+                    className="rounded-xl border border-dashed p-5 text-center text-xs"
+                    style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}
+                  >
+                    La rutina se ha quedado sin ejercicios. Añade al menos uno para poder guardar los cambios.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {editingRoutine.items.map((item, idx) => (
+                      <RoutineItemEditor
+                        key={`${item.exerciseId}-${idx}`}
+                        item={item}
+                        index={idx}
+                        thumbUrl={resolveItemImage(item.exerciseId, item.imageUrl)}
+                        perDumbbellLookup={exercisePerDumbbellMap[item.exerciseId]}
+                        justAdded={editAddTick.isFlashing(`row:${idx}:${item.exerciseId}`)}
+                        onChange={(next) => patchEditingItem(idx, next)}
+                        onRemove={() => removeEditingItem(idx)}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
