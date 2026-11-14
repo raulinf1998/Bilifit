@@ -72,6 +72,7 @@ import {
   buildRoutineItemFromExercise,
   calculateStrengthSetVolumeKg,
   DEFAULT_EXERCISES,
+  DEFAULT_HOME_EQUIPMENT,
   generateHomeRoutine,
   getAlternativeExercises,
   isExerciseCompatible,
@@ -3273,7 +3274,7 @@ test('5-day strength split routines preserve exact names, exercises, sets, reps 
 test('Exercise illustrations exist for all exercises and exercise/routine/workout image attachments persist across APIs', async () => {
   // 1. Every default exercise has a unified .jpg illustration whose static asset exists in public/exercises/
   const publicDir = path.join(process.cwd(), 'public');
-  assert.ok(DEFAULT_EXERCISES.length >= 77);
+  assert.ok(DEFAULT_EXERCISES.length >= 83);
   for (const ex of DEFAULT_EXERCISES) {
     assert.equal(ex.imageUrl, `/exercises/${ex.id}.jpg`, `Expected unified .jpg imageUrl for ${ex.id}`);
     const assetPath = path.join(publicDir, ex.imageUrl.replace(/^\//, ''));
@@ -4065,4 +4066,50 @@ test('Constructor y editor de rutinas: alta compartida de ejercicios y PATCH con
 
   // Limpieza
   deleteRoutine(created.routine.id);
+});
+
+test('El catálogo de casa incluye los ejercicios nuevos de core y cadera con su ilustración', () => {
+  const newIds = [
+    'ex_side_lunge_abductor_lift',
+    'ex_russian_twist_bw',
+    'ex_leg_raises',
+    'ex_flutter_kicks',
+    'ex_hip_raises',
+    'ex_seated_in_out',
+  ];
+  const byId = new Map(DEFAULT_EXERCISES.map((ex) => [ex.id, ex]));
+  const knownEquipment = new Set(DEFAULT_HOME_EQUIPMENT.map((eq) => eq.id));
+
+  for (const id of newIds) {
+    const ex = byId.get(id);
+    assert.ok(ex, `Falta el ejercicio ${id} en el catálogo`);
+    assert.equal(ex.imageUrl, `/exercises/${id}.jpg`);
+    assert.ok(
+      fs.existsSync(path.join(process.cwd(), 'public', 'exercises', `${id}.jpg`)),
+      `Falta la ilustración pública de ${id}`
+    );
+    assert.ok(ex.defaultSets >= 2, `${id} debería programar al menos 2 series`);
+    assert.ok(ex.restSeconds > 0 && ex.instructions.length > 30, `${id} sin descanso o instrucción útil`);
+    for (const eq of ex.requiredEquipment) {
+      assert.ok(knownEquipment.has(eq), `${id} pide material desconocido: ${eq}`);
+    }
+  }
+
+  // La zancada lateral + abductor es trabajo de pierna unilateral; el resto es core puro de esterilla.
+  assert.equal(byId.get('ex_side_lunge_abductor_lift')!.muscleGroup, 'piernas');
+  assert.equal(byId.get('ex_side_lunge_abductor_lift')!.pattern, 'unilateral');
+  assert.deepEqual(byId.get('ex_side_lunge_abductor_lift')!.requiredEquipment, []);
+  assert.ok(byId.get('ex_side_lunge_abductor_lift')!.sportBenefit.includes('mountain'));
+
+  for (const id of newIds.filter((i) => i !== 'ex_side_lunge_abductor_lift')) {
+    const ex = byId.get(id)!;
+    assert.equal(ex.muscleGroup, 'core', `${ex.name} debe ser core`);
+    assert.equal(ex.pattern, 'core', `${ex.name} debe usar el patrón core`);
+    assert.deepEqual(ex.requiredEquipment, ['mat'], `${ex.name} solo necesita esterilla`);
+    assert.ok(ex.sportBenefit.includes('general'));
+  }
+
+  // El russian twist pedido es la versión SIN peso; el existente con disco sigue intacto.
+  assert.ok(!byId.get('ex_russian_twist_bw')!.name.toLowerCase().includes('disco'));
+  assert.ok(byId.get('ex_plate_russian_twist')!.name.toLowerCase().includes('disco'));
 });
