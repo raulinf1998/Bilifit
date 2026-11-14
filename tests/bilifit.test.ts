@@ -34,6 +34,19 @@ import {
   sportLabel,
 } from '../src/lib/metrics';
 import { hasConcreteActivityName, resolveActivityTitle } from '../src/lib/activity-naming';
+import {
+  buildMonthGrid,
+  filterActivitiesByIsoRange,
+  formatMetricValue,
+  groupActivitiesByDay,
+  isNextDisabled,
+  localDayKey,
+  resolveRange,
+  shiftAnchorKey,
+  statsForBuckets,
+  summarizeActivities,
+  todayKey,
+} from '../src/lib/time-range';
 import { previewActivityTrim, resolveTrimSpecFromInput } from '../src/lib/activity-trim';
 import { parseFitBuffer } from '../src/lib/parsers/fit';
 import { decodePolyline, encodePolyline } from '../src/lib/polyline';
@@ -3811,3 +3824,164 @@ test('Editing a finished strength workout updates exercises, weights, reps, tota
   assert.equal(afterTogether.activity.strengthLogs.length, 2);
 });
 
+
+test('Selector de franjas de tiempo: ventanas locales (día/semana/mes), estadísticas agregadas y filtro from/to en la API', async () => {
+  // --- 1) Modo Días: ventana = semana local (lunes a domingo) con el día seleccionado dentro ---
+  const dayRange = resolveRange('day', '2026-11-13'); // viernes 13 de noviembre de 2026
+  assert.equal(dayRange.buckets.length, 7);
+  assert.equal(dayRange.buckets[0].key, '2026-11-09');
+  assert.equal(dayRange.buckets[6].key, '2026-11-15');
+  assert.equal(dayRange.selectedKey, '2026-11-13');
+  assert.ok(dayRange.windowLabel.startsWith('9 – 15 nov'), dayRange.windowLabel);
+  assert.ok(dayRange.selectedLabel.includes('2026'), dayRange.selectedLabel);
+
+  // --- 2) Modo Semanas: 8 barriles terminando en la semana seleccionada ---
+  const weekRange = resolveRange('week', '2026-11-13');
+  assert.equal(weekRange.buckets.length, 8);
+  assert.equal(weekRange.buckets[0].key, '2026-09-21');
+  assert.equal(weekRange.buckets[7].key, '2026-11-09');
+  assert.equal(weekRange.selectedKey, '2026-11-09');
+  assert.ok(weekRange.windowLabel.startsWith('21 sept – 15 nov'), weekRange.windowLabel);
+
+  // --- 3) Modo Meses: 12 meses del año del anchor, con año bajo enero ---
+  const monthRange = resolveRange('month', '2026-11-13');
+  assert.equal(monthRange.buckets.length, 12);
+  assert.equal(monthRange.buckets[0].label, 'ene');
+  assert.equal(monthRange.buckets[0].caption, '2026');
+  assert.equal(monthRange.buckets[10].key, '2026-11-01');
+  assert.equal(monthRange.buckets[10].label, 'nov');
+  assert.ok(monthRange.selectedLabel.includes('noviembre'), monthRange.selectedLabel);
+  assert.equal(monthRange.windowLabel, '2026');
+
+  // La pestaña 'Todo' no filtra por fechas: solo aporta el resumen mensual de contexto
+  const allRange = resolveRange('all', '2026-11-13');
+  assert.equal(allRange.windowStart, '');
+  assert.equal(allRange.windowEnd, '');
+  assert.equal(allRange.selectedStart, '');
+  assert.equal(allRange.selectedKey, 'all');
+  assert.equal(allRange.buckets.length, 12);
+  assert.equal(dayRange.windowStart, new Date(2026, 10, 9).toISOString());
+  assert.equal(dayRange.windowEnd, new Date(2026, 10, 16).toISOString());
+
+  // --- 4) Navegación entre franjas y bloqueo del futuro ---
+  assert.equal(shiftAnchorKey('day', '2026-11-13', -1), '2026-11-12');
+  assert.equal(shiftAnchorKey('week', '2026-11-13', -1), '2026-11-02');
+  assert.equal(shiftAnchorKey('month', '2026-11-13', -1), '2026-10-01');
+  assert.equal(shiftAnchorKey('day', todayKey(), 5), todayKey());
+  assert.equal(isNextDisabled('day', todayKey()), true);
+  assert.equal(isNextDisabled('day', '2020-01-01'), false);
+  assert.equal(isNextDisabled('all', todayKey()), true);
+
+  // --- 5) Rejilla del calendario: semana de lunes a domingo, días vecinos incluidos ---
+  const grid = buildMonthGrid(new Date(2026, 10, 1));
+  assert.equal(grid[0][0].weekdayInitial, 'L');
+  const cells = grid.flat();
+  assert.equal(cells.find((c) => c.key === '2026-11-13')?.inMonth, true);
+  assert.equal(cells.find((c) => c.key === '2026-11-01')?.weekdayInitial, 'D'); // 1 nov 2026 = domingo
+  assert.equal(cells.filter((c) => c.key === '2026-10-26')[0].inMonth, false);
+
+  // --- 6) Actividades reales filtradas por la ventana temporal a través de la API ---
+  const localIso = (dayKey: string, hour = 9) => new Date(`${dayKey}T${String(hour).padStart(2, '0')}:00:00`).toISOString();
+  const createOn = async (dayKey: string, durationMin: number, distanceKm: number, avgHr: number) => {
+    const res = await postActivitiesRoute(
+      new NextRequest('http://localhost:3000/api/activities', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          title: `Franja ${dayKey}`,
+          sport: 'running',
+          startedAt: localIso(dayKey),
+          durationMin,
+          distanceKm,
+          avgHr,
+        }),
+      })
+    );
+    assert.equal(res.status, 201);
+    return ((await res.json()) as { activity: { id: string } }).activity.id;
+  };
+
+  const idFriday = await createOn('2026-11-13', 45, 6.2, 150);
+  const idSaturday = await createOn('2026-11-14', 30, 4, 120);
+  const idOutsideWeek = await createOn('2026-11-16', 60, 9, 140);
+
+  const windowRes = await getActivitiesRoute(
+    new NextRequest(
+      `http://localhost:3000/api/activities?from=${encodeURIComponent(dayRange.windowStart)}&to=${encodeURIComponent(dayRange.windowEnd)}`
+    )
+  );
+  const windowJson = (await windowRes.json()) as {
+    activities: Array<{ id: string; startedAt: string }>;
+    range: { from: string | null; to: string | null };
+  };
+  const windowIds = windowJson.activities.map((a) => a.id);
+  assert.ok(windowIds.includes(idFriday) && windowIds.includes(idSaturday), JSON.stringify(windowIds));
+  assert.equal(windowIds.includes(idOutsideWeek), false);
+  assert.equal(windowJson.range.from, dayRange.windowStart);
+  assert.equal(windowJson.range.to, dayRange.windowEnd);
+  for (const act of windowJson.activities) {
+    const ts = Date.parse(act.startedAt);
+    assert.ok(ts >= Date.parse(dayRange.windowStart) && ts < Date.parse(dayRange.windowEnd), act.startedAt);
+  }
+
+  // Params inválidos: se ignoran y la consulta devuelve el historial completo
+  const badRes = await getActivitiesRoute(
+    new NextRequest('http://localhost:3000/api/activities?from=nope&to=tambien-nope')
+  );
+  const badJson = (await badRes.json()) as { activities: unknown[]; range: { from: string | null } };
+  assert.equal(badJson.range.from, null);
+  assert.ok(badJson.activities.length >= windowJson.activities.length);
+
+  // --- 7) Selección del día (subconjunto de la ventana) y agregados por barril ---
+  const dayOnly = filterActivitiesByIsoRange(windowJson.activities as never, dayRange.selectedStart, dayRange.selectedEnd);
+  assert.ok(dayOnly.some((a) => a.id === idFriday), 'el viernes debe estar en la selección del día');
+  assert.equal(dayOnly.some((a) => a.id === idSaturday), false);
+  assert.equal(dayOnly.some((a) => a.id === idOutsideWeek), false);
+  for (const act of dayOnly) {
+    assert.equal(localDayKey(new Date(Date.parse(act.startedAt))), '2026-11-13');
+  }
+
+  const seeded = [
+    { ...(await getActivityById(idFriday))!, startedAt: localIso('2026-11-13') },
+    { ...(await getActivityById(idSaturday))!, startedAt: localIso('2026-11-14') },
+  ];
+  const bucketStats = statsForBuckets(seeded, dayRange.buckets);
+  assert.equal(bucketStats.find((b) => b.bucket.key === '2026-11-13')?.sessions, 1);
+  assert.equal(bucketStats.find((b) => b.bucket.key === '2026-11-14')?.sessions, 1);
+  assert.equal(bucketStats.find((b) => b.bucket.key === '2026-11-09')?.sessions, 0);
+
+  const totals = summarizeActivities(seeded);
+  assert.equal(totals.sessions, 2);
+  assert.equal(totals.durationSec, 45 * 60 + 30 * 60);
+  assert.equal(totals.distanceMeters, 6200 + 4000);
+  assert.equal(totals.avgHr, 138); // media ponderada por duración: (150*2700 + 120*1800) / 4500
+  assert.equal(totals.bySport.running, 2);
+
+  const groups = groupActivitiesByDay(seeded);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].key, '2026-11-14'); // más reciente primero
+  assert.equal(groups[0].items.length, 1);
+
+  // --- 8) Formateo de métricas para el gráfico ---
+  assert.equal(formatMetricValue('time', 2700), '45:00');
+  assert.equal(formatMetricValue('time', 4500), '1:15:00');
+  assert.equal(formatMetricValue('distance', 10.2), '10.20 km');
+  assert.equal(formatMetricValue('sessions', 1), '1 sesión');
+  assert.equal(formatMetricValue('sessions', 3), '3 sesiones');
+  assert.equal(localDayKey(new Date('2026-11-13T12:00:00')), '2026-11-13');
+
+  // Una franja sin actividades queda vacía (el calendario y las barras lo muestran así)
+  const emptyWindow = (await (
+    await getActivitiesRoute(
+      new NextRequest(
+        `http://localhost:3000/api/activities?from=${encodeURIComponent('2035-03-03T00:00:00.000Z')}&to=${encodeURIComponent('2035-03-04T00:00:00.000Z')}`
+      )
+    )
+  ).json()) as { activities: unknown[] };
+  assert.equal(emptyWindow.activities.length, 0);
+
+  // Limpieza de las actividades creadas solo para esta prueba
+  getDb()
+    .prepare('DELETE FROM activities WHERE id IN (?, ?, ?)')
+    .run(idFriday, idSaturday, idOutsideWeek);
+});
