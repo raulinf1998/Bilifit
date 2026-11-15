@@ -18,6 +18,7 @@ import {
   writeActivityElevation,
 } from '@/lib/db';
 import {
+  OPEN_METEO_ELEVATION_URL,
   assessElevationNeed,
   buildMapElevation,
   deviceElevationStats,
@@ -63,15 +64,14 @@ export type ElevationProviderConfig = {
 /** Cortacircuitos del backfill: nº de salidas fallando seguidas antes de rendirse. */
 export const ELEVATION_MAX_CONSECUTIVE_FAILURES = 3;
 
-const DISABLED = new Set(['none', 'off', '0', '', 'false']);
+const DISABLED = new Set(['none', 'off', '0', 'false']);
 
 /** `BILIFIT_DEM_URL` permite apuntar a otro proveedor; `none` lo apaga. */
 export function resolveElevationProviderUrl(config: ElevationProviderConfig = {}): string | null {
   const explicit = config.url;
-  if (explicit !== undefined) return DISABLED.has(explicit.trim().toLowerCase()) ? null : explicit;
-  const fromEnv = (process.env.BILIFIT_DEM_URL ?? '').trim();
-  if (DISABLED.has(fromEnv.toLowerCase())) return null;
-  return fromEnv || null;
+  const configured = (explicit ?? process.env.BILIFIT_DEM_URL ?? '').trim();
+  if (DISABLED.has(configured.toLowerCase())) return null;
+  return configured || OPEN_METEO_ELEVATION_URL;
 }
 
 /** 'none' = el proveedor está desactivado (entonces no se intenta ninguna llamada). */
@@ -99,6 +99,10 @@ export async function reconstructActivityElevation(
   const rawPoints = activity.points ?? [];
   const stats = deviceElevationStats(rawPoints);
   const mapProfileBefore = activity.extras?.elevationSource === 'map';
+  // También proteger una cota grabada en un punto sin coordenadas GPS.
+  if (!mapProfileBefore && rawPoints.some((p) => typeof p.ele === 'number' && Number.isFinite(p.ele) && p.ele !== 0)) {
+    return { status: 'skipped', reason: 'altimetro' };
+  }
 
   // Dos situaciones en las que lo que hay en `ele` no es una medición del reloj y,
   // por tanto, se puede tirar y sustituir por el perfil del mapa:
@@ -217,6 +221,15 @@ export async function reconstructActivityElevation(
     getAthleteProfile()
   );
 
+  // La consulta externa puede tardar: no sobrescribir una edición o importación
+  // concurrente que haya añadido datos del reloj mientras esperábamos.
+  const current = getActivityById(activity.id);
+  if (!current) return { status: 'error', error: 'La actividad ya no existe' };
+  if (JSON.stringify(current.points) !== JSON.stringify(activity.points) ||
+      current.elevationGain !== activity.elevationGain || current.elevationLoss !== activity.elevationLoss ||
+      current.extras?.elevationSource !== activity.extras?.elevationSource) {
+    return { status: 'skipped', reason: 'actividad_modificada' };
+  }
   const saved = writeActivityElevation(activity.id, {
     points: enrichedPoints,
     laps: enrichedLaps,
@@ -317,4 +330,16 @@ export async function backfillMissingElevation(
   if (summary.updated === 0 && summary.failed > 0) summary.status = 'error';
   else if (summary.updated === 0) summary.status = 'skipped';
   return summary;
+}
+
+/** Intento al importar: una caída del proveedor nunca impide guardar la actividad. */
+export async function estimateImportedElevation(activity: ActivityDetail): Promise<ActivityDetail> {
+  try {
+    const result = await reconstructActivityElevation(activity);
+    if (result.status === 'updated') return getActivityById(activity.id) ?? activity;
+    if (result.status === 'error') console.warn('Altitud automática:', result.error);
+  } catch (error) {
+    console.warn('No se pudo estimar la altitud automática:', error);
+  }
+  return activity;
 }

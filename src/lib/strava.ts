@@ -1,3 +1,4 @@
+import { estimateImportedElevation } from '@/lib/elevation-backfill';
 import type { NextRequest } from 'next/server';
 import { resolveActivityTitle } from '@/lib/activity-naming';
 import { computeSessionExtras, enrichPointsTelemetry } from '@/lib/analytics';
@@ -543,7 +544,7 @@ export async function syncStravaActivities(
       continue;
     }
 
-    createActivity({
+    const created = createActivity({
       id: `act_strava_${item.id}`,
       externalId,
       source: 'strava',
@@ -581,6 +582,7 @@ export async function syncStravaActivities(
       createdAt: new Date().toISOString(),
     });
 
+    await estimateImportedElevation(created);
     imported++;
   }
 

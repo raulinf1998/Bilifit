@@ -16,6 +16,7 @@ services:
       BILIFIT_DB_PATH: /app/data/bilifit.db
       TZ: ${TZ:-Europe/Madrid}
       BILIFIT_SECRET: ${BILIFIT_SECRET:-}
+      BILIFIT_DEM_URL: ${BILIFIT_DEM_URL:-}
       MYWHOOSH_EMAIL: ${MYWHOOSH_EMAIL:-}
       MYWHOOSH_PASSWORD: ${MYWHOOSH_PASSWORD:-}
       MYWHOOSH_AUTO_SYNC: ${MYWHOOSH_AUTO_SYNC:-0}
