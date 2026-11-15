@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { NextRequest } from 'next/server';
+import { pickFitStepCount } from '../src/lib/parsers/fit';
 import JSZip from 'jszip';
 import sharp from 'sharp';
 import { FitBaseType, FitEncoder } from 'fit-file-parser/encoder';
@@ -86,6 +87,7 @@ import {
   assessElevationNeed,
   buildMapElevation,
   cumulativeDistances,
+  deviceElevationStats,
   elevationCacheKey,
   fetchElevations,
   interpolateElevation,
@@ -177,6 +179,7 @@ import {
   computeKmSplits,
   computePaceZones,
   computeSessionExtras,
+  estimateStepsFromTrack,
   computeTerrainBreakdown,
   enrichPointsTelemetry,
 } from '../src/lib/analytics';
@@ -5021,4 +5024,220 @@ test('El backfill de altitud rellena una salida sin barómetro, cachea y no pisa
   deleteActivity(sameRouteId);
   deleteActivity(brokenId);
   deleteActivity(withBaroId);
+});
+
+test('Altitud por mapa: con altitud del reloj no se toca nada, ni por el backfill', async () => {
+  const id = 'act_elev_protected';
+  deleteActivity(id);
+
+  // Barómetro presente en TODOS los puntos y desnivel registrado a 0: es una salida
+  // llana, no una salida incompleta. Antes colaba por el atajo de `flat`; ahora la
+  // regla es dura y no se gasta ni una llamada.
+  createActivity({
+    id,
+    externalId: 'huawei_con_altimetro_ganacia_0',
+    source: 'huawei',
+    sport: 'running',
+    subSport: 'Correr',
+    title: 'Rodaje llano con altímetro',
+    description: null,
+    startedAt: new Date(Date.now() - 4 * 864e5).toISOString(),
+    durationSec: 1200,
+    movingTimeSec: 1200,
+    distanceMeters: 2000,
+    elevationGain: 0,
+    elevationLoss: 0,
+    avgSpeedMs: 1.67,
+    maxSpeedMs: 2,
+    avgHr: 140,
+    maxHr: 150,
+    avgWatts: null,
+    normalizedPower: null,
+    maxWatts: null,
+    avgCadence: null,
+    calories: 120,
+    tss: 0,
+    rpe: null,
+    gearId: null,
+    worldName: null,
+    polyline: null,
+    startLat: 43.36,
+    startLon: -5.85,
+    points: elevationTrackPoints(true),
+    strengthLogs: [],
+    totalVolumeKg: null,
+    extras: null,
+    createdAt: new Date().toISOString(),
+  } as never);
+
+  assert.deepEqual(deviceElevationStats(elevationTrackPoints(true)), { gps: 21, withEle: 21, usableEle: 21 });
+  const need = assessElevationNeed({
+    sport: 'running',
+    points: elevationTrackPoints(true),
+    elevationGain: 0,
+    elevationLoss: 0,
+  });
+  assert.equal(need.needed, false, 'altitud real del reloj => no se reconstruye');
+  assert.equal(need.reason, 'altimetro');
+
+  // Ni aparece en la lista de candidatas del backfill
+  assert.ok(!listElevationCandidateIds(500).includes(id), 'la consulta SQL ya la descarta');
+
+  const dem = makeDemFetchImpl();
+  const callsBefore = dem.state.calls;
+  const res = await reloadActivityElevation(id, { fetchImpl: dem.impl, url: 'https://dem.test/v1/elevation' });
+  assert.equal(res.result.status, 'skipped');
+  assert.equal(res.result.reason, 'altimetro');
+  assert.equal(dem.state.calls, callsBefore, 'no se consulta el DEM en absoluto');
+  const stillIntact = getActivityById(id);
+  assert.equal(stillIntact?.elevationGain, 0, 'el desnivel del reloj sigue siendo 0');
+  assert.deepEqual(
+    (stillIntact?.points ?? []).map((pt) => pt.ele),
+    elevationTrackPoints(true).map((pt) => pt.ele),
+    'las cotas del reloj, intactas'
+  );
+  assert.equal(stillIntact?.extras?.elevationSource ?? null, null, 'no se marca como perfil del mapa');
+
+  // Caso hermano: sin una sola altitud en los puntos, pero con el desnivel ya puesto en
+  // el resumen del archivo (barómetro que no llegó a la traza, o cálculo del servicio).
+  // Tampoco se reescribe: ese número no es nuestro.
+  const summaryId = 'act_elev_summary_only';
+  deleteActivity(summaryId);
+  createActivity({
+    ...(getActivityById(id) as object),
+    id: summaryId,
+    externalId: 'huawei_resumen_con_desnivel',
+    title: 'Sólo desnivel en el resumen',
+    elevationGain: 240,
+    elevationLoss: 180,
+    points: elevationTrackPoints(false),
+    extras: null,
+  } as never);
+  assert.equal(
+    assessElevationNeed({ sport: 'running', points: elevationTrackPoints(false), elevationGain: 240, elevationLoss: 180 }).reason,
+    'desnivel',
+    'desnivel en el resumen => no se estiman las cotas por encima'
+  );
+  const summaryRes = await reloadActivityElevation(summaryId, { fetchImpl: dem.impl, url: 'https://dem.test/v1/elevation' });
+  assert.equal(summaryRes.result.status, 'skipped');
+  assert.equal(summaryRes.result.reason, 'desnivel');
+  assert.equal(dem.state.calls, callsBefore, 'tampoco se pregunta al DEM');
+  assert.equal(getActivityById(summaryId)?.elevationGain, 240, 'el desnivel del archivo se queda como estaba');
+  assert.ok(!listElevationCandidateIds(500).includes(summaryId), 'y no entra en el backfill');
+
+  deleteActivity(summaryId);
+  deleteActivity(id);
+});
+
+test('Altitud a 0 y pasos: se arregla lo que no es un dato, y se estima lo que falta', async () => {
+  const id = 'act_elev_zeros_and_steps';
+  deleteActivity(id);
+  const zeroElePoints = elevationTrackPoints(true).map((p) => ({ ...p, ele: 0, cad: 170 }));
+  createActivity({
+    id,
+    externalId: 'huawei_altitude_zeros',
+    source: 'huawei',
+    sport: 'trail',
+    subSport: 'Montaña',
+    title: 'Salida con altitudes a cero',
+    description: null,
+    startedAt: new Date(Date.now() - 5 * 864e5).toISOString(),
+    durationSec: 1200,
+    movingTimeSec: 1200,
+    distanceMeters: 2000,
+    elevationGain: 0,
+    elevationLoss: 0,
+    avgSpeedMs: 1.67,
+    maxSpeedMs: 2,
+    avgHr: 140,
+    maxHr: 150,
+    avgWatts: null,
+    normalizedPower: null,
+    maxWatts: null,
+    avgCadence: 170,
+    calories: 120,
+    tss: 0,
+    rpe: null,
+    gearId: null,
+    worldName: null,
+    polyline: null,
+    startLat: 43.36,
+    startLon: -5.85,
+    points: zeroElePoints,
+    strengthLogs: [],
+    totalVolumeKg: null,
+    extras: null,
+    createdAt: new Date().toISOString(),
+  } as never);
+
+  // `ele: 0` en todo el track no es una medición, así que aquí sí se estima
+  assert.deepEqual(deviceElevationStats(zeroElePoints), { gps: 21, withEle: 21, usableEle: 0 });
+  const res = await reloadActivityElevation(id, {
+    fetchImpl: makeDemFetchImpl().impl,
+    url: 'https://dem.test/v1/elevation',
+  });
+  assert.equal(res.result.status, 'updated', `los ceros no se protegen: ${JSON.stringify(res.result)}`);
+  assert.ok((res.result.gain ?? 0) > 40, `desnivel reconstruido, ${res.result.gain}`);
+  const fixed = getActivityById(id);
+  assert.ok((fixed?.points ?? []).every((pt) => typeof pt.ele === 'number' && pt.ele > 0), 'cada punto con su cota');
+
+  // Pasos: integrar la cadencia cuando el archivo no trae el total
+  const steps = estimateStepsFromTrack(zeroElePoints as never, 2000, null);
+  assert.ok(steps, 'con cadencia en todos los puntos hay estimación');
+  assert.equal(steps?.from, 'cadencia');
+  // El fixture va a un punto por minuto: 20 intervalos de 60 s a 170 spm
+  assert.ok(Math.abs((steps?.steps ?? 0) - (170 / 60) * 1200) <= 2, `20 min a 170 spm son ~3400 pasos, ${steps?.steps}`);
+
+  // Sin cadencia, zancada; y si tampoco hay zancada, no se inventa
+  const noCad = zeroElePoints.map(({ cad: _cad, ...rest }) => rest);
+  const byStride = estimateStepsFromTrack(noCad as never, 1400, 1.15);
+  assert.equal(byStride?.from, 'zancada');
+  assert.equal(byStride?.steps, Math.round(1400 / 1.15));
+  assert.equal(estimateStepsFromTrack(noCad as never, 1400, null), null, 'sin cadencia ni zancada, mejor ningún número');
+
+  // computeSessionExtras lo escribe marcado como estimado
+  const extras = computeSessionExtras(
+    {
+      sport: 'running',
+      durationSec: 1200,
+      movingTimeSec: 1200,
+      distanceMeters: 2000,
+      elevationGain: 0,
+      avgSpeedMs: 1.67,
+      avgHr: 140,
+      avgWatts: null,
+      normalizedPower: null,
+      excludePausedTime: false,
+      extras: {},
+    } as never,
+    zeroElePoints as never
+  );
+  assert.ok((extras.steps ?? 0) > 0, 'los pasos aparecen aunque el reloj no los mandara');
+  assert.equal(extras.stepsEstimated, true);
+
+  const rideExtras = computeSessionExtras(
+    {
+      sport: 'cycling',
+      durationSec: 1200,
+      movingTimeSec: 1200,
+      distanceMeters: 2000,
+      elevationGain: 0,
+      avgSpeedMs: 1.67,
+      avgHr: 140,
+      avgWatts: null,
+      normalizedPower: null,
+      excludePausedTime: false,
+      extras: {},
+    } as never,
+    zeroElePoints as never
+  );
+  assert.equal(rideExtras.steps ?? null, null, 'en bici no se cuentan pasos');
+
+  // Y el dato que sí viene del archivo manda, con filtro de plausibilidad
+  assert.equal(pickFitStepCount({ num_cycles: 8000 }, 'running', 5000), 8000, '1600 pasos/km es plausible');
+  assert.equal(pickFitStepCount({ num_cycles: 4000 }, 'running', 5000), null, '800/km son zancadas a la mitad: mejor nada');
+  assert.equal(pickFitStepCount({ total_strokes: 9000, stroke_type: 'swim' }, 'running', 5000), null, 'swim strokes no son pasos');
+  assert.equal(pickFitStepCount({ num_steps: 9000 }, 'cycling', 5000), null, 'en bici no se cuentan pasos');
+
+  deleteActivity(id);
 });

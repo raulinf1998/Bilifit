@@ -761,6 +761,19 @@ export default function ActivityDetailPage() {
     activity.normalizedPower && ftp > 0 ? (activity.normalizedPower / ftp).toFixed(2) : null;
   const wKg = activity.avgWatts && weightKg > 0 ? (activity.avgWatts / weightKg).toFixed(2) : null;
   const extras = activity.extras ?? {};
+  // Altitud: el reloj midió en algún punto? Si sí, esto no se toca — ni el botón
+  // aparece. La excepción es el perfil que pusimos nosotros desde el mapa, que sí se
+  // puede recalcular.
+  const deviceElePoints = activity.points.reduce(
+    (acc, p) => acc + (typeof p.ele === 'number' && p.ele !== 0 ? 1 : 0),
+    0
+  );
+  // El botón sólo aparece donde de verdad falta el dato: ni una altitud en los puntos
+  // y ningún desnivel en el resumen. O cuando el perfil es nuestro, y lo podemos rehacer.
+  const canEstimateElevation =
+    hasGps &&
+    (extras.elevationSource === 'map' ||
+      (deviceElePoints === 0 && activity.elevationGain <= 0 && activity.elevationLoss <= 0));
   const maxKm = Number(((activity.distanceMeters || 1000) / 1000).toFixed(2));
   const getSplitDurationSec = (sp: ActivityLap) =>
     activity.excludePausedTime && sp.movingTimeSec > 0 ? sp.movingTimeSec : sp.durationSec;
@@ -842,7 +855,7 @@ export default function ActivityDetailPage() {
               <Download className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" /> Descargar GPX
             </a>
           )}
-          {hasGps && (
+          {canEstimateElevation && (
             <button
               type="button"
               disabled={elevationBusy}
@@ -1438,10 +1451,29 @@ export default function ActivityDetailPage() {
               </div>
             </div>
           )}
-          {typeof extras.steps === 'number' && extras.steps > 0 && (
-            <div className="card-elevated p-3">
-              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Pasos</div>
+          {isPaceSport && typeof extras.steps === 'number' && extras.steps > 0 && (
+            <div
+              className="card-elevated p-3"
+              title={
+                extras.stepsEstimated
+                  ? `Estimados a partir de ${
+                      extras.stepsSource === 'zancada' ? 'la zancada media' : 'la cadencia grabada'
+                    }: el archivo no traía el total de pasos del reloj`
+                  : 'Pasos registrados por el reloj'
+              }
+            >
+              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                Pasos{extras.stepsEstimated ? ' · est.' : ''}
+              </div>
               <div className="text-lg font-bold tabular-nums">{extras.steps.toLocaleString('es-ES')}</div>
+              <div className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                {effectiveDurationSec > 0
+                  ? `${Math.round(extras.steps / (effectiveDurationSec / 60))} pasos/min`
+                  : ''}
+                {typeof extras.avgStrideLenM === 'number' && extras.avgStrideLenM > 0
+                  ? ` · zancada ${extras.avgStrideLenM.toFixed(2)} m`
+                  : ''}
+              </div>
             </div>
           )}
           {typeof activity.totalVolumeKg === 'number' && activity.totalVolumeKg > 0 && (

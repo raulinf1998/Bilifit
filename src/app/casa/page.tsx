@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftRight,
   BookmarkPlus,
@@ -47,7 +47,11 @@ import type {
 type CasaTab = 'generator' | 'equipment' | 'routines' | 'builder';
 
 export default function HomeWorkoutsPage() {
-  const [tab, setTab] = useState<CasaTab>('generator');
+  // Se abre sobre «Mis Rutinas»: lo que interesa es entrenar lo que ya está montado,
+  // no que la primera pantalla empuje a generar otra rutina. `?tab=` sigue mandando,
+  // y si la cuenta está vacía se cae al generador (abajo, en loadAll).
+  const [tab, setTab] = useState<CasaTab>('routines');
+  const firstLoadRef = useRef(false);
   const [equipment, setEquipment] = useState<HomeEquipment[]>([]);
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [routines, setRoutines] = useState<Routine[]>([]);
@@ -216,12 +220,21 @@ export default function HomeWorkoutsPage() {
       fetch('/api/routines').then((r) => r.json()),
     ]);
     const eqList: HomeEquipment[] = eqRes.equipment ?? [];
+    const rtList: Routine[] = rtRes.routines ?? [];
     setEquipment(eqList);
     setExercises(exRes.exercises ?? []);
-    setRoutines(rtRes.routines ?? []);
+    setRoutines(rtList);
     setLastExerciseLogs(rtRes.lastExerciseLogs ?? {});
     setSessionEquipmentIds(eqList.filter((e) => e.owned).map((e) => e.id));
     setLoading(false);
+
+    // Sólo en el primer render: sin rutinas creadas todavía, «Mis Rutinas» estaría vacía,
+    // así que se abre el generador. Después de eso la pestaña es del usuario.
+    if (!firstLoadRef.current) {
+      firstLoadRef.current = true;
+      const hasTabParam = Boolean(new URLSearchParams(window.location.search).get('tab'));
+      if (rtList.length === 0 && !hasTabParam) setTab('generator');
+    }
   }, []);
 
   useEffect(() => {
@@ -573,9 +586,9 @@ export default function HomeWorkoutsPage() {
       {/* Tabs adaptadas a móvil y PC */}
       <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 border-b pb-3" style={{ borderColor: 'var(--border-subtle)' }}>
         {[
+          { id: 'routines', label: `Mis Rutinas (${routines.length})`, fullLabel: `Mis Rutinas (${routines.length})`, icon: ListChecks },
           { id: 'generator', label: 'Generar Rutina', fullLabel: 'Generar Rutina por Material', icon: Sparkles },
           { id: 'equipment', label: `Material (${ownedEquipment.length})`, fullLabel: `Mi Material en Casa (${ownedEquipment.length})`, icon: Wrench },
-          { id: 'routines', label: `Mis Rutinas (${routines.length})`, fullLabel: `Mis Rutinas (${routines.length})`, icon: ListChecks },
           { id: 'builder', label: 'Crear y Fotos', fullLabel: 'Crear Rutina y Ejercicios', icon: Plus },
         ].map((t) => {
           const Icon = t.icon;

@@ -20,9 +20,11 @@ import {
 import {
   assessElevationNeed,
   buildMapElevation,
+  deviceElevationStats,
   elevationCacheKey,
   fetchElevations,
   pickElevationSamples,
+  stripPointElevation,
 } from '@/lib/elevation';
 import { calculateNormalizedPower, estimateActivityTSS } from '@/lib/metrics';
 import type { ActivityDetail } from '@/types';
@@ -79,33 +81,48 @@ export function elevationProviderEnabled(config: ElevationProviderConfig = {}): 
 
 /**
  * Rellena la altitud de una actividad a partir del modelo digital del terreno.
- * Best-effort por diseño: si el servicio falla devuelve 'error' y no toca nada.
+ *
+ * Best-effort por diseño: si el servicio falla devuelve 'error' y no toca nada. Y
+ * antes de nada está la regla que protege lo que ya está medido — si el reloj grabó
+ * una altitud real EN UN SOLO PUNTO, se sale por 'skipped' sin consultar la red ni
+ * reescribir nada. Sólo se estiman las salidas que no tienen ningún dato de altura.
  */
 export async function reconstructActivityElevation(
   activity: ActivityDetail,
-  options: ElevationProviderConfig & { force?: boolean; refresh?: boolean } = {}
+  options: ElevationProviderConfig & { refresh?: boolean } = {}
 ): Promise<ElevationUpdateResult> {
   const url = resolveElevationProviderUrl(options);
   if (url === null) {
     return { status: 'skipped', reason: 'proveedor_desactivado' };
   }
 
+  const rawPoints = activity.points ?? [];
+  const stats = deviceElevationStats(rawPoints);
   const mapProfileBefore = activity.extras?.elevationSource === 'map';
-  // Un perfil previo puesto por nosotros sin sesgo corregible no contenía altitud real
-  // del reloj: al refrescar se parte de cero, que si no la interpolación anterior se
-  // tomaría como dato del reloj y el cálculo no cambiaría nunca.
+
+  // Dos situaciones en las que lo que hay en `ele` no es una medición del reloj y,
+  // por tanto, se puede tirar y sustituir por el perfil del mapa:
+  //   · relleno a 0 — el Huawei típico sin barómetro, que escribe `ele: 0` en todo;
+  //   · «Volver a estimar» sobre un perfil que pusimos nosotros y que no tenía ningún
+  //     punto real con el que corregir sesgo (si no, la estimación anterior se tomaba
+  //     como dato del reloj y el cálculo no cambiaría nunca).
   const nothingToDevice = Math.abs(Number(activity.extras?.elevationBiasM ?? 0)) < 0.05;
-  const rewriteMapProfile = mapProfileBefore && options.refresh === true && nothingToDevice;
-  const points = rewriteMapProfile
-    ? (activity.points ?? []).map((p) => (p.ele === undefined ? p : { ...p, ele: undefined }))
-    : (activity.points ?? []);
+  const refreshingOwnProfile = mapProfileBefore && options.refresh === true && nothingToDevice;
+  // Un track rellenado a 0 sólo es "sin dato" si el resumen tampoco trae desnivel: si
+  // lo trae, lo midió el barómetro y se quedó en la cabecera, y ése sí es su dato.
+  const summaryHasDesnivel =
+    Math.max(0, Number(activity.elevationGain ?? 0)) > 0 || Math.max(0, Number(activity.elevationLoss ?? 0)) > 0;
+  const fillerZeros = stats.withEle > 0 && stats.usableEle === 0 && !summaryHasDesnivel;
+  const replaceEle = fillerZeros || refreshingOwnProfile;
+  const points = replaceEle ? stripPointElevation(rawPoints) : rawPoints;
+
   const need = assessElevationNeed({
     sport: activity.sport,
     points,
-    elevationGain: activity.elevationGain,
-    elevationLoss: activity.elevationLoss,
-    // Con `force` se rehace aunque el reloj trajera altitud a medias
-    allowPartial: options.force === true,
+    // Al rehacer un perfil nuestro, el desnivel que figura en la ficha salió de ese
+    // mismo perfil: no puede usarse como motivo para no rehacerlo.
+    elevationGain: refreshingOwnProfile ? 0 : activity.elevationGain,
+    elevationLoss: refreshingOwnProfile ? 0 : activity.elevationLoss,
   });
   if (!need.needed) {
     // Ojo: 'altimetro' también salta cuando la altitud la pusimos nosotros — si el
@@ -234,7 +251,7 @@ export async function reloadActivityElevation(
   if (!activity) {
     return { result: { status: 'error', error: 'Actividad no encontrada' }, activity: null };
   }
-  const result = await reconstructActivityElevation(activity, { ...options, force: true });
+  const result = await reconstructActivityElevation(activity, options);
   return { result, activity: result.status === 'updated' ? getActivityById(id) : activity };
 }
 
