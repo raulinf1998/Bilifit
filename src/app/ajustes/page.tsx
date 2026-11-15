@@ -343,6 +343,27 @@ export default function SettingsPage() {
                   {src.error && <div className="text-[11px] text-rose-500 mt-0.5 truncate">{src.error}</div>}
                 </div>
               ))}
+
+              <div className="rounded-lg border p-2.5" style={{ background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}>
+                <div style={{ color: 'var(--text-muted)' }}>Altitud desde el GPS</div>
+                <div className="font-bold text-sm mt-0.5">
+                  {reloadResult.elevation.status === 'ok'
+                    ? `${reloadResult.elevation.updated} sesiones con perfil nuevo`
+                    : reloadResult.elevation.status === 'skipped'
+                      ? reloadResult.elevation.reason === 'proveedor_desactivado'
+                        ? 'Cálculo por mapa desactivado'
+                        : 'Nada que estimar'
+                      : 'Servicio no disponible'}
+                </div>
+                <div className="mt-0.5" style={{ color: 'var(--text-secondary)' }}>
+                  {reloadResult.elevation.candidates} candidatas · {reloadResult.elevation.failed} con aviso
+                </div>
+                {reloadResult.elevation.error && (
+                  <div className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5 truncate">
+                    {reloadResult.elevation.error}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}

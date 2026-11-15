@@ -622,6 +622,15 @@ function initSchema(db: Database.Database) {
       image_url TEXT,
       updated_at TEXT NOT NULL
     );
+
+    /* Altitudes del modelo digital del terreno, para no volver a pedirlas cada vez
+       que se recalcula el desnivel de una salida (la clave es lat,lon a ~11 m). */
+    CREATE TABLE IF NOT EXISTS elevation_cache (
+      key TEXT PRIMARY KEY,
+      ele REAL NOT NULL,
+      source TEXT NOT NULL DEFAULT 'open-meteo',
+      fetched_at INTEGER NOT NULL
+    );
   `);
 
   // Migración segura para bases de datos existentes
@@ -1705,6 +1714,98 @@ export function deleteActivity(id: string): boolean {
 }
 
 // ===== GEAR =====
+
+/** Caché local de altitudes del DEM (modelo digital del terreno). */
+export function getCachedElevations(keys: string[]): Map<string, number> {
+  const out = new Map<string, number>();
+  if (keys.length === 0) return out;
+  const db = getDb();
+  const CHUNK = 400;
+  for (let i = 0; i < keys.length; i += CHUNK) {
+    const part = keys.slice(i, i + CHUNK);
+    const placeholders = part.map(() => '?').join(',');
+    const rows = db
+      .prepare(`SELECT key, ele FROM elevation_cache WHERE key IN (${placeholders})`)
+      .all(...part) as Array<{ key: string; ele: number }>;
+    for (const row of rows) out.set(row.key, Number(row.ele));
+  }
+  return out;
+}
+
+export function storeElevationCache(entries: Array<{ key: string; ele: number }>, source = 'open-meteo'): number {
+  const clean = entries.filter((e) => typeof e.key === 'string' && Number.isFinite(e.ele));
+  if (clean.length === 0) return 0;
+  const db = getDb();
+  const now = Date.now();
+  const stmt = db.prepare(`
+    INSERT INTO elevation_cache (key, ele, source, fetched_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET ele = excluded.ele, source = excluded.source, fetched_at = excluded.fetched_at
+  `);
+  const tx = db.transaction(() => {
+    for (const e of clean) stmt.run(e.key, Math.round(e.ele * 10) / 10, source, now);
+  });
+  tx();
+  return clean.length;
+}
+
+export function countCachedElevations(): number {
+  const row = getDb().prepare('SELECT COUNT(*) AS c FROM elevation_cache').get() as { c: number };
+  return Number(row.c);
+}
+
+/**
+ * Guarda el perfil de altitud reconstruido: puntos con `ele`, desniveles, extras y
+ * TSS recalculados. Devuelve la actividad actualizada (o null si no existe).
+ */
+export function writeActivityElevation(
+  id: string,
+  patch: {
+    points: ActivityPoint[];
+    laps: ActivityLap[];
+    extras: ActivityExtras;
+    elevationGain: number;
+    elevationLoss: number;
+    tss: number;
+  }
+): ActivityDetail | null {
+  const db = getDb();
+  const tx = db.transaction(() => {
+    const res = db
+      .prepare(
+        `UPDATE activities
+         SET points_json = ?, laps_json = ?, extras_json = ?, elevation_gain = ?, elevation_loss = ?, tss = ?
+         WHERE id = ?`
+      )
+      .run(
+        JSON.stringify(patch.points),
+        JSON.stringify(patch.laps),
+        JSON.stringify(patch.extras),
+        Math.max(0, Math.round(patch.elevationGain)),
+        Math.max(0, Math.round(patch.elevationLoss)),
+        Math.max(0, Math.round(patch.tss)),
+        id
+      );
+    return res.changes > 0;
+  });
+  if (!tx()) return null;
+  return getActivityById(id);
+}
+
+/** Actividades de exterior sin desnivel registrado: candidatas a reconstruirlo del mapa. */
+export function listElevationCandidateIds(limit = 50): string[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT id FROM activities
+       WHERE sport IN ('running', 'trail', 'mountain', 'walking', 'cycling')
+         AND elevation_gain = 0 AND elevation_loss = 0
+         AND points_json IS NOT NULL AND length(points_json) > 4
+       ORDER BY started_at DESC
+       LIMIT ?`
+    )
+    .all(Math.max(1, Math.min(500, limit))) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
 
 export function listGear(): GearItem[] {
   const rows = getDb()

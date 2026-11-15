@@ -137,6 +137,9 @@ export default function ActivityDetailPage() {
   const [editing, setEditing] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Altitud estimada desde el GPS (relojes sin barómetro)
+  const [elevationBusy, setElevationBusy] = useState(false);
+  const [elevationNotice, setElevationNotice] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(null);
 
   const [title, setTitle] = useState('');
   const [sport, setSport] = useState<SportType>('running');
@@ -421,6 +424,59 @@ export default function ActivityDetailPage() {
       }
     } finally {
       setTogglingTogether(false);
+    }
+  }
+
+  async function handleRecomputeElevation() {
+    if (!activity) return;
+    setElevationBusy(true);
+    setElevationNotice(null);
+    try {
+      const res = await fetch(`/api/activities/${activity.id}/elevation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // Si ya estaba estimado por mapa, el botón es "Volver a estimar": pedimos dato
+        // fresco al modelo del terreno en vez de la caché local.
+        body: JSON.stringify({ refresh: activity.extras?.elevationSource === 'map' }),
+      });
+      const data = (await res.json().catch(() => null)) as {
+        message?: string;
+        error?: string;
+        result?: {
+          status?: string;
+          reason?: string;
+          gain?: number;
+          loss?: number;
+          samples?: number;
+          maxEle?: number;
+          minEle?: number;
+          fromCache?: number;
+        };
+      } | null;
+
+      if (!res.ok) {
+        setElevationNotice({ tone: 'warn', text: data?.error || 'No se pudo estimar la altitud con el GPS' });
+        return;
+      }
+      const r = data?.result;
+      if (r?.status === 'skipped') {
+        // 'ya_estimada' no es un problema: el perfil ya está puesto, sólo se ha pedido
+        // calcularlo dos veces seguidas.
+        setElevationNotice({
+          tone: r.reason === 'ya_estimada' ? 'ok' : 'warn',
+          text: data?.message || 'Esta salida no necesita estimar la altitud',
+        });
+        return;
+      }
+      setElevationNotice({
+        tone: 'ok',
+        text: `Desnivel estimado desde el GPS: +${r?.gain ?? 0} / -${r?.loss ?? 0} m (cota ${r?.minEle ?? '-'}–${r?.maxEle ?? '-'} m) usando ${r?.samples ?? 0} puntos del mapa${r?.fromCache ? `, ${r.fromCache} ya en caché` : ''}.`,
+      });
+      await loadAll();
+    } catch {
+      setElevationNotice({ tone: 'warn', text: 'Error de conexión con el servicio de elevaciones' });
+    } finally {
+      setElevationBusy(false);
     }
   }
 
@@ -786,6 +842,27 @@ export default function ActivityDetailPage() {
               <Download className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" /> Descargar GPX
             </a>
           )}
+          {hasGps && (
+            <button
+              type="button"
+              disabled={elevationBusy}
+              onClick={handleRecomputeElevation}
+              title="Reconstruye la altitud y el desnivel desde las coordenadas GPS (para relojes sin barómetro, como haría Strava)"
+              className={`inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold transition-colors disabled:opacity-60 ${
+                extras.elevationSource === 'map'
+                  ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-700 dark:text-cyan-300'
+                  : 'hover:bg-sunken'
+              }`}
+              style={extras.elevationSource !== 'map' ? { borderColor: 'var(--border-subtle)' } : undefined}
+            >
+              {elevationBusy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Mountain className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+              )}
+              {elevationBusy ? 'Estimando altitud...' : extras.elevationSource === 'map' ? 'Volver a estimar' : 'Desnivel desde GPS'}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => (editing ? setEditing(false) : openEditMode())}
@@ -808,6 +885,27 @@ export default function ActivityDetailPage() {
         <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs font-medium text-emerald-700 dark:text-emerald-300 flex items-center justify-between gap-2">
           <span>{trimNotice}</span>
           <button type="button" onClick={() => setTrimNotice(null)} className="opacity-70 hover:opacity-100">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {elevationNotice && (
+        <div
+          className={`rounded-xl border px-4 py-2.5 text-xs font-medium flex items-center justify-between gap-2 ${
+            elevationNotice.tone === 'ok'
+              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+              : 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+          }`}
+          role="status"
+        >
+          <span>{elevationNotice.text}</span>
+          <button
+            type="button"
+            onClick={() => setElevationNotice(null)}
+            className="opacity-70 hover:opacity-100"
+            aria-label="Cerrar aviso"
+          >
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -1253,9 +1351,16 @@ export default function ActivityDetailPage() {
               </div>
             </div>
           )}
-          {activity.elevationGain > 0 && (
+          {(activity.elevationGain > 0 || extras.elevationSource === 'map') && (
             <div className="card-elevated p-3">
-              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Desnivel + / -</div>
+              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                Desnivel + / -
+                {extras.elevationSource === 'map' && (
+                  <span className="ml-1 text-[10px] text-cyan-600 dark:text-cyan-400" title={`Altitud estimada con ${extras.elevationSamples ?? '-'} puntos GPS contra el modelo del terreno`}>
+                    · estimado por GPS
+                  </span>
+                )}
+              </div>
               <div className="text-lg font-bold tabular-nums text-emerald-400">
                 +{activity.elevationGain} / -{activity.elevationLoss ?? 0} m
               </div>

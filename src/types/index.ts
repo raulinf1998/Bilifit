@@ -91,6 +91,17 @@ export interface ActivityExtras {
   avgStrideLenM?: number | null;
   leftBalancePct?: number | null;
   rightBalancePct?: number | null;
+  /**
+   * De dónde sale la altitud: 'map' = reconstruida desde el GPS contra el modelo
+   * digital del terreno (relojes sin barómetro); 'device' = la del reloj.
+   */
+  elevationSource?: 'map' | 'device' | null;
+  /** Puntos del recorrido muestreados en el modelo de elevaciones. */
+  elevationSamples?: number | null;
+  /** Cuándo se recalculó el perfil de altitud. */
+  elevationUpdatedAt?: string | null;
+  /** Desplazamiento en m aplicado al mapa para casarlo con la altitud del reloj. */
+  elevationBiasM?: number | null;
 }
 
 export interface Segment {

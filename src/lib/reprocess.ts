@@ -11,6 +11,7 @@ import {
   insertSegmentRow,
   listSegments,
 } from '@/lib/db';
+import { backfillMissingElevation, type ElevationStageSummary } from '@/lib/elevation-backfill';
 import { getHuaweiStatus, syncHuaweiActivities } from '@/lib/huawei-sync';
 import {
   calculateNormalizedPower,
@@ -49,12 +50,17 @@ export interface ReloadActivitiesResult {
     effortsMatched: number;
     activitiesMatched: number;
   };
+  /** Alta estimada desde el GPS para relojes sin barómetro (como hace Strava). */
+  elevation: ElevationStageSummary;
 }
 
 export interface ReloadActivitiesOptions {
   reloadSources?: boolean;
   detectClimbs?: boolean;
   maxSourceItems?: number;
+  /** Rellenar la altitud que no traen los relojes sin barómetro (por defecto, sí). */
+  elevationFromGps?: boolean;
+  maxElevationActivities?: number;
   fetchImpl?: typeof fetch;
 }
 
@@ -247,6 +253,34 @@ export async function reloadAllActivitiesAndSegments(
           error: err instanceof Error ? err.message : 'Error recargando Strava',
         };
       }
+    }
+  }
+
+  // 1.5. Altitud desde el GPS para las salidas que no traen desnivel (reloj sin
+  // altímetro). Va antes del reprocesado para que laps, splits, extras y TSS se
+  // calculen ya con el perfil de elevación reconstruido.
+  let elevation: ElevationStageSummary = {
+    status: 'skipped',
+    candidates: 0,
+    updated: 0,
+    skipped: 0,
+    failed: 0,
+  };
+  if (options.elevationFromGps ?? true) {
+    try {
+      elevation = await backfillMissingElevation({
+        maxActivities: options.maxElevationActivities ?? 40,
+        ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+      });
+    } catch (err) {
+      elevation = {
+        status: 'error',
+        candidates: 0,
+        updated: 0,
+        skipped: 0,
+        failed: 0,
+        error: err instanceof Error ? err.message : 'Error estimando la altitud desde el GPS',
+      };
     }
   }
 
@@ -543,6 +577,7 @@ export async function reloadAllActivitiesAndSegments(
     totalActivities: rows.length,
     reprocessedActivities,
     sources,
+    elevation,
     segments: {
       before: segmentsBefore,
       created: segmentsCreated,
