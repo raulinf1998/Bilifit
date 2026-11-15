@@ -72,6 +72,10 @@ export interface TerrainSplit {
 export interface ActivityExtras {
   deviceName?: string | null;
   steps?: number | null;
+  /** true cuando `steps` no lo midió el reloj sino que lo hemos calculado nosotros. */
+  stepsEstimated?: boolean | null;
+  /** de dónde salió la estimación (`cadencia` integra la cadencia, `zancada` divide por la zancada media) */
+  stepsSource?: 'cadencia' | 'zancada' | null;
   originApp?: string | null;
   avgTemp?: number | null;
   minTemp?: number | null;

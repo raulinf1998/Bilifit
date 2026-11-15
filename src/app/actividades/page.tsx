@@ -641,6 +641,18 @@ export default function ActivitiesPage() {
                       <div className="font-bold text-sm text-emerald-400">+{act.elevationGain} m</div>
                     </div>
                   )}
+                  {(act.sport === 'running' ||
+                    act.sport === 'trail' ||
+                    act.sport === 'mountain' ||
+                    act.sport === 'walking') &&
+                    (act.extras?.steps ?? 0) > 0 && (
+                    <div>
+                      <div style={{ color: 'var(--text-muted)' }}>
+                        Pasos{act.extras?.stepsEstimated ? ' (est.)' : ''}
+                      </div>
+                      <div className="font-bold text-sm">{(act.extras?.steps ?? 0).toLocaleString('es-ES')}</div>
+                    </div>
+                  )}
                   {act.totalVolumeKg && (
                     <div>
                       <div style={{ color: 'var(--text-muted)' }}>Volumen</div>

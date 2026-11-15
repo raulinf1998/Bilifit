@@ -584,6 +584,46 @@ export function computeTerrainBreakdown(points: ActivityPoint[], excludePausedTi
 /**
  * Calcula métricas fisiológicas avanzadas de sesión (GAP, VAM, EF, Desacople Aeróbico, VI, kJ, Temperatura, Dinámica de Carrera).
  */
+/** Deportes en los que contar pasos tiene sentido (y en los que se muestran). */
+export const STEP_COUNT_SPORTS: SportType[] = ['running', 'trail', 'mountain', 'walking'];
+
+/**
+ * Pasos estimados cuando el archivo no trae el total. Dos vías, por orden de fiabilidad:
+ *   · integrar la cadencia (ya normalizada a pasos/min por `enrichPointsTelemetry`)
+ *     sobre el tiempo entre puntos — es literalmente contar zancadas;
+ *   · y si no hay cadencia, distancia / zancada media.
+ * Devuelve null si ninguna de las dos se sostiene: preferimos no poner un número a
+ * inventárselo.
+ */
+export function estimateStepsFromTrack(
+  points: ActivityPoint[],
+  distanceMeters: number,
+  avgStrideLenM?: number | null
+): { steps: number; from: 'cadencia' | 'zancada' } | null {
+  let steps = 0;
+  let cadencedSec = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const cur = points[i];
+    const next = points[i + 1];
+    if (typeof cur.cad !== 'number' || cur.cad < 40 || cur.cad > 300) continue;
+    const dt = typeof next.t === 'number' && typeof cur.t === 'number' ? next.t - cur.t : 0;
+    // Un hueco de más de cinco minutos es pausa o track cortado: no se cuenta, que
+    // inflaría el total. Entre medias, grabación inteligente (1 punto cada 5-60 s).
+    if (!(dt > 0) || dt > 300) continue;
+    steps += (cur.cad / 60) * dt;
+    cadencedSec += dt;
+  }
+  // Con poca traza cadenciada el total sale corto: mejor la zancada o nada
+  const movingSec = points.length > 1 ? Math.max(1, points[points.length - 1].t || 0) : 0;
+  if (cadencedSec >= 30 && movingSec > 0 && cadencedSec > movingSec * 0.4) {
+    return { steps: Math.round(steps), from: 'cadencia' };
+  }
+  if (typeof avgStrideLenM === 'number' && avgStrideLenM > 0.3 && avgStrideLenM < 3 && distanceMeters > 100) {
+    return { steps: Math.round(distanceMeters / avgStrideLenM), from: 'zancada' };
+  }
+  return null;
+}
+
 export function computeSessionExtras(
   activity: Pick<
     Activity,
@@ -651,6 +691,18 @@ export function computeSessionExtras(
     if (cads.length > 0) {
       const avgCad = cads.reduce((a, b) => a + b, 0) / cads.length;
       base.avgStrideLenM = Math.round(((effectiveAvgSpeed * 60) / avgCad) * 100) / 100;
+    }
+  }
+
+  // Pasos: manda el total que traiga el archivo (.fit/.csv de Huawei lo escriben);
+  // si no viene, se calculan a partir de la propia traza y se marca como estimado,
+  // para que la ficha no lo venda nunca como medición del reloj.
+  if (!(typeof base.steps === 'number' && base.steps > 0) && STEP_COUNT_SPORTS.includes(activity.sport)) {
+    const est = estimateStepsFromTrack(points, activity.distanceMeters ?? 0, base.avgStrideLenM);
+    if (est) {
+      base.steps = est.steps;
+      base.stepsEstimated = true;
+      base.stepsSource = est.from;
     }
   }
 

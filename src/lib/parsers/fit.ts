@@ -7,6 +7,33 @@ import { detectMyWhooshWorld, type ParsedActivityData } from '@/lib/parsers/gpx'
 import { computeElevationGainLoss, downsamplePoints, encodePolyline } from '@/lib/polyline';
 import type { ActivityExtras, ActivityLap, ActivityPoint, SportType } from '@/types';
 
+/**
+ * Los pasos en FIT vienen en campos distintos según la casa: `num_steps`, `num_cycles`
+ * (pasos en carrera/caminata) o `total_strokes` cuando `stroke_type` es `step`. Se
+ * acepta el primero que sea plausible para la distancia registrada — entre ~900 y
+ * ~2800 pasos por km cubre andar, correr y senderismo, y descarta los ceros de relleno
+ * y los conteos que en realidad son zancadas (la mitad).
+ */
+export function pickFitStepCount(
+  sessionAny: Record<string, unknown> | undefined,
+  sport: SportType,
+  distanceMeters: number
+): number | null {
+  if (!sessionAny) return null;
+  if (!['running', 'trail', 'mountain', 'walking'].includes(sport)) return null;
+  const strokeType = typeof sessionAny.stroke_type === 'string' ? sessionAny.stroke_type.toLowerCase() : '';
+  // 'swim' / 'row' / etc: esos "strokes" no son pasos
+  if (strokeType && strokeType !== 'step' && strokeType !== 'steps') return null;
+  const km = Math.max(0.05, distanceMeters / 1000);
+  for (const raw of [sessionAny.num_steps, sessionAny.steps, sessionAny.num_cycles, sessionAny.total_strokes]) {
+    const value = typeof raw === 'number' ? raw : Number(raw);
+    if (!Number.isFinite(value) || value <= 0) continue;
+    const perKm = value / km;
+    if (perKm >= 900 && perKm <= 2800) return Math.round(value);
+  }
+  return null;
+}
+
 function computeMovingTimeFromPoints(points: ActivityPoint[], sport: SportType): number {
   if (points.length < 2) return 0;
   let moving = 0;
@@ -650,8 +677,11 @@ export async function parseFitBuffer(buffer: Buffer, fileName = 'actividad.fit')
     (maxSpeedMs > 0 ? Math.round(maxSpeedMs * 100) / 100 : undefined);
   const avgHr = session?.avg_heart_rate ?? (hrCount > 0 ? Math.round(hrSum / hrCount) : undefined);
 
+  const steps = pickFitStepCount(sessionAny, mapped.sport, distanceMeters);
+
   const rawExtras: ActivityExtras = {
     deviceName,
+    ...(steps !== null ? { steps } : {}),
     avgTemp: typeof session?.avg_temperature === 'number' ? Math.round(session.avg_temperature * 10) / 10 : null,
     minTemp: typeof session?.min_temperature === 'number' ? Math.round(session.min_temperature * 10) / 10 : null,
     maxTemp: typeof session?.max_temperature === 'number' ? Math.round(session.max_temperature * 10) / 10 : null,
