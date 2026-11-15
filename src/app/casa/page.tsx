@@ -1079,6 +1079,32 @@ export default function HomeWorkoutsPage() {
       {/* TAB 3: MIS RUTINAS GUARDADAS */}
       {tab === 'routines' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {routines.length === 0 && (
+            <div className="md:col-span-2 card-surface p-6 text-center space-y-3">
+              <div className="text-sm font-semibold">Todavía no hay rutinas de casa</div>
+              <p className="text-xs mx-auto max-w-md" style={{ color: 'var(--text-muted)' }}>
+                Genera una con el material que tengas, o monta la tuya ejercicio a ejercicio. En cuanto exista
+                alguna, esta pestaña es la puerta de entrada para entrenar.
+              </p>
+              <div className="flex flex-wrap justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTab('generator')}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-4 py-2 text-xs font-semibold text-white min-h-[40px]"
+                >
+                  <Sparkles className="h-3.5 w-3.5" /> Generar Rutina con mi Material
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab('builder')}
+                  className="inline-flex items-center gap-1.5 rounded-xl border px-4 py-2 text-xs font-semibold hover:bg-sunken min-h-[40px]"
+                  style={{ borderColor: 'var(--border-subtle)' }}
+                >
+                  <Plus className="h-3.5 w-3.5" /> Crear Rutina a Mano
+                </button>
+              </div>
+            </div>
+          )}
           {routines.map((rt) => (
             <div key={rt.id} className="card-surface p-4 sm:p-5 flex flex-col justify-between space-y-4">
               <div className="space-y-3">

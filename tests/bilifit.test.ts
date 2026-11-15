@@ -124,8 +124,12 @@ import {
   backfillMyWhooshWorlds,
   backfillSplitTrailActivities,
   backfillWalkingActivities,
+  assignGearToActivities,
   createActivity,
+  createGear,
+  deleteGear,
   listElevationCandidateIds,
+  listGear,
   createCustomEquipment,
   createSegmentAndMatch,
   deleteActivity,
@@ -5240,4 +5244,261 @@ test('Altitud a 0 y pasos: se arregla lo que no es un dato, y se estima lo que f
   assert.equal(pickFitStepCount({ num_steps: 9000 }, 'cycling', 5000), null, 'en bici no se cuentan pasos');
 
   deleteActivity(id);
+});
+
+test('Material: se reparte por deporte y franja sin pisar el resto del historial', async () => {
+  const gearId = 'gear_test_zapatos_marzo';
+  const otherGearId = 'gear_test_zapatos_otras';
+  try { deleteActivity('act_gear_marzo_1'); } catch {}
+  try { deleteActivity('act_gear_marzo_2'); } catch {}
+  try { deleteActivity('act_gener_enero'); } catch {}
+  try { deleteActivity('act_gear_trail'); } catch {}
+  try { deleteActivity('act_gear_fuerza'); } catch {}
+  try { deleteGear(gearId); } catch {}
+  try { deleteGear(otherGearId); } catch {}
+
+  const mk = (id: string, startedAt: string, sport: string, distanceMeters: number, gear: string | null = null) =>
+    createActivity({
+      id,
+      externalId: null,
+      source: 'manual',
+      sport,
+      subSport: null,
+      title: `Sesión ${id}`,
+      description: null,
+      startedAt,
+      durationSec: 3600,
+      movingTimeSec: 3500,
+      distanceMeters,
+      elevationGain: 0,
+      elevationLoss: 0,
+      avgSpeedMs: 3,
+      maxSpeedMs: 4,
+      avgHr: 140,
+      maxHr: 160,
+      avgWatts: null,
+      normalizedPower: null,
+      maxWatts: null,
+      avgCadence: null,
+      calories: 300,
+      tss: 40,
+      rpe: null,
+      gearId: gear,
+      worldName: null,
+      polyline: null,
+      points: [],
+      strengthLogs: [],
+      totalVolumeKg: null,
+      extras: null,
+      createdAt: new Date().toISOString(),
+    } as never);
+
+  mk('act_gear_marzo_1', '2026-03-05T08:00:00.000Z', 'running', 10000);
+  mk('act_gear_marzo_2', '2026-03-20T08:00:00.000Z', 'walking', 5000);
+  mk('act_gener_enero', '2026-01-15T08:00:00.000Z', 'running', 12000);
+  mk('act_gear_trail', '2026-03-12T08:00:00.000Z', 'trail', 18000);
+  mk('act_gear_fuerza', '2026-03-08T08:00:00.000Z', 'strength', 0);
+
+  createGear({
+    id: gearId,
+    name: 'Zapatillas de marzo',
+    category: 'running_shoes',
+    defaultForSport: 'running',
+    initialKm: 100,
+    maxKm: 500,
+    active: true,
+    notes: null,
+  } as never);
+  createGear({
+    id: otherGearId,
+    name: 'Zapatillas otras',
+    category: 'running_shoes',
+    defaultForSport: null,
+    initialKm: 0,
+    maxKm: 800,
+    active: true,
+    notes: null,
+  } as never);
+
+  // Ojo: createActivity asigna el material por defecto del deporte, así que se compara
+  // contra lo que hubiera antes, no contra null.
+  const gearBefore = getActivityById('act_gear_marzo_1')?.gearId ?? null;
+
+  // Vista previa: cuenta, no escribe
+  const preview = assignGearToActivities(gearId, {
+    sports: ['running', 'walking'],
+    from: '2026-03-01T00:00:00.000Z',
+    to: '2026-03-31T23:59:59.999Z',
+    dryRun: true,
+  });
+  assert.equal(preview.updated, 2, 'las dos de marzo (correr y andar)');
+  assert.equal(preview.distanceMeters, 15000);
+  assert.equal(preview.dryRun, true);
+  assert.equal(getActivityById('act_gear_marzo_1')?.gearId ?? null, gearBefore, 'el dryRun no escribe');
+
+  // Aplicar: sólo los deportes marcados y sólo la franja
+  const applied = assignGearToActivities(gearId, {
+    sports: ['running', 'walking'],
+    from: '2026-03-01T00:00:00.000Z',
+    to: '2026-03-31T23:59:59.999Z',
+  });
+  assert.equal(applied.updated, 2);
+  assert.equal(getActivityById('act_gear_marzo_1')?.gearId, gearId);
+  assert.equal(getActivityById('act_gear_marzo_2')?.gearId, gearId);
+  assert.notEqual(getActivityById('act_gener_enero')?.gearId ?? null, gearId, 'fuera de la franja, intacta');
+  assert.notEqual(getActivityById('act_gear_trail')?.gearId ?? null, gearId, 'otro deporte, intacto (sus zapatillas son otras)');
+  assert.equal(getActivityById('act_gear_fuerza')?.gearId ?? null, null, 'fuerza no recibe material de carrera');
+
+  // Kilometraje acumulado: se recalcula solo, por el JOIN de listGear
+  const after = listGear().find((g) => g.id === gearId);
+  assert.ok(after, 'el material sigue ahí');
+  assert.equal(Math.round((after?.trackedKm ?? 0) * 10) / 10, 15, '15 km heredados de las dos sesiones');
+  assert.equal(Math.round((100 + (after?.trackedKm ?? 0)) * 10) / 10, 115, 'más los 100 km iniciales');
+
+  // Reaplicar sobre lo mismo no cuenta cambios
+  const again = assignGearToActivities(gearId, {
+    sports: ['running', 'walking'],
+    from: '2026-03-01T00:00:00.000Z',
+    to: '2026-03-31T23:59:59.999Z',
+  });
+  assert.equal(again.updated, 0, 'ya lo llevan esas dos');
+  assert.equal(again.unchanged, 2);
+
+  const marchScope: { sports: import('../src/types').SportType[]; from: string; to: string } = {
+    sports: ['running', 'walking'],
+    from: '2026-03-01T00:00:00.000Z',
+    to: '2026-03-31T23:59:59.999Z',
+  };
+
+  // Quitar sólo de la franja, dejando intacto el resto
+  const undone = assignGearToActivities(gearId, { ...marchScope, mode: 'unassign' });
+  assert.equal(undone.updated, 2);
+  assert.equal(undone.unchanged, 0, 'al quitar, ninguna estaba ya sin material en ese rango');
+  assert.equal(getActivityById('act_gear_marzo_1')?.gearId ?? null, null, 'sus dos sesiones de marzo vuelven a no tener material');
+  assert.notEqual(getActivityById('act_gener_enero')?.gearId ?? null, null, 'la de enero conserva el suyo');
+
+  // `onlyWithoutGear` deja las que ya llevan otro material puesto a mano
+  assignGearToActivities(otherGearId, { ...marchScope, sports: ['walking'] });
+  assert.equal(getActivityById('act_gear_marzo_2')?.gearId, otherGearId, 'la de andar se quedó con las otras');
+  const onlyEmpty = assignGearToActivities(gearId, { ...marchScope, onlyWithoutGear: true });
+  assert.equal(onlyEmpty.updated, 1, 'sólo la que estaba sin material');
+  assert.equal(getActivityById('act_gear_marzo_1')?.gearId, gearId);
+  assert.equal(getActivityById('act_gear_marzo_2')?.gearId, otherGearId, 'y la otra, respetada');
+
+  assert.throws(() => assignGearToActivities('gear_que_no_existe', { sports: ['running'] }), /no existe/);
+
+  deleteActivity('act_gear_marzo_1');
+  deleteActivity('act_gear_marzo_2');
+  deleteActivity('act_gener_enero');
+  deleteActivity('act_gear_trail');
+  deleteActivity('act_gear_fuerza');
+  deleteGear(gearId);
+  deleteGear(otherGearId);
+});
+
+test('Material por rango: la API cuenta antes de aplicar y rechaza opciones raras', async () => {
+  const gearId = 'gear_test_api_rango';
+  const rideId = 'act_gear_api_ride';
+  try { deleteActivity(rideId); } catch {}
+  createActivity({
+    id: rideId,
+    externalId: null,
+    source: 'manual',
+    sport: 'cycling',
+    subSport: null,
+    title: 'Ruta de abril',
+    description: null,
+    startedAt: '2026-04-11T07:00:00.000Z',
+    durationSec: 7200,
+    movingTimeSec: 6800,
+    distanceMeters: 60000,
+    elevationGain: 400,
+    elevationLoss: 400,
+    avgSpeedMs: 8.3,
+    maxSpeedMs: 12,
+    avgHr: 132,
+    maxHr: 158,
+    avgWatts: 180,
+    normalizedPower: 195,
+    maxWatts: 400,
+    avgCadence: 88,
+    calories: 900,
+    tss: 70,
+    rpe: null,
+    gearId: null,
+    worldName: null,
+    polyline: null,
+    points: [],
+    strengthLogs: [],
+    totalVolumeKg: null,
+    extras: null,
+    createdAt: new Date().toISOString(),
+  } as never);
+
+  // El material se crea DESPUÉS de la actividad: si no, `createActivity` lo asigna solo
+  // como por defecto del deporte y el test ya no contaría cambios reales.
+  createGear({
+    id: gearId,
+    name: 'Bici de primavera',
+    brand: null,
+    category: 'road_bike',
+    defaultForSport: 'cycling',
+    initialKm: 10,
+    maxKm: 12,
+    active: true,
+    notes: null,
+  } as never);
+
+  const { POST } = await import('../src/app/api/gear/[id]/assign/route');
+  const call = (body: Record<string, unknown>) =>
+    POST(
+      {
+        method: 'POST',
+        headers: new Headers({ 'content-type': 'application/json', cookie: 'bilifit-account=raul' }),
+        cookies: { get: () => ({ value: 'raul' }) },
+        json: async () => body,
+      } as never,
+      { params: Promise.resolve({ id: gearId }) }
+    );
+
+  const gearBeforeApi = getActivityById(rideId)?.gearId ?? null;
+  const dry = await call({ dryRun: true, from: '2026-04-01', to: '2026-04-30' });
+  assert.equal(dry.status, 200);
+  const dryJson = await dry.json();
+  assert.equal(dryJson.result.updated, 1);
+  assert.equal(dryJson.affectedKm, 60);
+  // 10 km iniciales + 60 del rango, y el tope del material son 12 -> aviso de vida útil
+  assert.equal(dryJson.projectedTotalKm, 70);
+  assert.equal(dryJson.overMax, true);
+  assert.equal(getActivityById(rideId)?.gearId ?? null, gearBeforeApi, 'la vista previa no escribe');
+
+  const applied = await call({ from: '2026-04-01', to: '2026-04-30' });
+  assert.equal(applied.status, 200);
+  const appliedJson = await applied.json();
+  assert.equal(appliedJson.result.updated, 1);
+  assert.equal(appliedJson.item.trackedKm, 60, 'trackedKm viene recalculado en la respuesta');
+  assert.equal(getActivityById(rideId)?.gearId, gearId);
+
+  // Franja que no coincide con nada
+  const none = await call({ from: '2026-05-01', to: '2026-05-31' });
+  assert.equal((await none.json()).result.updated, 0);
+
+  // Deportes vacíos => 400, que si no se repartiría también a las de fuerza
+  const bad = await call({ sports: [] });
+  assert.equal(bad.status, 400);
+
+  // Material inexistente => 404
+  const missing = await (await import('../src/app/api/gear/[id]/assign/route')).POST(
+    {
+      method: 'POST',
+      headers: new Headers({ 'content-type': 'application/json', cookie: 'bilifit-account=raul' }),
+      cookies: { get: () => ({ value: 'raul' }) },
+      json: async () => ({}),
+    } as never,
+    { params: Promise.resolve({ id: 'gear_que_no_existe' }) }
+  );
+  assert.equal(missing.status, 404);
+
+  deleteActivity(rideId);
+  deleteGear(gearId);
 });

@@ -598,7 +598,8 @@ export const STEP_COUNT_SPORTS: SportType[] = ['running', 'trail', 'mountain', '
 export function estimateStepsFromTrack(
   points: ActivityPoint[],
   distanceMeters: number,
-  avgStrideLenM?: number | null
+  avgStrideLenM?: number | null,
+  movingSec?: number | null
 ): { steps: number; from: 'cadencia' | 'zancada' } | null {
   let steps = 0;
   let cadencedSec = 0;
@@ -613,9 +614,13 @@ export function estimateStepsFromTrack(
     steps += (cur.cad / 60) * dt;
     cadencedSec += dt;
   }
-  // Con poca traza cadenciada el total sale corto: mejor la zancada o nada
-  const movingSec = points.length > 1 ? Math.max(1, points[points.length - 1].t || 0) : 0;
-  if (cadencedSec >= 30 && movingSec > 0 && cadencedSec > movingSec * 0.4) {
+  // Con poca traza cadenciada el total sale corto: mejor la zancada o nada. El
+  // denominador es tiempo EN MOVIMIENTO, no el reloj del track: una pausa de media hora
+  // no debe invalidar una integral de cadencia perfectamente buena.
+  const lastT = points.length > 1 ? Number(points[points.length - 1].t) : 0;
+  const referenceSec =
+    typeof movingSec === 'number' && movingSec > 0 ? movingSec : Number.isFinite(lastT) && lastT > 0 ? lastT : 0;
+  if (cadencedSec >= 30 && referenceSec > 0 && cadencedSec > referenceSec * 0.4) {
     return { steps: Math.round(steps), from: 'cadencia' };
   }
   if (typeof avgStrideLenM === 'number' && avgStrideLenM > 0.3 && avgStrideLenM < 3 && distanceMeters > 100) {
@@ -689,8 +694,15 @@ export function computeSessionExtras(
     const minCad = activity.sport === 'walking' ? 70 : 100;
     const cads = points.map((p) => p.cad).filter((v): v is number => typeof v === 'number' && v > minCad);
     if (cads.length > 0) {
+      // La zancada es una magnitud por paso, así que se divide por el tiempo EN
+      // MOVIMIENTO: con la pausa contada, un rodaje con un alto largo daría una zancada
+      // de risa y los pasos estimados saldrían disparados.
+      const strideSpeedMs =
+        activity.movingTimeSec > 0 && activity.distanceMeters > 0
+          ? activity.distanceMeters / activity.movingTimeSec
+          : effectiveAvgSpeed;
       const avgCad = cads.reduce((a, b) => a + b, 0) / cads.length;
-      base.avgStrideLenM = Math.round(((effectiveAvgSpeed * 60) / avgCad) * 100) / 100;
+      base.avgStrideLenM = Math.round(((strideSpeedMs * 60) / avgCad) * 100) / 100;
     }
   }
 
@@ -698,7 +710,12 @@ export function computeSessionExtras(
   // si no viene, se calculan a partir de la propia traza y se marca como estimado,
   // para que la ficha no lo venda nunca como medición del reloj.
   if (!(typeof base.steps === 'number' && base.steps > 0) && STEP_COUNT_SPORTS.includes(activity.sport)) {
-    const est = estimateStepsFromTrack(points, activity.distanceMeters ?? 0, base.avgStrideLenM);
+    const est = estimateStepsFromTrack(
+      points,
+      activity.distanceMeters ?? 0,
+      base.avgStrideLenM,
+      activity.movingTimeSec || effectiveDuration
+    );
     if (est) {
       base.steps = est.steps;
       base.stepsEstimated = true;
