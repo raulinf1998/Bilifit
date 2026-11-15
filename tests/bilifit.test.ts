@@ -92,7 +92,11 @@ import {
   pickElevationSamples,
   smoothElevationSeries,
 } from '../src/lib/elevation';
-import { backfillMissingElevation, reloadActivityElevation } from '../src/lib/elevation-backfill';
+import {
+  ELEVATION_MAX_CONSECUTIVE_FAILURES,
+  backfillMissingElevation,
+  reloadActivityElevation,
+} from '../src/lib/elevation-backfill';
 import {
   MAX_TRACKED_SESSION_SEC,
   OFFAPP_GRACE_SEC,
@@ -4983,6 +4987,35 @@ test('El backfill de altitud rellena una salida sin barómetro, cachea y no pisa
     'un fallo del servicio deja la actividad intacta'
   );
   assert.equal(getActivityById(id)?.elevationGain, after.elevationGain, 'un fallo del servicio no borra el perfil');
+
+  // Cortacircuitos: con el servicio caído se rinde tras unos pocos fallos, no tras 40
+  const cutoffIds = Array.from({ length: 6 }, (_, i) => `act_elev_cutoff_${i}`);
+  cutoffIds.forEach((cutoffId, i) => {
+    deleteActivity(cutoffId);
+    createActivity({
+      ...(getActivityById(id) as object),
+      id: cutoffId,
+      externalId: `huawei_no_altimetro_cutoff_${i}`,
+      title: `Salida con el servicio caído ${i + 1}`,
+      elevationGain: 0,
+      elevationLoss: 0,
+      points: elevationTrackPoints(false).map((p) => ({ ...p, lat: (p.lat as number) + 0.7 + i * 0.01 })),
+      extras: null,
+    } as never);
+  });
+  const cutoff = await backfillMissingElevation({
+    maxActivities: 500,
+    url: 'https://dem.test/v1/elevation',
+    fetchImpl: makeDemFetchImpl({ fail: true }).impl,
+  });
+  assert.ok(cutoff.candidates >= 6, `hay ${cutoff.candidates} candidatas`);
+  assert.ok(
+    cutoff.failed <= ELEVATION_MAX_CONSECUTIVE_FAILURES,
+    `se para en vez de intentar las ${cutoff.candidates}: ${JSON.stringify(cutoff)}`
+  );
+  assert.ok(cutoff.skipped > 0, 'las no intentadas se cuentan como omitidas');
+  assert.ok(cutoff.error && /próxima recarga/.test(cutoff.error), 'avisa de que queda trabajo pendiente');
+  cutoffIds.forEach((cutoffId) => deleteActivity(cutoffId));
 
   deleteActivity(id);
   deleteActivity(sameRouteId);

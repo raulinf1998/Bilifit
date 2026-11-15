@@ -58,6 +58,9 @@ export type ElevationProviderConfig = {
   fetchImpl?: typeof fetch;
 };
 
+/** Cortacircuitos del backfill: nº de salidas fallando seguidas antes de rendirse. */
+export const ELEVATION_MAX_CONSECUTIVE_FAILURES = 3;
+
 const DISABLED = new Set(['none', 'off', '0', '', 'false']);
 
 /** `BILIFIT_DEM_URL` permite apuntar a otro proveedor; `none` lo apaga. */
@@ -254,26 +257,44 @@ export async function backfillMissingElevation(
   if (ids.length === 0) return summary;
 
   let done = 0;
+  // Si el servicio no responde, cortar pronto: cada intento cuesta tiempo de espera y
+  // el backfill va dentro de «Recargar datos», que el usuario está mirando.
+  let consecutiveFailures = 0;
   for (const id of ids) {
     const activity = getActivityById(id);
     if (!activity) {
       summary.skipped++;
+      done++;
       continue;
     }
     try {
       const res = await reconstructActivityElevation(activity, options);
-      if (res.status === 'updated') summary.updated++;
-      else if (res.status === 'skipped') summary.skipped++;
-      else {
+      if (res.status === 'updated') {
+        summary.updated++;
+        consecutiveFailures = 0;
+      } else if (res.status === 'skipped') {
+        summary.skipped++;
+        consecutiveFailures = 0;
+      } else {
         summary.failed++;
         summary.error = res.error ?? summary.error;
+        consecutiveFailures++;
       }
     } catch (err) {
       summary.failed++;
       summary.error = err instanceof Error ? err.message : 'Error consultando el modelo de elevaciones';
+      consecutiveFailures++;
     }
     done++;
     options.onProgress?.(done, ids.length);
+    if (consecutiveFailures >= ELEVATION_MAX_CONSECUTIVE_FAILURES) {
+      const left = ids.length - done;
+      summary.skipped += left;
+      summary.error = `${
+        summary.error ?? 'El servicio de elevaciones no responde'
+      } — se para tras ${ELEVATION_MAX_CONSECUTIVE_FAILURES} fallos seguidos; quedan ${left} salidas para la próxima recarga.`;
+      break;
+    }
   }
 
   if (summary.updated === 0 && summary.failed > 0) summary.status = 'error';
