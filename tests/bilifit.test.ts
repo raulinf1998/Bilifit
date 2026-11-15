@@ -81,6 +81,19 @@ import {
 } from '../src/lib/home-workouts';
 import { countPrefilledExercises, planSetRows } from '../src/lib/workout-prefill';
 import {
+  DEM_HYSTERESIS_M,
+  MIN_SAMPLE_SPACING_M,
+  assessElevationNeed,
+  buildMapElevation,
+  cumulativeDistances,
+  elevationCacheKey,
+  fetchElevations,
+  interpolateElevation,
+  pickElevationSamples,
+  smoothElevationSeries,
+} from '../src/lib/elevation';
+import { backfillMissingElevation, reloadActivityElevation } from '../src/lib/elevation-backfill';
+import {
   MAX_TRACKED_SESSION_SEC,
   OFFAPP_GRACE_SEC,
   adoptResumedClock,
@@ -106,6 +119,7 @@ import {
   backfillSplitTrailActivities,
   backfillWalkingActivities,
   createActivity,
+  listElevationCandidateIds,
   createCustomEquipment,
   createSegmentAndMatch,
   deleteActivity,
@@ -4638,4 +4652,340 @@ test('Las fichas de ejercicio mantienen su fondo sólido al resaltarse (opacidad
   assert.doesNotMatch(src, /justAdded \? undefined : 'var\(--bg-card-elevated\)'/);
   assert.match(src, /background: justAdded\s*\?\s*'linear-gradient/);
   assert.doesNotMatch(src, /justAdded \? 'border-emerald-500\/60 bg-emerald-500\/10'/);
+});
+
+/** Trayectoria sintética: 2 km subiendo 100 m, en línea hacia el norte. */
+function elevationTrackPoints(withEle = false): Array<import('../src/types').ActivityPoint> {
+  return Array.from({ length: 21 }, (_, i) => ({
+    t: i * 60,
+    lat: 43.36 + i * 0.0009,
+    lon: -5.85,
+    dist: i * 100,
+    hr: 132 + (i % 10),
+    speed: 1.67,
+    ...(withEle ? { ele: 235 + i * 5 } : {}),
+  }));
+}
+
+/** `buildMapElevation` con aserción de no-nulo para las pruebas. */
+function mapElevation(input: Parameters<typeof buildMapElevation>[0]) {
+  const out = buildMapElevation(input);
+  assert.ok(out, 'buildMapElevation debería devolver perfil');
+  return out;
+}
+
+/** DEM sintético: 235 m en lat 43.36, +5 m cada 100 m de latitud. */
+function fakeDemEle(lat: number): number {
+  return 235 + (lat - 43.36) * 100000 * 0.05;
+}
+
+function makeDemFetchImpl(options: { noise?: number; fail?: boolean; status?: number } = {}) {
+  const state = { calls: 0, urls: [] as string[] };
+  const impl = async (input: RequestInfo | URL) => {
+    state.calls++;
+    const url = String(input);
+    state.urls.push(url);
+    if (options.fail) return new Response('servicio caído', { status: options.status ?? 503 });
+    const q = new URL(url).searchParams;
+    const lats = (q.get('latitude') ?? '').split(',').filter(Boolean).map(Number);
+    const ele = lats.map((lat, i) => {
+      const base = fakeDemEle(lat);
+      const noise = options.noise ? (i % 2 === 0 ? options.noise : -options.noise) : 0;
+      return Math.round((base + noise) * 10) / 10;
+    });
+    return new Response(JSON.stringify({ elevation: ele }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  return { impl: impl as unknown as typeof fetch, state };
+}
+
+test('Altitud desde el GPS: muestreo, interpolación y suavizado del modelo del terreno', async () => {
+  const points = elevationTrackPoints(false);
+  const distances = cumulativeDistances(points);
+  assert.ok(Math.abs(distances[20] - 2000) < 60, `distancia total ~2 km, ${distances[20]}`);
+
+  // --- Cuándo hace falta estimarla ---
+  const need = assessElevationNeed({ sport: 'running', points, elevationGain: 0, elevationLoss: 0 });
+  assert.equal(need.needed, true);
+  assert.equal(need.reason, 'necesaria');
+  assert.equal(need.coverage, 0);
+
+  assert.equal(
+    assessElevationNeed({ sport: 'running', points: elevationTrackPoints(true), elevationGain: 100, elevationLoss: 100 }).reason,
+    'altimetro',
+    'un reloj con barómetro no se toca'
+  );
+  assert.equal(assessElevationNeed({ sport: 'mywhoosh', points, elevationGain: 0, elevationLoss: 0 }).reason, 'interior');
+  assert.equal(assessElevationNeed({ sport: 'strength', points, elevationGain: 0, elevationLoss: 0 }).reason, 'interior');
+  assert.equal(assessElevationNeed({ sport: 'trail', points: [points[0]], elevationGain: 0, elevationLoss: 0 }).reason, 'sin_gps');
+  const tiny = Array.from({ length: 4 }, (_, i) => ({ t: i * 30, lat: 43.36 + i * 0.00002, lon: -5.85 }));
+  assert.equal(
+    assessElevationNeed({ sport: 'running', points: tiny, elevationGain: 0, elevationLoss: 0 }).reason,
+    'corta',
+    'una salida de 20 m no merece petición al servicio de elevaciones'
+  );
+  assert.ok(MIN_SAMPLE_SPACING_M === 100);
+
+  // --- Muestreo espaciado por distancia ---
+  const samples = pickElevationSamples(points, { maxSamples: 80, minSpacingM: 100 });
+  assert.ok(samples.length >= 10, `ocho muestras como mínimo, ${samples.length}`);
+  assert.ok(samples.length <= 80);
+  assert.equal(samples[0].index, 0);
+  assert.ok(samples.every((x, i, arr) => i === 0 || x.distanceM > arr[i - 1].distanceM), 'ordenadas por distancia');
+  assert.ok(
+    samples.every((x, i, arr) => i === 0 || x.distanceM - arr[i - 1].distanceM >= 1),
+    'sin muestras repetidas'
+  );
+
+  // --- Interpolación + perfil ---
+  const built = mapElevation({ points, samples, sampleEle: samples.map((x) => fakeDemEle(x.lat)) });
+  assert.equal(built.points.length, points.length);
+  assert.ok(built.points.every((p) => typeof p.ele === 'number' && Number.isFinite(p.ele)), 'todos los puntos con altitud');
+  assert.ok(Math.abs(built.minEle - 235) <= 2, `cota mínima ${built.minEle}`);
+  assert.ok(Math.abs(built.maxEle - 325) <= 2, `cota máxima ${built.maxEle}`);
+  assert.ok(built.gain >= 84 && built.gain <= 96, `~90 m de subida real, obtenido ${built.gain}`);
+  assert.ok(built.loss <= 8, `subida continua casi sin pérdida, ${built.loss}`);
+  assert.equal(built.biasM, 0);
+
+  // Una salida llana sigue recibiendo su perfil (cotas) aunque el desnivel sea 0
+  const flatBuilt = mapElevation({ points, samples, sampleEle: samples.map(() => 300) });
+  assert.equal(flatBuilt.gain, 0);
+  assert.equal(flatBuilt.maxEle, 300);
+
+  // --- El suavizado amortigua el ruido/escalón del DEM ---
+  const zigzag = mapElevation({ points, samples, sampleEle: samples.map((x) => fakeDemEle(x.lat)), smoothWindowM: 0 });
+  const jagged = samples.map((x, i) => fakeDemEle(x.lat) + (i % 2 === 0 ? 12 : -12));
+  const rawZig = mapElevation({ points, samples, sampleEle: jagged, smoothWindowM: 0, hysteresisM: DEM_HYSTERESIS_M });
+  const smoothZig = mapElevation({ points, samples, sampleEle: jagged, smoothWindowM: 600 });
+  assert.ok(rawZig.gain > smoothZig.gain, `sin suavizar inflatea (${rawZig.gain}) frente a suavizado (${smoothZig.gain})`);
+  assert.ok(smoothZig.gain > 0 && smoothZig.gain <= rawZig.gain, `el perfil suavizado sigue contando la subida: ${smoothZig.gain}`);
+  assert.ok(zigzag.gain >= 84, `sin ruido el resultado es la subida real: ${zigzag.gain}`);
+
+  // medias móviles sobre distancia: perfil constante -> constante
+  const d = cumulativeDistances(points);
+  const smoothed = smoothElevationSeries(points.map((_, i) => (i % 2 === 0 ? 10 : 30)), d, 400);
+  assert.ok(Math.max(...smoothed) - Math.min(...smoothed) < 8, 'la media móvil aplana el diente de sierra');
+
+  // interpolación lineal entre anclas
+  const interp = interpolateElevation(points, [
+    { index: 0, distanceM: 0, ele: 100 },
+    { index: 20, distanceM: distances[20], ele: 200 },
+  ]);
+  assert.equal(interp[0], 100);
+  assert.ok(Math.abs(interp[10] - 150) < 12, `mitad de recorrido ~150 m, ${interp[10]}`);
+
+  // --- Sesgo: encaja el mapa con la altitud parcial del reloj ---
+  const partial = elevationTrackPoints(false).map((p, i) =>
+    i < 4 ? { ...p, ele: fakeDemEle(p.lat as number) + 40 } : p
+  ) as typeof points;
+  const biased = mapElevation({ points: partial, samples, sampleEle: samples.map((x) => fakeDemEle(x.lat)) });
+  assert.ok(Math.abs(biased.biasM - 40) <= 3, `sesgo ~40 m, ${biased.biasM}`);
+  const mid = biased.points[12];
+  assert.ok(Math.abs((mid.ele as number) - (fakeDemEle(mid.lat as number) + 40)) <= 8, `hueco relleno con el sesgo: ${mid.ele}`);
+  assert.equal(biased.points[0].ele, partial[0].ele, 'lo que midió el reloj se respeta');
+
+  // --- Clave de caché y cliente del proveedor ---
+  assert.equal(elevationCacheKey(43.36001234, -5.85), '43.3600,-5.8500');
+
+  const ok = makeDemFetchImpl();
+  const values = await fetchElevations(
+    [
+      [43.36, -5.85],
+      [43.3609, -5.85],
+    ],
+    { fetchImpl: ok.impl, url: 'https://dem.test/v1/elevation' }
+  );
+  assert.equal(values.length, 2);
+  assert.ok(Math.abs((values[1] as number) - fakeDemEle(43.3609)) < 0.2);
+  assert.ok(ok.state.urls[0].includes('latitude=43.3600,43.3609'), ok.state.urls[0]);
+  assert.ok(ok.state.urls[0].includes('longitude=-5.8500,-5.8500'));
+
+  // lotes de 100 en 100
+  const chunked = makeDemFetchImpl();
+  const many = await fetchElevations(Array.from({ length: 250 }, (_, i) => [43.36 + i * 0.0001, -5.85] as [number, number]), {
+    fetchImpl: chunked.impl,
+    url: 'https://dem.test/v1/elevation',
+  });
+  assert.equal(many.length, 250);
+  assert.equal(chunked.state.calls, 3, '250 coordenadas = 3 peticiones');
+
+  // fallo del servicio: reintenta y propaga el error
+  const down = makeDemFetchImpl({ fail: true });
+  await assert.rejects(() =>
+    fetchElevations(
+      [
+        [43.36, -5.85],
+        [43.37, -5.85],
+      ],
+      { fetchImpl: down.impl, url: 'https://dem.test/v1/elevation', retries: 1, chunkDelayMs: 0 }
+    )
+  );
+  assert.equal(down.state.calls, 2, 'un intento y un reintento');
+});
+
+test('El backfill de altitud rellena una salida sin barómetro, cachea y no pisa datos reales', async () => {
+  const id = 'act_elev_gps_1';
+  deleteActivity(id);
+  createActivity({
+    id,
+    externalId: 'huawei_no_altimetro_test',
+    source: 'huawei',
+    sport: 'running',
+    subSport: 'Correr',
+    title: 'Salida sin altímetro',
+    description: null,
+    startedAt: new Date().toISOString(),
+    durationSec: 1200,
+    movingTimeSec: 1200,
+    distanceMeters: 2000,
+    elevationGain: 0,
+    elevationLoss: 0,
+    avgSpeedMs: 1.67,
+    maxSpeedMs: 2,
+    avgHr: 140,
+    maxHr: 150,
+    avgWatts: null,
+    normalizedPower: null,
+    maxWatts: null,
+    avgCadence: null,
+    calories: 120,
+    tss: 0,
+    rpe: null,
+    gearId: null,
+    worldName: null,
+    polyline: null,
+    startLat: 43.36,
+    startLon: -5.85,
+    points: elevationTrackPoints(false),
+    strengthLogs: [],
+    totalVolumeKg: null,
+    createdAt: new Date().toISOString(),
+  } as never);
+
+  // Es candidata del backfill masivo (sin desnivel y con GPS)
+  assert.ok(listElevationCandidateIds(500).includes(id));
+
+  const dem = makeDemFetchImpl();
+  const first = await reloadActivityElevation(id, { fetchImpl: dem.impl, url: 'https://dem.test/v1/elevation' });
+  assert.equal(first.result.status, 'updated', JSON.stringify(first.result));
+  assert.ok((first.result.gain ?? 0) >= 85, `desnivel positivo estimado ~100 m, ${first.result.gain}`);
+  assert.ok((first.result.fetched ?? 0) > 0);
+
+  const after = getActivityById(id);
+  assert.ok(after);
+  assert.ok(after.points.length > 0 && after.points.every((p) => typeof p.ele === 'number'));
+  assert.ok(after.elevationGain >= 85, `desnivel guardado ${after.elevationGain}`);
+  assert.equal(after.extras?.elevationSource, 'map', 'queda marcado que viene del mapa');
+  assert.ok(typeof after.extras?.maxEle === 'number' && after.extras.maxEle > 300, 'cota máxima en extras');
+  assert.ok(
+    (after.kmSplits ?? []).some((sp) => (sp.elevationGain ?? 0) > 20),
+    'el desnivel por km se recalcula a partir del perfil'
+  );
+  // La pendiente por punto también (grade), y el TSS del running usa el desnivel
+  assert.ok(after.points.some((p) => typeof p.grade === 'number' && (p.grade as number) > 0));
+  assert.ok(after.tss > 0, 'el TSS se recalcula con el desnivel ya presente');
+
+  // Con el perfil ya puesto no se rehace, y el motivo dice "ya estimado", no "tu reloj medía"
+  const cached = await reloadActivityElevation(id, { fetchImpl: dem.impl, url: 'https://dem.test/v1/elevation' });
+  assert.equal(cached.result.status, 'skipped');
+  assert.equal(cached.result.reason, 'ya_estimada');
+  // ...pero `refresh` sí lo recalcula desde el mapa (quitando la altitud que pusimos nosotros)
+  const refreshed = await reloadActivityElevation(id, {
+    fetchImpl: dem.impl,
+    url: 'https://dem.test/v1/elevation',
+    refresh: true,
+  });
+  assert.equal(refreshed.result.status, 'updated');
+  assert.equal(refreshed.result.fetched, refreshed.result.samples, 'refresh se salta la caché');
+  assert.equal(refreshed.activity?.elevationGain, after.elevationGain, 'el mismo DEM da el mismo desnivel');
+
+  // Otra salida por el mismo sitio sale de la caché local: cero peticiones nuevas
+  const sameRouteId = 'act_elev_gps_1b';
+  deleteActivity(sameRouteId);
+  createActivity({
+    ...(getActivityById(id) as object),
+    id: sameRouteId,
+    externalId: 'huawei_no_altimetro_test_2',
+    title: 'Mismo recorrido, otro día',
+    elevationGain: 0,
+    elevationLoss: 0,
+    points: elevationTrackPoints(false),
+    extras: null,
+  } as never);
+  const callsBefore = dem.state.calls;
+  const reused = await reloadActivityElevation(sameRouteId, { fetchImpl: dem.impl, url: 'https://dem.test/v1/elevation' });
+  assert.equal(reused.result.status, 'updated');
+  assert.equal(dem.state.calls, callsBefore, 'las altitudes repetidas salen de elevation_cache');
+  assert.equal(reused.result.fetched, 0);
+  assert.ok((reused.result.fromCache ?? 0) > 0);
+  assert.equal(getActivityById(id)?.elevationGain, after.elevationGain, 'la primera salida conserva su perfil');
+
+  // Un reloj que sí medía altitud no se toca, aunque se pida a la fuerza
+  const withBaroId = 'act_elev_gps_2';
+  deleteActivity(withBaroId);
+  createActivity({
+    ...(getActivityById(id) as object),
+    id: withBaroId,
+    externalId: 'huawei_con_barometro_test',
+    title: 'Salida con altímetro',
+    elevationGain: 240,
+    elevationLoss: 240,
+    points: elevationTrackPoints(true),
+    // sin marca de "estimado por mapa": este sí que es dato del reloj
+    extras: null,
+  } as never);
+  const untouched = await reloadActivityElevation(withBaroId, {
+    fetchImpl: makeDemFetchImpl().impl,
+    url: 'https://dem.test/v1/elevation',
+  });
+  assert.equal(untouched.result.status, 'skipped');
+  assert.equal(untouched.result.reason, 'altimetro');
+  assert.equal(getActivityById(withBaroId)?.elevationGain, 240, 'el dato del reloj manda');
+
+  // Proveedor apagado: no hay llamada ni error, sólo aviso
+  process.env.BILIFIT_DEM_URL = 'none';
+  const off = await backfillMissingElevation({ maxActivities: 10 });
+  assert.equal(off.status, 'skipped');
+  assert.equal(off.reason, 'proveedor_desactivado');
+  assert.equal(off.candidates, 0);
+  const offOne = await reloadActivityElevation(id, { url: undefined });
+  assert.equal(offOne.result.status, 'skipped');
+  assert.equal(offOne.result.reason, 'proveedor_desactivado');
+  delete process.env.BILIFIT_DEM_URL;
+
+  // El backfill masivo informa del estado sin romper nada si el servicio no responde
+  const brokenId = 'act_elev_gps_3';
+  deleteActivity(brokenId);
+  createActivity({
+    ...(getActivityById(id) as object),
+    id: brokenId,
+    externalId: 'huawei_no_altimetro_test_3',
+    title: 'Salida con el servicio caído',
+    elevationGain: 0,
+    elevationLoss: 0,
+    // Coordenadas distintas a las de arriba: si fueran las mismas, la altitud saldría
+    // entera de la caché local y la actividad se actualizaría sin tocar la red.
+    points: elevationTrackPoints(false).map((p) => ({ ...p, lat: (p.lat as number) + 0.5 })),
+    extras: null,
+  } as never);
+  const broken = await backfillMissingElevation({
+    maxActivities: 500,
+    url: 'https://dem.test/v1/elevation',
+    fetchImpl: makeDemFetchImpl({ fail: true }).impl,
+  });
+  assert.ok(broken.candidates >= 1, `debería haber candidatas: ${JSON.stringify(broken)}`);
+  assert.ok(broken.failed >= 1, `el servicio caído se reporta como fallo: ${JSON.stringify(broken)}`);
+  assert.equal(broken.status, 'error');
+  assert.ok(
+    (getActivityById(brokenId)?.points ?? []).every((p) => p.ele === undefined),
+    'un fallo del servicio deja la actividad intacta'
+  );
+  assert.equal(getActivityById(id)?.elevationGain, after.elevationGain, 'un fallo del servicio no borra el perfil');
+
+  deleteActivity(id);
+  deleteActivity(sameRouteId);
+  deleteActivity(brokenId);
+  deleteActivity(withBaroId);
 });
