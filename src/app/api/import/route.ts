@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { estimateImportedElevation } from '@/lib/elevation-backfill';
 import { withAccount } from '@/lib/account-context';
 import { resolveActivityTitle } from '@/lib/activity-naming';
 import { createActivity, findDuplicateActivity, getAthleteProfile } from '@/lib/db';
@@ -104,7 +105,7 @@ export async function POST(req: NextRequest) {
           createdAt: new Date().toISOString(),
         });
 
-        importedActivities.push(created);
+        importedActivities.push(await estimateImportedElevation(created));
       }
 
       return NextResponse.json({

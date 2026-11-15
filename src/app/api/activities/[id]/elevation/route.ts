@@ -16,13 +16,15 @@ import { reloadActivityElevation } from '@/lib/elevation-backfill';
 function skipMessage(reason?: string): string {
   switch (reason) {
     case 'proveedor_desactivado':
-      return 'El cálculo de altitud por mapa está desactivado (BILIFIT_DEM_URL=none).';
+      return 'El cálculo de altitud está desactivado en la configuración del servidor (BILIFIT_DEM_URL). Elimina el valor none y reinicia Bilifit para activarlo.';
     case 'ya_estimada':
       return 'El perfil de altitud ya estaba estimado desde el GPS. Pulsa «Volver a estimar» para recalcularlo contra el modelo del terreno.';
     case 'altimetro':
       return 'Este reloj ya registraba altitud: no hace falta estimarla.';
     case 'desnivel':
       return 'La salida ya trae desnivel registrado: la altitud por mapa sólo se aplica a las que no tienen ningún dato de altura.';
+    case 'actividad_modificada':
+      return 'La actividad cambió durante el cálculo. No se ha modificado; vuelve a intentarlo.';
     case 'interior':
       return 'La altitud por mapa sólo se aplica a salidas de exterior.';
     case 'sin_muestras':

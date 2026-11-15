@@ -5502,3 +5502,71 @@ test('Material por rango: la API cuenta antes de aplicar y rechaza opciones rara
   deleteActivity(rideId);
   deleteGear(gearId);
 });
+
+test('Altitud automática al importar: proveedor por defecto, protección y fallo recuperable', async () => {
+  const { resolveElevationProviderUrl } = await import('../src/lib/elevation-backfill');
+  const previousEnv = process.env.BILIFIT_DEM_URL;
+  const originalFetch = globalThis.fetch;
+  const dem = makeDemFetchImpl();
+  try {
+    delete process.env.BILIFIT_DEM_URL;
+    assert.equal(resolveElevationProviderUrl(), 'https://api.open-meteo.com/v1/elevation');
+    process.env.BILIFIT_DEM_URL = '';
+    assert.equal(resolveElevationProviderUrl(), 'https://api.open-meteo.com/v1/elevation');
+    process.env.BILIFIT_DEM_URL = 'none';
+    assert.equal(resolveElevationProviderUrl(), null);
+    delete process.env.BILIFIT_DEM_URL;
+    globalThis.fetch = dem.impl;
+    const { POST } = await import('../src/app/api/import/route');
+    const importGpx = async (offset: number, altitude: boolean) => {
+      const points = elevationTrackPoints(false).map((p, i) =>
+        `<trkpt lat="${(p.lat as number) + offset}" lon="${p.lon}">${altitude ? `<ele>${300 + i}</ele>` : ''}<time>${new Date(Date.UTC(2024, 0, 1 + offset * 10, 8, i)).toISOString()}</time></trkpt>`
+      ).join('');
+      const file = new File([`<?xml version="1.0"?><gpx version="1.1" creator="test"><trk><name>Prueba altitud</name><trkseg>${points}</trkseg></trk></gpx>`], 'track.gpx', { type: 'application/gpx+xml' });
+      const form = new FormData(); form.append('file', file); form.append('sportOverride', 'running');
+      const req = new NextRequest('http://localhost/api/import', { method: 'POST', body: form });
+      const res = await POST(req);
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.imported, 1, JSON.stringify(body));
+      return body.activities[0] as import('../src/types').ActivityDetail;
+    };
+    const missing = await importGpx(1, false);
+    assert.equal(missing.extras?.elevationSource, 'map');
+    assert.ok(missing.points.some(p => typeof p.ele === 'number'));
+    const calls = dem.state.calls;
+    assert.ok(calls > 0);
+    const measured = await importGpx(2, true);
+    assert.notEqual(measured.extras?.elevationSource, 'map');
+    assert.equal(measured.points[0].ele, 300);
+    assert.equal(dem.state.calls, calls, 'no se consulta el proveedor para datos medidos');
+    globalThis.fetch = makeDemFetchImpl({ fail: true }).impl;
+    const failed = await importGpx(3, false);
+    assert.notEqual(failed.extras?.elevationSource, 'map');
+    assert.ok(getActivityById(failed.id), 'se conserva la actividad si falla el proveedor');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousEnv === undefined) delete process.env.BILIFIT_DEM_URL;
+    else process.env.BILIFIT_DEM_URL = previousEnv;
+  }
+});
+
+test('Altitud: si se añade una cota mientras responde el proveedor, no se sobrescribe', async () => {
+  const id = 'act_elev_concurrent';
+  deleteActivity(id);
+  const seed = getActivityById('act_seed_run_1');
+  assert.ok(seed);
+  const points = elevationTrackPoints(false).map(p => ({ ...p, lat: (p.lat as number) + 0.2 }));
+  const activity = createActivity({ ...seed, id, externalId: id, points, elevationGain: 0, elevationLoss: 0, extras: null } as never);
+  const dem = makeDemFetchImpl();
+  const fetchImpl: typeof fetch = async (...args) => {
+    const newPoints = points.map((p, i) => i === 1 ? { ...p, ele: 321 } : p);
+    getDb().prepare('UPDATE activities SET points_json = ? WHERE id = ?').run(JSON.stringify(newPoints), id);
+    return dem.impl(...args);
+  };
+  const { result } = await reloadActivityElevation(activity.id, { fetchImpl, url: 'https://dem.test/v1/elevation' });
+  assert.equal(result.status, 'skipped');
+  assert.equal(result.reason, 'actividad_modificada');
+  assert.equal(getActivityById(id)?.points[1].ele, 321);
+  deleteActivity(id);
+});

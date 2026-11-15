@@ -1,3 +1,4 @@
+import { estimateImportedElevation } from '@/lib/elevation-backfill';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -661,14 +662,14 @@ function upsertHuaweiImportLog(entry: {
     );
 }
 
-function persistHuaweiParsedActivities(
+async function persistHuaweiParsedActivities(
   itemKey: string,
   fileName: string,
   driveFileId: string | null,
   channel: 'folder' | 'drive',
   parsedList: ParsedActivityData[],
   refreshExisting = false
-): { imported: number; updated: number; skipped: number } {
+): Promise<{ imported: number; updated: number; skipped: number }> {
   const profile = getAthleteProfile();
   let imported = 0;
   let updated = 0;
@@ -816,6 +817,8 @@ function persistHuaweiParsedActivities(
       },
       createdAt: new Date().toISOString(),
     });
+
+    await estimateImportedElevation(created);
 
     if (parsedList.length === 1 || idx === 0) {
       upsertHuaweiImportLog({
@@ -975,7 +978,7 @@ export async function syncHuaweiActivities(
               }
             }
 
-            const res = persistHuaweiParsedActivities(
+            const res = await persistHuaweiParsedActivities(
               itemKey,
               grp.primary.fileName,
               null,
@@ -1052,7 +1055,7 @@ export async function syncHuaweiActivities(
               }
             }
 
-            const res = persistHuaweiParsedActivities(
+            const res = await persistHuaweiParsedActivities(
               itemKey,
               grp.primary.fileName,
               grp.primary.item.id,

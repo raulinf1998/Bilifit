@@ -72,3 +72,9 @@ El repositorio incluye configuración lista para producción (`Dockerfile`, `doc
 - `npm run start`: Arranque en producción
 - `npm run lint`: Verificación de tipos TypeScript (`tsc --noEmit`)
 - `npm test`: Tests automáticos de parsers (GPX MyWhoosh, TCX, FIT), métricas (NP, TSS, CTL/ATL/TSB) y generador de rutinas por material
+
+### Altitud estimada desde el GPS
+
+Las actividades de exterior sin altitud ni desnivel registrados se pueden completar con el modelo de elevación de Open-Meteo: se intenta al importar y, para actividades anteriores, desde «Desnivel desde GPS». Es necesaria conexión a internet desde el servidor. Las altitudes o el desnivel registrados por el dispositivo no se sustituyen.
+
+Por defecto no hace falta configurar nada. Si aparece el aviso de que el proveedor está desactivado, revisa la configuración del servidor o el archivo `.env`: elimina `BILIFIT_DEM_URL=none` (o déjala vacía) y reinicia el servicio o recrea el contenedor. También puedes establecer una URL alternativa compatible con la API de elevaciones de Open-Meteo. `BILIFIT_DEM_URL=none` desactiva intencionadamente esta función. Si el servicio falla, la actividad se guarda sin modificar y puedes volver a intentarlo más tarde.
