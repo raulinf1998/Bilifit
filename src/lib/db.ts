@@ -1837,6 +1837,117 @@ export function listGear(): GearItem[] {
   }));
 }
 
+export type GearScopeFilter = {
+  sports?: SportType[];
+  from?: string | null;
+  to?: string | null;
+};
+
+export type GearAssignmentResult = {
+  /** Sesiones que cambian (o cambiarían) de material. */
+  updated: number;
+  /** Las que ya estaban bien asignadas y no se tocan. */
+  unchanged: number;
+  /** Suma de distancia de las que entran en el conteo, en metros. */
+  distanceMeters: number;
+  /** true cuando era una vista previa y no se escribió nada. */
+  dryRun: boolean;
+};
+
+/** Cláusulas comunes de un reparto: deportes y franja de fechas (sin tocar gear_id). */
+function gearScopeClauses(filter: GearScopeFilter): { where: string; params: unknown[] } {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  const sports = (filter.sports ?? []).filter(Boolean) as SportType[];
+  if (sports.length > 0) {
+    clauses.push(`sport IN (${sports.map(() => '?').join(', ')})`);
+    params.push(...sports);
+  }
+  // Fechas comparadas como epoch: los started_at son ISO con 'Z', pero hay filas
+  // antiguas con otro formato, y compararlas como texto se equivoca en silencio.
+  if (filter.from) {
+    clauses.push("(strftime('%s', started_at) + 0) >= (strftime('%s', ?) + 0)");
+    params.push(filter.from);
+  }
+  if (filter.to) {
+    clauses.push("(strftime('%s', started_at) + 0) <= (strftime('%s', ?) + 0)");
+    params.push(filter.to);
+  }
+  return { where: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '', params };
+}
+
+function withGearCondition(scope: { where: string; params: unknown[] }, condition: string, param?: unknown) {
+  const where = scope.where ? `${scope.where} AND ${condition}` : `WHERE ${condition}`;
+  return { where, params: param === undefined ? scope.params : [...scope.params, param] };
+}
+
+/**
+ * Reparte un material entre las actividades de unos deportes dentro de una franja de
+ * fechas — o lo quita de ellas (`mode: 'unassign'`). `dryRun` cuenta y no escribe, que
+ * es lo que usa la vista previa del diálogo de Material.
+ *
+ * El kilometraje acumulado de la tarjeta no se retoca a propósito: `listGear` lo saca de
+ * un SUM sobre las actividades, así que se recalcula solo.
+ */
+export function assignGearToActivities(
+  gearId: string,
+  filter: GearScopeFilter & { mode?: 'assign' | 'unassign'; onlyWithoutGear?: boolean; dryRun?: boolean } = {}
+): GearAssignmentResult {
+  const db = getDb();
+  const gear = db.prepare('SELECT id FROM gear_items WHERE id = ?').get(gearId) as { id: string } | undefined;
+  if (!gear) throw new Error('El material no existe');
+
+  const mode = filter.mode ?? 'assign';
+  const scope = gearScopeClauses(filter);
+  const condition =
+    mode === 'unassign'
+      ? // Quitar el material sólo de las sesiones que lo llevan
+        'gear_id = ?'
+      : filter.onlyWithoutGear
+        ? 'gear_id IS NULL'
+        : '(gear_id IS NULL OR gear_id != ?)';
+  const target = withGearCondition(scope, condition, mode === 'unassign' || !filter.onlyWithoutGear ? gearId : undefined);
+  const matched = db
+    .prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(distance_meters), 0) AS meters FROM activities ${target.where}`)
+    .get(...target.params) as { n: number; meters: number };
+
+  // Las que ya estaban como quedarían, para poder decir «6 cambios, 3 ya OK»: al
+  // asignar son las que ya lo llevaban; al quitar, las que directamente no lo tenían.
+  const already = withGearCondition(
+    scope,
+    mode === 'unassign' ? '(gear_id IS NULL OR gear_id != ?)' : 'gear_id = ?',
+    gearId
+  );
+  const alreadyRow = db
+    .prepare(`SELECT COUNT(*) AS n FROM activities ${already.where}`)
+    .get(...already.params) as { n: number };
+  const unchanged = Number(alreadyRow?.n ?? 0);
+
+  if (filter.dryRun || matched.n === 0) {
+    return {
+      // En una vista previa, `updated` es cuántas *cambiarían* — es justo lo que pinta
+      // el diálogo antes de aceptar
+      updated: filter.dryRun ? Number(matched.n) : 0,
+      unchanged,
+      distanceMeters: Math.round(Number(matched.meters)),
+      dryRun: Boolean(filter.dryRun),
+    };
+  }
+
+  const sql =
+    mode === 'unassign'
+      ? `UPDATE activities SET gear_id = NULL ${target.where}`
+      : `UPDATE activities SET gear_id = ? ${target.where}`;
+  // `target.params` lleva ya el gearId del filtro de exclusión cuando hace falta
+  const info = db.prepare(sql).run(...(mode === 'unassign' ? target.params : [gearId, ...target.params]));
+  return {
+    updated: Number(info.changes ?? 0),
+    unchanged,
+    distanceMeters: Math.round(Number(matched.meters)),
+    dryRun: false,
+  };
+}
+
 export function createGear(item: Omit<GearItem, 'trackedKm'>): GearItem {
   getDb()
     .prepare(`
