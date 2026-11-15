@@ -7,8 +7,10 @@
  * un modelo digital del terreno (SRTM/Copernicus, ~30 m) y reconstruye el perfil.
  *
  * Este módulo hace esa reconstrucción:
- *   1. `assessElevationNeed` decide si una actividad necesita el dato (deporte de
- *      exterior, con GPS y sin cobertura de altímetro).
+ *   1. `assessElevationNeed` decide si una actividad necesita el dato: sólo exterior,
+ *      con GPS y, sobre todo, SIN ni un punto de altitud medido por el reloj. Es una
+ *      regla dura a propósito: lo que el dispositivo midió no se reescribe nunca, ni
+ *      aunque el desnivel registrado sea 0 (una salida llana lo es, y punto).
  *   2. `pickElevationSamples` elige puntos separados por distancia (no por índice),
  *      para que una salida larga y un paseo corto tengan el mismo detalle vertical.
  *   3. `fetchElevations` consulta el DEM por lotes (Open-Meteo, sin clave).
@@ -33,8 +35,6 @@ export const ELEVATION_SMOOTH_WINDOW_M = 180;
  * necesita más para que los escalones del mapa no se cuenten como repechos.
  */
 export const DEM_HYSTERESIS_M = 6;
-/** Con esta cobertura de altitud del dispositivo no se toca nada. */
-export const DEVICE_ELEVATION_COVERAGE = 0.7;
 /** Puntos con GPS mínimos para intentarlo. */
 export const MIN_GPS_POINTS = 3;
 
@@ -43,7 +43,7 @@ export const ELEVATION_CHUNK_SIZE = 100;
 export const ELEVATION_TIMEOUT_MS = 12_000;
 export const ELEVATION_CHUNK_DELAY_MS = 120;
 
-export type ElevationNeedReason = 'necesaria' | 'sin_gps' | 'corta' | 'altimetro' | 'interior' | 'sin_desnivel';
+export type ElevationNeedReason = 'necesaria' | 'sin_gps' | 'corta' | 'altimetro' | 'desnivel' | 'interior';
 
 export type ElevationNeed = {
   needed: boolean;
@@ -56,6 +56,43 @@ export type ElevationNeed = {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
+}
+
+/**
+ * ¿Cuenta este valor como altitud medida por el reloj? Un cero no. Muchos Huawei
+ * graban `ele: 0` en todos los puntos cuando no tienen sensor, y eso no es una
+ * medición: es la constancia de que no había nada que medir.
+ */
+export function isDeviceEle(value: unknown): boolean {
+  return isFiniteNumber(value) && value !== 0;
+}
+
+/**
+ * Reparto de altitudes del reloj sobre los puntos con GPS: `withEle` son las que hay
+ * escritas (incluidos los ceros de relleno) y `usableEle` las que son una medida real.
+ */
+export function deviceElevationStats(points: ActivityPoint[]): {
+  gps: number;
+  withEle: number;
+  usableEle: number;
+} {
+  let gps = 0;
+  let withEle = 0;
+  let usableEle = 0;
+  for (const p of points) {
+    if (!isFiniteNumber(p.lat) || !isFiniteNumber(p.lon)) continue;
+    gps++;
+    if (isFiniteNumber(p.ele)) {
+      withEle++;
+      if (isDeviceEle(p.ele)) usableEle++;
+    }
+  }
+  return { gps, withEle, usableEle };
+}
+
+/** Quita las altitudes escritas para que el mapa las rellene desde cero. */
+export function stripPointElevation(points: ActivityPoint[]): ActivityPoint[] {
+  return points.map((p) => (p.ele === undefined ? p : { ...p, ele: undefined }));
 }
 
 function median(values: number[]): number | null {
@@ -94,44 +131,52 @@ export function cumulativeDistances(points: ActivityPoint[]): number[] {
 
 /**
  * Decide si la altitud hay que reconstruirla desde el mapa.
- * `allowPartial` rellena incluso cuando el reloj traía altitud en algunos tramos
- * (túneles, pausas sin fix), corrigiendo el sesgo con los puntos conocidos.
+ *
+ * La condición de fondo es una sola y no tiene excepciones: **si el reloj midió
+ * altitud en algún punto, no se toca nada**. El barómetro puede ser mediocre y el
+ * desnivel puede salir corto, pero sigue siendo lo que midió el reloj; cambiarlo por
+ * el DEM significaría reescribir el pasado cada vez que alguien pulse un botón. Las
+ * salidas llanas con desnivel 0 están en el mismo saco: son llanas, no incompletas.
+ *
+ * Sí se reconstruye cuando las altitudes presentes son todas 0 (el relleno típico de
+ * un reloj sin sensor) — la capa de arriba las quita antes de preguntar aquí.
  */
 export function assessElevationNeed(input: {
   sport: SportType;
   points: ActivityPoint[];
   elevationGain?: number;
   elevationLoss?: number;
-  allowPartial?: boolean;
 }): ElevationNeed {
   const points = input.points ?? [];
-  const gpsIdx = points
-    .map((p, index) => ({ p, index }))
-    .filter((x) => isFiniteNumber(x.p.lat) && isFiniteNumber(x.p.lon));
-  const knownEle = gpsIdx.filter((x) => isFiniteNumber(x.p.ele)).length;
-  const coverage = gpsIdx.length > 0 ? knownEle / gpsIdx.length : 0;
+  const stats = deviceElevationStats(points);
   const distances = cumulativeDistances(points);
   const totalDistanceM = distances.length > 0 ? distances[distances.length - 1] : 0;
-  const flat = Math.max(0, Number(input.elevationGain ?? 0)) === 0 && Math.max(0, Number(input.elevationLoss ?? 0)) === 0;
 
-  const base = { gpsPoints: gpsIdx.length, knownEle, coverage, totalDistanceM };
+  const base = {
+    gpsPoints: stats.gps,
+    knownEle: stats.usableEle,
+    coverage: stats.gps > 0 ? stats.usableEle / stats.gps : 0,
+    totalDistanceM,
+  };
 
   if (!MAP_ELEVATION_SPORTS.includes(input.sport)) {
     return { needed: false, reason: 'interior', ...base };
   }
-  if (gpsIdx.length < MIN_GPS_POINTS) {
+  if (stats.gps < MIN_GPS_POINTS) {
     return { needed: false, reason: 'sin_gps', ...base };
   }
   if (totalDistanceM < MIN_SAMPLE_SPACING_M) {
     return { needed: false, reason: 'corta', ...base };
   }
-  if (coverage >= DEVICE_ELEVATION_COVERAGE) {
-    // El reloj sí medía: sólo tiene pinta de error si aun así el desnivel es 0
-    if (input.allowPartial && flat) return { needed: true, reason: 'necesaria', ...base };
+  if (stats.usableEle > 0) {
     return { needed: false, reason: 'altimetro', ...base };
   }
-  if (knownEle > 0 && !input.allowPartial && !flat) {
-    return { needed: false, reason: 'altimetro', ...base };
+  // Y tampoco si el resumen del archivo ya trae desnivel, aunque luego no venga en los
+  // punto: ese número lo midió algo (barómetro omitido en el track, o el cálculo del
+  // propio servicio), y sustituirlo por el del mapa sería cambiar el pasado.
+  const flat = Math.max(0, Number(input.elevationGain ?? 0)) === 0 && Math.max(0, Number(input.elevationLoss ?? 0)) === 0;
+  if (!flat) {
+    return { needed: false, reason: 'desnivel', ...base };
   }
   return { needed: true, reason: 'necesaria', ...base };
 }

@@ -1800,6 +1800,11 @@ export function listElevationCandidateIds(limit = 50): string[] {
        WHERE sport IN ('running', 'trail', 'mountain', 'walking', 'cycling')
          AND elevation_gain = 0 AND elevation_loss = 0
          AND points_json IS NOT NULL AND length(points_json) > 4
+         -- Y sólo si el reloj no dejó NI UNA altitud real: un "ele": seguido de un
+         -- dígito 1-9 es barómetro (o un altímetro malo, pero suyo), no nuestro.
+         -- El filtro fino lo hace después assessElevationNeed; este sólo evita
+         -- arrastrar actividades que ya traen el dato bueno.
+         AND points_json NOT GLOB '*"ele":[1-9]*'
        ORDER BY started_at DESC
        LIMIT ?`
     )
