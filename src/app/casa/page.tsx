@@ -34,6 +34,7 @@ import {
   ROUTINE_GOAL_LABELS,
 } from '@/lib/home-workouts';
 import { useAddTick } from '@/lib/use-add-tick';
+import { confirmAndDeleteRoutine } from '@/lib/routine-deletion';
 import type {
   Exercise,
   HomeEquipment,
@@ -55,6 +56,8 @@ export default function HomeWorkoutsPage() {
   const [equipment, setEquipment] = useState<HomeEquipment[]>([]);
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [routines, setRoutines] = useState<Routine[]>([]);
+  const [deletingRoutineId, setDeletingRoutineId] = useState<string | null>(null);
+  const [deleteRoutineError, setDeleteRoutineError] = useState<string | null>(null);
   const [lastExerciseLogs, setLastExerciseLogs] = useState<Record<string, LastExerciseLogRef>>({});
   const [loading, setLoading] = useState(true);
 
@@ -550,9 +553,18 @@ export default function HomeWorkoutsPage() {
     }
   }
 
-  async function deleteRoutine(id: string) {
-    await fetch(`/api/routines/${id}`, { method: 'DELETE' });
-    setRoutines((prev) => prev.filter((r) => r.id !== id));
+  async function deleteRoutine(routine: Routine) {
+    if (deletingRoutineId) return;
+    setDeleteRoutineError(null);
+    setDeletingRoutineId(routine.id);
+    try {
+      const result = await confirmAndDeleteRoutine(routine, (message) => window.confirm(message), fetch);
+      if (result === 'deleted') setRoutines((prev) => prev.filter((r) => r.id !== routine.id));
+    } catch {
+      setDeleteRoutineError('No se ha podido eliminar la rutina. Inténtalo de nuevo.');
+    } finally {
+      setDeletingRoutineId(null);
+    }
   }
 
   const libraryExercises = exercises.filter((ex) => {
@@ -582,6 +594,8 @@ export default function HomeWorkoutsPage() {
           <span className="text-emerald-400">{compatibleCount} ejercicios</span>
         </div>
       </div>
+
+      {deleteRoutineError && <p role="alert" className="rounded-xl bg-rose-500/10 p-3 text-sm text-rose-500">{deleteRoutineError}</p>}
 
       {/* Tabs adaptadas a móvil y PC */}
       <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 border-b pb-3" style={{ borderColor: 'var(--border-subtle)' }}>
@@ -1239,7 +1253,8 @@ export default function HomeWorkoutsPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => deleteRoutine(rt.id)}
+                    onClick={() => deleteRoutine(rt)}
+                    disabled={deletingRoutineId !== null}
                     className="inline-flex items-center gap-1 text-xs text-rose-400 hover:underline min-h-[36px]"
                   >
                     <Trash2 className="h-3.5 w-3.5" /> Eliminar

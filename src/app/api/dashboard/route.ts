@@ -24,8 +24,8 @@ export async function GET(req: NextRequest) {
     const weekMs = 7 * 86400 * 1000;
     const monthMs = 30 * 86400 * 1000;
 
-    const thisWeek = activities.filter((a) => now - Date.parse(a.startedAt) <= weekMs);
-    const thisMonth = activities.filter((a) => now - Date.parse(a.startedAt) <= monthMs);
+    const thisWeek = activities.filter((a) => { const age = now - Date.parse(a.startedAt); return age >= 0 && age < weekMs; });
+    const thisMonth = activities.filter((a) => { const age = now - Date.parse(a.startedAt); return age >= 0 && age < monthMs; });
 
     const weekDistanceKm = Math.round((thisWeek.reduce((s, a) => s + a.distanceMeters, 0) / 1000) * 10) / 10;
     const weekDurationHours = Math.round((thisWeek.reduce((s, a) => s + getEffectiveDurationSec(a), 0) / 3600) * 10) / 10;
