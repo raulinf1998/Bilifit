@@ -117,7 +117,7 @@ export default function CyclingMyWhooshPage() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2.5">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight flex items-center gap-2.5">
             <Zap className="h-6 w-6 text-cyan-400" />
             Centro MyWhoosh y Ciclismo
           </h1>
@@ -128,16 +128,16 @@ export default function CyclingMyWhooshPage() {
       </div>
 
       {/* KPIs Ciclismo */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="card-surface p-5 space-y-1.5">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <div className="card-surface p-3 sm:p-5 space-y-1.5 min-w-0">
           <div className="flex items-center justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
             <span>FTP ACTUAL</span>
             <Gauge className="h-4 w-4 text-cyan-400" />
           </div>
-          <div className="text-2xl font-bold text-cyan-600 dark:text-cyan-400 tabular-nums">
+          <div className="text-xl sm:text-2xl font-bold text-cyan-600 dark:text-cyan-400 tabular-nums">
             {ftp} W <span className="text-sm font-normal text-ink3">({wKg} W/kg)</span>
           </div>
-          <form onSubmit={saveFtp} className="flex items-center gap-2 pt-1">
+          <form onSubmit={saveFtp} className="flex flex-wrap items-center gap-2 pt-1">
             <input
               type="number"
               min={60}
@@ -153,29 +153,29 @@ export default function CyclingMyWhooshPage() {
           </form>
         </div>
 
-        <div className="card-surface p-5 space-y-1.5">
+        <div className="card-surface p-3 sm:p-5 space-y-1.5 min-w-0">
           <div className="flex items-center justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
             <span>SESIONES MYWHOOSH</span>
             <Zap className="h-4 w-4 text-cyan-400" />
           </div>
-          <div className="text-2xl font-bold tabular-nums">{myWhooshActs.length} sesiones</div>
+          <div className="text-xl sm:text-2xl font-bold tabular-nums">{myWhooshActs.length} sesiones</div>
           <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
             {activities.length} en total (indoor + exterior)
           </div>
         </div>
 
-        <div className="card-surface p-5 space-y-1.5">
+        <div className="card-surface p-3 sm:p-5 space-y-1.5 min-w-0">
           <div className="flex items-center justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
             <span>VOLUMEN ACUMULADO</span>
             <Bike className="h-4 w-4 text-blue-400" />
           </div>
-          <div className="text-2xl font-bold tabular-nums">{totalKm} km</div>
+          <div className="text-xl sm:text-2xl font-bold tabular-nums">{totalKm} km</div>
           <div className="text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>
             {totalHours} horas · {totalTss} TSS total
           </div>
         </div>
 
-        <div className="card-surface p-5 space-y-1.5">
+        <div className="card-surface p-3 sm:p-5 space-y-1.5 min-w-0">
           <div className="flex items-center justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
             <span>MEJOR NP EN SESIÓN</span>
             <Award className="h-4 w-4 text-amber-400" />
@@ -187,8 +187,67 @@ export default function CyclingMyWhooshPage() {
         </div>
       </div>
 
-      {/* Conexión directa nativa MyWhoosh */}
-      <MyWhooshConnectorCard onSynced={load} />
+      {/* Listado de sesiones */}
+      <div className="card-surface p-5 space-y-4">
+        <h2 className="text-base font-bold">Sesiones de MyWhoosh y Ciclismo</h2>
+        <div className="space-y-2.5">
+          {activities.map((act) => {
+            const worldLabel = resolvedWorldByActivityId.get(act.id) ?? act.worldName;
+            return (
+            <Link
+              key={act.id}
+              href={`/actividades/${act.id}`}
+              className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border p-3.5 hover:border-cyan-400/50 transition-colors"
+              style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
+            >
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <SportBadge sport={act.sport} subSport={act.subSport} />
+                  {worldLabel && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-700 dark:text-cyan-300">
+                      Mundo: {worldLabel}
+                    </span>
+                  )}
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {new Date(act.startedAt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  </span>
+                </div>
+                <div className="font-semibold text-sm">{act.title}</div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-4 text-xs tabular-nums">
+                <div>
+                  <div style={{ color: 'var(--text-muted)' }}>Distancia</div>
+                  <div className="font-semibold">{formatDistanceKm(act.distanceMeters)}</div>
+                </div>
+                <div>
+                  <div style={{ color: 'var(--text-muted)' }}>Tiempo</div>
+                  <div className="font-semibold">{formatDuration(getEffectiveDurationSec(act))}</div>
+                </div>
+                {act.avgWatts && (
+                  <div>
+                    <div style={{ color: 'var(--text-muted)' }}>Media / NP</div>
+                    <div className="font-semibold text-cyan-400">
+                      {act.avgWatts} / {act.normalizedPower ?? act.avgWatts} W
+                    </div>
+                  </div>
+                )}
+                {act.avgCadence && (
+                  <div>
+                    <div style={{ color: 'var(--text-muted)' }}>Cadencia</div>
+                    <div className="font-semibold">{act.avgCadence} rpm</div>
+                  </div>
+                )}
+                <div>
+                  <div style={{ color: 'var(--text-muted)' }}>Carga</div>
+                  <div className="font-semibold">{act.tss} TSS</div>
+                </div>
+              </div>
+            </Link>
+            );
+          })}
+        </div>
+      </div>
 
       {/* Atlas Interactivo de Mundos de MyWhoosh */}
       <div className="card-surface p-5 space-y-4">
@@ -303,7 +362,7 @@ export default function CyclingMyWhooshPage() {
           <div>
             <h2 className="text-base font-bold">Importar Archivos Manualmente (.FIT / .GPX / .TCX)</h2>
             <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
-              Además de la sincronización directa nativa arriba, puedes subir manualmente archivos <strong>.FIT</strong> o{' '}
+              Además de la conexión directa al final de la página, puedes subir manualmente archivos <strong>.FIT</strong> o{' '}
               <strong>.GPX</strong> (incluyendo vatios y cadencia de MyWhoosh 5.x) o sesiones de ciclismo exterior.
             </p>
           </div>
@@ -311,67 +370,10 @@ export default function CyclingMyWhooshPage() {
         </div>
       </div>
 
-      {/* Listado de sesiones */}
-      <div className="card-surface p-5 space-y-4">
-        <h2 className="text-base font-bold">Sesiones de MyWhoosh y Ciclismo</h2>
-        <div className="space-y-2.5">
-          {activities.map((act) => {
-            const worldLabel = resolvedWorldByActivityId.get(act.id) ?? act.worldName;
-            return (
-            <Link
-              key={act.id}
-              href={`/actividades/${act.id}`}
-              className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border p-3.5 hover:border-cyan-400/50 transition-colors"
-              style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
-            >
-              <div className="space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <SportBadge sport={act.sport} subSport={act.subSport} />
-                  {worldLabel && (
-                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-700 dark:text-cyan-300">
-                      Mundo: {worldLabel}
-                    </span>
-                  )}
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    {new Date(act.startedAt).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })}
-                  </span>
-                </div>
-                <div className="font-semibold text-sm">{act.title}</div>
-              </div>
 
-              <div className="flex flex-wrap items-center gap-4 text-xs tabular-nums">
-                <div>
-                  <div style={{ color: 'var(--text-muted)' }}>Distancia</div>
-                  <div className="font-semibold">{formatDistanceKm(act.distanceMeters)}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--text-muted)' }}>Tiempo</div>
-                  <div className="font-semibold">{formatDuration(getEffectiveDurationSec(act))}</div>
-                </div>
-                {act.avgWatts && (
-                  <div>
-                    <div style={{ color: 'var(--text-muted)' }}>Media / NP</div>
-                    <div className="font-semibold text-cyan-400">
-                      {act.avgWatts} / {act.normalizedPower ?? act.avgWatts} W
-                    </div>
-                  </div>
-                )}
-                {act.avgCadence && (
-                  <div>
-                    <div style={{ color: 'var(--text-muted)' }}>Cadencia</div>
-                    <div className="font-semibold">{act.avgCadence} rpm</div>
-                  </div>
-                )}
-                <div>
-                  <div style={{ color: 'var(--text-muted)' }}>Carga</div>
-                  <div className="font-semibold">{act.tss} TSS</div>
-                </div>
-              </div>
-            </Link>
-            );
-          })}
-        </div>
-      </div>
+      {/* Conexión directa nativa MyWhoosh */}
+      <MyWhooshConnectorCard onSynced={load} />
+
     </div>
   );
 }

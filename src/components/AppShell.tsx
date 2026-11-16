@@ -8,7 +8,7 @@ import {
   ArrowLeftRight,
   Bike,
   Dumbbell,
-  Flag,
+  Footprints,
   LayoutDashboard,
   Moon,
   Mountain,
@@ -33,7 +33,7 @@ import { THEMES, type AppSettings } from '@/lib/themes';
 const NAV_ITEMS = [
   { href: '/', label: 'Panel', icon: LayoutDashboard },
   { href: '/actividades', label: 'Actividades', icon: Activity },
-  { href: '/segmentos', label: 'Segmentos y PRs', icon: Flag },
+  { href: '/correr', label: 'Correr', icon: Footprints },
   { href: '/ciclismo', label: 'MyWhoosh y Bici', icon: Bike },
   { href: '/montana', label: 'Rutas Montaña', icon: Mountain },
   { href: '/casa', label: 'Casa y Rutinas', icon: Dumbbell, highlight: true },
@@ -358,6 +358,7 @@ function ActiveAppShell({
         {[
           { href: '/', label: 'Panel', icon: LayoutDashboard },
           { href: '/actividades', label: 'Historial', icon: Activity },
+          { href: '/correr', label: 'Correr', icon: Footprints },
           { href: '/ciclismo', label: 'MyWhoosh', icon: Bike },
           { href: '/montana', label: 'Montaña', icon: Mountain },
           { href: '/casa', label: 'Casa', icon: Dumbbell },
@@ -369,7 +370,7 @@ function ActiveAppShell({
               key={item.href}
               href={item.href}
               className={cx(
-                'flex flex-col items-center gap-0.5 px-2 py-1 rounded-lg text-[10px] font-semibold transition-colors',
+                'flex min-w-0 flex-col items-center gap-0.5 px-1 py-1 rounded-lg text-[10px] font-semibold transition-colors',
                 active ? 'text-primary' : 'text-ink2 hover:text-ink'
               )}
             >

@@ -1697,7 +1697,8 @@ test('Caminar (walking) sport classification, analytics, DB backfill, and Oscuro
   const cssSource = fs.readFileSync(path.join(process.cwd(), 'src', 'app', 'globals.css'), 'utf8');
   assert.ok(!mapSource.includes('basemaps.cartocdn.com'), 'CartoDB dark tiles require API keys and must not be used');
   assert.ok(mapSource.includes('DARK_MAP_STYLE'));
-  assert.ok(mapSource.includes("className: 'bilifit-dark-tiles'"));
+  const tileSource = fs.readFileSync(path.join(process.cwd(), 'src', 'lib', 'map-tile-layers.ts'), 'utf8');
+  assert.ok(tileSource.includes("className: 'bilifit-dark-tiles'"));
   assert.ok(cssSource.includes('grayscale(100%)'), 'Fallback raster dark filter must be fully desaturated monochrome');
   assert.ok(cssSource.includes('.bilifit-map-dark'));
   assert.ok(fs.existsSync(path.join(process.cwd(), 'public', 'vendor', 'maplibre-gl-worker.mjs')));
@@ -5612,4 +5613,41 @@ test('Borrar rutina: cancelar no envía DELETE; confirmar comprueba el resultado
   assert.deepEqual(calls, [{ url: '/api/routines/rutina%20prueba', method: 'DELETE' }]);
   await assert.rejects(confirmAndDeleteRoutine(routine, () => true, async () => new Response('{}', { status: 500 })));
   await assert.rejects(confirmAndDeleteRoutine(routine, () => true, async () => { throw new Error('sin conexión'); }));
+});
+
+test('Marcas de correr: distancias, pausas, huecos y ausencia de datos', async () => {
+  const { fastestRunningDistance, longestContinuousRun, computeRunningRecords } = await import('../src/lib/running-records');
+  const points = Array.from({ length: 101 }, (_, i) => ({ t: i * 30, dist: i * 100 }));
+  assert.equal(fastestRunningDistance(points, 1000), 300);
+  assert.equal(fastestRunningDistance(points, 5000), 1500);
+  assert.equal(fastestRunningDistance(points, 10000), 3000);
+  assert.equal(fastestRunningDistance(points, 11000), null);
+  assert.equal(longestContinuousRun(points), 3000);
+  const uneven = [{ t: 0, dist: 0 }, { t: 100, dist: 1000 }, { t: 200, dist: 1100 }];
+  assert.equal(fastestRunningDistance(uneven, 1000), 100);
+  const paused = [{ t: 0, dist: 0 }, { t: 60, dist: 200 }, { t: 120, dist: 200 }, { t: 180, dist: 400 }, { t: 240, dist: 600 }];
+  assert.equal(longestContinuousRun(paused), 120);
+  assert.equal(fastestRunningDistance(paused, 400), 120);
+  assert.equal(longestContinuousRun([{ t: 0 }, { t: 60 }]), null);
+  assert.equal(longestContinuousRun([{ t: 0, dist: 0 }, { t: 300, dist: 1000 }]), null);
+  assert.equal(fastestRunningDistance([{ t: 0, dist: 0 }, { t: 300, dist: 1000 }], 1000), null);
+  const base = { id: 'run', title: 'Carrera', startedAt: '2026-01-01T00:00:00Z', sport: 'running', distanceMeters: 10000, points } as import('../src/types').ActivityDetail;
+  const trail = { ...base, id: 'trail', sport: 'trail', distanceMeters: 50000 } as import('../src/types').ActivityDetail;
+  const records = computeRunningRecords([base, trail]);
+  assert.equal(records.fastest['10 km']?.value, 3000);
+  assert.equal(records.longestDistance?.activityId, 'run');
+  assert.equal(records.longestContinuous?.value, 3000);
+  assert.equal(computeRunningRecords([]).fastest['1 km'], null);
+});
+
+test('API de correr devuelve sólo carreras y sus marcas con enlaces válidos', async () => {
+  const { GET } = await import('../src/app/api/running/route');
+  const req = new NextRequest('http://localhost/api/running');
+  const res = await GET(req);
+  assert.equal(res.status, 200);
+  const result = await res.json();
+  assert.ok(result.activities.every((activity: { sport: string }) => activity.sport === 'running'));
+  for (const record of [...Object.values(result.records.fastest), result.records.longestDistance, result.records.longestContinuous]) {
+    if (record) assert.ok(result.activities.some((activity: { id: string }) => activity.id === (record as { activityId: string }).activityId));
+  }
 });
