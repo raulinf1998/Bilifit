@@ -5570,3 +5570,28 @@ test('Altitud: si se añade una cota mientras responde el proveedor, no se sobre
   assert.equal(getActivityById(id)?.points[1].ele, 321);
   deleteActivity(id);
 });
+
+test('Panel: los totales de los últimos 7 días no incluyen actividades futuras', async () => {
+  const { GET } = await import('../src/app/api/dashboard/route');
+  const req = new NextRequest('http://localhost/api/dashboard');
+  const before = await (await GET(req)).json();
+  const seed = getActivityById('act_seed_run_1');
+  assert.ok(seed);
+  const currentId = 'act_dashboard_current_test';
+  const futureId = 'act_dashboard_future_test';
+  try {
+    createActivity({ ...seed, id: currentId, externalId: currentId, startedAt: new Date(Date.now() - 3600000).toISOString(), durationSec: 3600, movingTimeSec: 3600, excludePausedTime: false, distanceMeters: 10000, elevationGain: 100 } as never);
+    createActivity({ ...seed, id: futureId, externalId: futureId, startedAt: new Date(Date.now() + 86400000).toISOString(), durationSec: 7200, movingTimeSec: 7200, excludePausedTime: false, distanceMeters: 30000, elevationGain: 300 } as never);
+    const after = await (await GET(req)).json();
+    assert.equal(after.summary.weekSessions, before.summary.weekSessions + 1);
+    assert.equal(after.summary.weekDistanceKm, before.summary.weekDistanceKm + 10);
+    assert.equal(after.summary.weekElevationM, before.summary.weekElevationM + 100);
+    assert.equal(after.summary.weekDurationHours, before.summary.weekDurationHours + 1);
+    const last = after.weeklyBuckets.at(-1);
+    const prevLast = before.weeklyBuckets.at(-1);
+    assert.equal(Math.round((last.runningHours - prevLast.runningHours) * 100) / 100, 1);
+  } finally {
+    deleteActivity(currentId);
+    deleteActivity(futureId);
+  }
+});
