@@ -5595,3 +5595,21 @@ test('Panel: los totales de los últimos 7 días no incluyen actividades futuras
     deleteActivity(futureId);
   }
 });
+
+test('Borrar rutina: cancelar no envía DELETE; confirmar comprueba el resultado', async () => {
+  const { confirmAndDeleteRoutine } = await import('../src/lib/routine-deletion');
+  const routine = { id: 'rutina prueba', name: 'Mi rutina' };
+  const calls: Array<{ url: string; method?: string }> = [];
+  const request: typeof fetch = async (input, init) => {
+    calls.push({ url: String(input), method: init?.method });
+    return new Response('{}', { status: 200 });
+  };
+  let message = '';
+  assert.equal(await confirmAndDeleteRoutine(routine, (text) => { message = text; return false; }, request), 'cancelled');
+  assert.match(message, /¿Seguro que quieres eliminar la rutina «Mi rutina»\?/);
+  assert.equal(calls.length, 0, 'cancelar no envía ninguna petición');
+  assert.equal(await confirmAndDeleteRoutine(routine, () => true, request), 'deleted');
+  assert.deepEqual(calls, [{ url: '/api/routines/rutina%20prueba', method: 'DELETE' }]);
+  await assert.rejects(confirmAndDeleteRoutine(routine, () => true, async () => new Response('{}', { status: 500 })));
+  await assert.rejects(confirmAndDeleteRoutine(routine, () => true, async () => { throw new Error('sin conexión'); }));
+});

@@ -34,6 +34,7 @@ import {
   ROUTINE_GOAL_LABELS,
 } from '@/lib/home-workouts';
 import { useAddTick } from '@/lib/use-add-tick';
+import { confirmAndDeleteRoutine } from '@/lib/routine-deletion';
 import type {
   Exercise,
   HomeEquipment,
@@ -553,13 +554,12 @@ export default function HomeWorkoutsPage() {
   }
 
   async function deleteRoutine(routine: Routine) {
-    if (deletingRoutineId || !window.confirm(`¿Seguro que quieres eliminar la rutina «${routine.name}»? Esta acción no se puede deshacer.`)) return;
+    if (deletingRoutineId) return;
     setDeleteRoutineError(null);
     setDeletingRoutineId(routine.id);
     try {
-      const res = await fetch(`/api/routines/${routine.id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('No se ha podido eliminar la rutina. Inténtalo de nuevo.');
-      setRoutines((prev) => prev.filter((r) => r.id !== routine.id));
+      const result = await confirmAndDeleteRoutine(routine, (message) => window.confirm(message), fetch);
+      if (result === 'deleted') setRoutines((prev) => prev.filter((r) => r.id !== routine.id));
     } catch {
       setDeleteRoutineError('No se ha podido eliminar la rutina. Inténtalo de nuevo.');
     } finally {
