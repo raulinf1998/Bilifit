@@ -773,7 +773,11 @@ export default function ActivityDetailPage() {
 
   const manualRestsActive = activity.sport === 'running' && (activity.excludedLapKeys?.length ?? 0) > 0;
   const restChunks = manualRestsActive ? retainedRestChunks(activity.points, activity.laps ?? [], activity.excludedLapKeys ?? [], activity.durationSec) : null;
-  const visibleLaps = manualRestsActive ? (restChunks ? activity.laps ?? [] : []).filter((lap, index) => !activity.excludedLapKeys?.includes(restLapKey(lap, index))) : activity.laps ?? [];
+  const excludedLaps = (activity.laps ?? []).filter((lap, index) => activity.excludedLapKeys?.includes(restLapKey(lap, index)));
+  const visibleLaps = manualRestsActive ? (restChunks ? activity.laps ?? [] : []).filter((lap, index) =>
+    !activity.excludedLapKeys?.includes(restLapKey(lap, index)) &&
+    !excludedLaps.some(rest => Math.min(lap.endDistM, rest.endDistM) > Math.max(lap.startDistM, rest.startDistM) + 1)
+  ) : activity.laps ?? [];
   const visibleSplits = manualRestsActive ? (restChunks ?? []).flatMap((chunk) => {
     if (chunk.length < 2) return [];
     const base = chunk[0].dist ?? 0;

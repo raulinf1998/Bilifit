@@ -5828,6 +5828,26 @@ test('Filtrado de descansos conserva los puntos originales y separa los tramos s
   const all = retainedRestChunks(points, laps, laps.map(restLapKey), 30);
   assert.equal(all?.flat().length, 0, 'no queda telemetría al excluir todos los segmentos');
   assert.equal(retainedRestChunks(points, laps, [restLapKey(laps[1], 1)], 60), null);
-  assert.equal(retainedRestChunks(points, [laps[1], laps[0], laps[2]], [restLapKey(laps[0], 1)], 30), null);
+  assert.ok(retainedRestChunks(points, [laps[1], laps[0], laps[2]], [restLapKey(laps[0], 1)], 30), 'segmentos bien definidos no necesitan cubrir toda la actividad ni estar ordenados');
   assert.deepEqual(retainedRestChunks(points, laps, [], 30), [points]);
+});
+
+
+test('Descansos parciales sólo se filtran cuando distancia y tiempo localizan el segmento sin ambigüedad', async () => {
+  const { retainedRestChunks, restLapKey } = await import('../src/lib/manual-rest');
+  const points = Array.from({ length: 101 }, (_, t) => ({ t, dist: t * 10, hr: t >= 20 && t < 40 ? 200 : 100 }));
+  const lap = { lapNumber: 1, startDistM: 200, endDistM: 400, distanceMeters: 200, durationSec: 20, movingTimeSec: 20, elevationGain: 0, elevationLoss: 0 };
+  const key = restLapKey(lap, 0);
+  const chunks = retainedRestChunks(points, [lap], [key], 100);
+  assert.ok(chunks);
+  assert.equal(chunks.length, 2);
+  assert.equal(chunks[1][0].t, 20);
+  assert.equal(chunks[1][0].dist, 200);
+  assert.ok(chunks.flat().every(p => p.hr === 100));
+  const mismatch = { ...lap, durationSec: 35 };
+  assert.equal(retainedRestChunks(points, [mismatch], [restLapKey(mismatch, 0)], 100), null);
+  const plateau = points.map(p => ({ ...p, dist: p.t === 21 ? 200 : p.dist }));
+  assert.equal(retainedRestChunks(plateau, [lap], [key], 100), null);
+  const pause = { ...lap, endDistM: 200, distanceMeters: 0 };
+  assert.equal(retainedRestChunks(points, [pause], [restLapKey(pause, 0)], 100), null);
 });

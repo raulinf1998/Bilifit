@@ -21,33 +21,23 @@ export function resolveManualRests(laps: ActivityLap[] | undefined, storedKeys: 
   return { keys, durationSec, distanceMeters };
 }
 
-/**
- * Reconstruye los tramos conservados sólo cuando las vueltas forman una secuencia
- * completa y sus límites concuerdan con la telemetría. Los archivos antiguos no
- * guardaban marcas temporales por vuelta, por lo que otras situaciones son ambiguas.
- */
+/** Localiza los descansos mediante vueltas consecutivas o cruces de distancia inequívocos. */
 export function retainedRestChunks(
   points: import('@/types').ActivityPoint[], laps: ActivityLap[], keys: string[], durationSec: number
 ): import('@/types').ActivityPoint[][] | null {
   if (!keys.length) return [points];
-  if (points.length < 2 || !laps.length || !Number.isFinite(durationSec)) return null;
-  let time = 0;
-  let distance = 0;
-  const intervals: Array<{ start: number; end: number; distance: number }> = [];
-  for (let i = 0; i < laps.length; i++) {
-    const lap = laps[i];
-    if (!Number.isFinite(lap.durationSec) || lap.durationSec <= 0 ||
-        !Number.isFinite(lap.startDistM) || !Number.isFinite(lap.endDistM) || !Number.isFinite(lap.distanceMeters) || lap.distanceMeters < 0 ||
-        Math.abs(lap.startDistM - distance) > 5 || lap.endDistM < lap.startDistM ||
-        Math.abs(lap.endDistM - lap.startDistM - lap.distanceMeters) > 5) return null;
-    if (keys.includes(restLapKey(lap, i))) intervals.push({ start: time, end: time + lap.durationSec, distance: lap.distanceMeters });
-    time += lap.durationSec;
-    distance = lap.endDistM;
-  }
-  if (intervals.length !== keys.length || Math.abs(time - durationSec) > Math.max(3, durationSec * 0.01)) return null;
+  if (points.length < 2 || !laps.length || !Number.isFinite(durationSec) || durationSec <= 0) return null;
   if (points.some((p, i) => !Number.isFinite(p.t) || (i > 0 && p.t < points[i - 1].t))) return null;
   if (points[0].t > 3 || Math.abs(points[points.length - 1].t - durationSec) > Math.max(3, durationSec * 0.01)) return null;
-  // Verificar que los límites temporales inferidos también coinciden con la distancia.
+  const wanted = new Set(keys);
+  if (wanted.size !== keys.length) return null;
+  const selected = laps.flatMap((lap, i) => wanted.has(restLapKey(lap, i)) ? [lap] : []);
+  if (selected.length !== keys.length) return null;
+  const valid = (lap: ActivityLap) => Number.isFinite(lap.durationSec) && lap.durationSec > 0 &&
+    Number.isFinite(lap.startDistM) && Number.isFinite(lap.endDistM) && Number.isFinite(lap.distanceMeters) &&
+    lap.distanceMeters >= 0 && lap.endDistM >= lap.startDistM &&
+    Math.abs(lap.endDistM - lap.startDistM - lap.distanceMeters) <= 5;
+  if (selected.some(lap => !valid(lap))) return null;
   const atTime = (t: number): number | null => {
     let i = points.findIndex(p => p.t >= t);
     if (i < 0) i = points.length - 1;
@@ -55,12 +45,47 @@ export function retainedRestChunks(
     if (typeof a.dist !== 'number' || !Number.isFinite(a.dist) || typeof b.dist !== 'number' || !Number.isFinite(b.dist)) return null;
     return b.t > a.t ? a.dist + (b.dist - a.dist) * Math.max(0, Math.min(1, (t - a.t) / (b.t - a.t))) : b.dist;
   };
-  let elapsed = 0;
-  for (const lap of laps) {
-    const start = atTime(elapsed), end = atTime(elapsed + lap.durationSec);
-    if (start === null || end === null || Math.abs(start - lap.startDistM) > Math.max(20, lap.distanceMeters * 0.05) || Math.abs(end - lap.endDistM) > Math.max(20, lap.distanceMeters * 0.05)) return null;
-    elapsed += lap.durationSec;
+  type Interval = { start: number; end: number; distance: number };
+  let intervals: Interval[] = [];
+  let time = 0, distance = 0, sequential = true;
+  for (let i = 0; i < laps.length; i++) {
+    const lap = laps[i];
+    if (!valid(lap) || Math.abs(lap.startDistM - distance) > 5) { sequential = false; break; }
+    const start = atTime(time), end = atTime(time + lap.durationSec);
+    if (start === null || end === null || Math.abs(start - lap.startDistM) > Math.max(20, lap.distanceMeters * 0.05) || Math.abs(end - lap.endDistM) > Math.max(20, lap.distanceMeters * 0.05)) { sequential = false; break; }
+    if (wanted.has(restLapKey(lap, i))) intervals.push({ start: time, end: time + lap.durationSec, distance: lap.distanceMeters });
+    time += lap.durationSec;
+    distance = lap.endDistM;
   }
+  sequential = sequential && Math.abs(time - durationSec) <= Math.max(3, durationSec * 0.01);
+  if (!sequential) {
+    // Los segmentos parciales pueden localizarse por distancia únicamente si la
+    // traza es monótona y el cruce no coincide con una meseta de distancia.
+    const crossing = (target: number): number | null => {
+      let result: number | null = null;
+      for (let i = 1; i < points.length; i++) {
+        const a = points[i - 1], b = points[i];
+        if (typeof a.dist !== 'number' || !Number.isFinite(a.dist) || typeof b.dist !== 'number' || !Number.isFinite(b.dist) || b.dist < a.dist || b.t <= a.t) return null;
+        if (a.dist === b.dist && Math.abs(target - a.dist) < 0.01) return null;
+        if (a.dist <= target && target <= b.dist && b.dist > a.dist) {
+          const t = a.t + (b.t - a.t) * (target - a.dist) / (b.dist - a.dist);
+          if (result !== null && Math.abs(result - t) > 0.01) return null;
+          result = t;
+        }
+      }
+      return result;
+    };
+    intervals = [];
+    for (const lap of selected) {
+      // Una pausa de distancia cero no tiene una posición temporal única.
+      if (lap.distanceMeters <= 0) return null;
+      const start = crossing(lap.startDistM), end = crossing(lap.endDistM);
+      if (start === null || end === null || end <= start || Math.abs(end - start - lap.durationSec) > Math.max(3, lap.durationSec * 0.03)) return null;
+      intervals.push({ start, end, distance: lap.distanceMeters });
+    }
+  }
+  intervals.sort((a, b) => a.start - b.start);
+  if (intervals.some((r, i) => i > 0 && r.start < intervals[i - 1].end - 0.001)) return null;
   const chunks: import('@/types').ActivityPoint[][] = [];
   let chunk: import('@/types').ActivityPoint[] = [];
   for (const point of points) {
