@@ -6,7 +6,7 @@ import { Activity as ActivityIcon, ArrowRight, CalendarDays, Clock3, Mountain, R
 import { WeeklyVolumeChart, type WeeklyBucket } from '@/components/Charts';
 import { SportBadge } from '@/components/SportBadge';
 import { TogetherBadge } from '@/components/TogetherControl';
-import { formatDistanceKm, formatDurationClock, getEffectiveDistanceMeters, getEffectiveDurationSec } from '@/lib/metrics';
+import { formatDistanceKm, formatDurationClock, getEffectiveDistanceMeters, getEffectiveDurationSec, getEffectiveRecordedMetric } from '@/lib/metrics';
 import type { Activity, AthleteProfile } from '@/types';
 
 type DashboardPayload = {
@@ -117,7 +117,7 @@ export default function DashboardPage() {
         {recentActivities.length === 0 ? <div className="rounded-xl p-6 text-sm" style={{ background: 'var(--bg-card-elevated)', color: 'var(--text-secondary)' }}>Todavía no tienes actividades. <Link href="/strava" className="font-semibold text-primary underline">Importa una actividad</Link> para empezar.</div> : <div className="space-y-2">{recentActivities.map((act) => (
           <Link key={act.id} href={`/actividades/${act.id}`} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border p-4 hover:border-primary/50 transition-colors" style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}>
             <div className="min-w-0 space-y-2"><div className="flex flex-wrap items-center gap-2"><SportBadge sport={act.sport} subSport={act.subSport} />{act.doneTogether && <TogetherBadge />}<span className="text-xs" style={{ color: 'var(--text-muted)' }}>{new Date(act.startedAt).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })}</span></div><div className="font-semibold text-sm">{act.title}</div></div>
-            <div className="flex flex-wrap items-center gap-5 text-sm tabular-nums"><div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>Tiempo</div><div className="font-bold">{formatDurationClock(getEffectiveDurationSec(act))}</div></div>{act.distanceMeters > 0 && <div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>Distancia</div><div className="font-bold">{formatDistanceKm(getEffectiveDistanceMeters(act))}</div></div>}{act.elevationGain > 0 && <div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>Desnivel</div><div className="font-bold">+{act.elevationGain} m</div></div>}<ArrowRight className="h-4 w-4 shrink-0 text-primary" /></div>
+            <div className="flex flex-wrap items-center gap-5 text-sm tabular-nums"><div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>Tiempo</div><div className="font-bold">{formatDurationClock(getEffectiveDurationSec(act))}</div></div>{act.distanceMeters > 0 && <div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>Distancia</div><div className="font-bold">{formatDistanceKm(getEffectiveDistanceMeters(act))}</div></div>}{(getEffectiveRecordedMetric(act, 'elevationGain') ?? 0) > 0 && <div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>Desnivel</div><div className="font-bold">+{getEffectiveRecordedMetric(act, 'elevationGain')} m</div></div>}<ArrowRight className="h-4 w-4 shrink-0 text-primary" /></div>
           </Link>
         ))}</div>}
       </section>

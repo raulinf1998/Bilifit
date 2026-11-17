@@ -1,5 +1,6 @@
 import type { ActivityDetail, ActivityPoint } from '@/types';
 import { getEffectiveDistanceMeters } from '@/lib/metrics';
+import { buildRetainedTelemetry } from '@/lib/analytics';
 
 export type RunningRecord = { activityId: string; title: string; startedAt: string; value: number };
 export type RunningRecords = {
@@ -79,15 +80,19 @@ export function computeSportRecords(activities: ActivityDetail[], sports: Activi
         (!records.greatestElevationGain || activity.elevationGain > records.greatestElevationGain.value)) {
       records.greatestElevationGain = make(activity.elevationGain);
     }
-    // Los puntos guardados incluyen los descansos: hasta poder separarlos con precisión,
-    // no atribuir marcas de tramo o tiempo continuo que puedan atravesarlos.
-    if (activity.excludedLapKeys?.length) continue;
-    const continuous = longestContinuousRun(activity.points, options.minSpeed, options.maxSpeed);
-    if (continuous && (!records.longestContinuous || continuous > records.longestContinuous.value)) records.longestContinuous = make(continuous);
-    for (const [label, meters] of [['1 km', 1000], ['5 km', 5000], ['10 km', 10000]] as const) {
-      const time = fastestRunningDistance(activity.points, meters);
-      const current = records.fastest[label];
-      if (time && (!current || time < current.value)) records.fastest[label] = make(time);
+    // No unir tramos físicamente separados: una marca continua no puede
+    // cruzar un descanso eliminado ni un salto de GPS.
+    const chunks = activity.excludedLapKeys?.length
+      ? (activity.retainedTelemetryChunks !== undefined ? activity.retainedTelemetryChunks : buildRetainedTelemetry(activity.points, activity.sport, activity.laps ?? [], activity.excludedLapKeys, activity.durationSec)) ?? []
+      : [activity.points];
+    for (const points of chunks) {
+      const continuous = longestContinuousRun(points, options.minSpeed, options.maxSpeed);
+      if (continuous && (!records.longestContinuous || continuous > records.longestContinuous.value)) records.longestContinuous = make(continuous);
+      for (const [label, meters] of [['1 km', 1000], ['5 km', 5000], ['10 km', 10000]] as const) {
+        const time = fastestRunningDistance(points, meters);
+        const current = records.fastest[label];
+        if (time && (!current || time < current.value)) records.fastest[label] = make(time);
+      }
     }
   }
   return records;

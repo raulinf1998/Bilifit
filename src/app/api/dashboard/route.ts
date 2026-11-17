@@ -8,7 +8,7 @@ import {
   listMountainRoutes,
   listRoutines,
 } from '@/lib/db';
-import { calculatePMC, getEffectiveDistanceMeters, getEffectiveDurationSec } from '@/lib/metrics';
+import { calculatePMC, getEffectiveDistanceMeters, getEffectiveDurationSec, getEffectiveRecordedMetric } from '@/lib/metrics';
 import { getHuaweiStatus } from '@/lib/huawei-sync';
 import { getMyWhooshStatus } from '@/lib/mywhoosh-sync';
 import { getStravaStatus } from '@/lib/strava';
@@ -29,8 +29,8 @@ export async function GET(req: NextRequest) {
 
     const weekDistanceKm = Math.round((thisWeek.reduce((s, a) => s + getEffectiveDistanceMeters(a), 0) / 1000) * 10) / 10;
     const weekDurationHours = Math.round((thisWeek.reduce((s, a) => s + getEffectiveDurationSec(a), 0) / 3600) * 10) / 10;
-    const weekElevationM = Math.round(thisWeek.reduce((s, a) => s + a.elevationGain, 0));
-    const weekTss = thisWeek.reduce((s, a) => s + a.tss, 0);
+    const weekElevationM = Math.round(thisWeek.reduce((s, a) => s + (getEffectiveRecordedMetric(a, 'elevationGain') ?? 0), 0));
+    const weekTss = thisWeek.reduce((s, a) => s + (getEffectiveRecordedMetric(a, 'tss') ?? 0), 0);
 
     const monthBySport = {
       running: thisMonth.filter((a) => a.sport === 'running').length,
@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
         walkingHours: hoursFor('walking'),
         strengthHours: hoursFor('strength'),
         totalKm: Math.round((items.reduce((s, i) => s + getEffectiveDistanceMeters(i), 0) / 1000) * 10) / 10,
-        totalTss: items.reduce((s, i) => s + i.tss, 0),
+        totalTss: items.reduce((s, i) => s + (getEffectiveRecordedMetric(i, 'tss') ?? 0), 0),
       });
     }
 

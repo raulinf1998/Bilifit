@@ -1,4 +1,4 @@
-import { formatDurationClock, getEffectiveDistanceMeters, getEffectiveDurationSec } from '@/lib/metrics';
+import { formatDurationClock, getEffectiveDistanceMeters, getEffectiveDurationSec, getEffectiveRecordedMetric } from '@/lib/metrics';
 import type { Activity, SportType } from '@/types';
 
 /**
@@ -343,13 +343,14 @@ export function summarizeActivities(activities: Activity[]): RangeStats {
     stats.sessions += 1;
     stats.durationSec += getEffectiveDurationSec(act);
     stats.distanceMeters += getEffectiveDistanceMeters(act) || 0;
-    stats.elevationGain += act.elevationGain || 0;
-    stats.calories += act.calories || 0;
+    stats.elevationGain += getEffectiveRecordedMetric(act, 'elevationGain') ?? 0;
+    stats.calories += getEffectiveRecordedMetric(act, 'calories') ?? 0;
     stats.volumeKg += act.totalVolumeKg || 0;
-    stats.tss += act.tss || 0;
-    if (typeof act.avgHr === 'number' && act.avgHr > 0) {
+    stats.tss += getEffectiveRecordedMetric(act, 'tss') ?? 0;
+    const avgHr = getEffectiveRecordedMetric(act, 'avgHr');
+    if (avgHr !== null && avgHr > 0) {
       const weight = Math.max(1, getEffectiveDurationSec(act));
-      hrSum += act.avgHr * weight;
+      hrSum += avgHr * weight;
       hrWeight += weight;
     }
     if (stats.bySport[act.sport] !== undefined) {

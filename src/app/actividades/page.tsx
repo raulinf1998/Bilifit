@@ -19,6 +19,7 @@ import {
   formatSpeedKmh,
   getEffectiveAvgSpeedMs,
   getEffectiveDistanceMeters,
+  getEffectiveRecordedMetric,
   getEffectiveDurationSec,
 } from '@/lib/metrics';
 import {
@@ -625,30 +626,30 @@ export default function ActivitiesPage() {
                       <div className="font-bold text-sm">{formatSpeedKmh(getEffectiveAvgSpeedMs(act))}</div>
                     </div>
                   )}
-                  {act.avgWatts && (
+                  {getEffectiveRecordedMetric(act, 'avgWatts') && (
                     <div>
                       <div style={{ color: 'var(--text-muted)' }}>Potencia</div>
                       <div className="font-bold text-sm text-cyan-400">
-                        {act.avgWatts} W{act.normalizedPower ? ` (NP ${act.normalizedPower})` : ''}
+                        {getEffectiveRecordedMetric(act, 'avgWatts')} W{!act.excludedLapKeys?.length && act.normalizedPower ? ` (NP ${act.normalizedPower})` : ''}
                       </div>
                     </div>
                   )}
-                  {act.elevationGain > 15 && (
+                  {(getEffectiveRecordedMetric(act, 'elevationGain') ?? 0) > 15 && (
                     <div>
                       <div style={{ color: 'var(--text-muted)' }}>Desnivel</div>
-                      <div className="font-bold text-sm text-emerald-400">+{act.elevationGain} m</div>
+                      <div className="font-bold text-sm text-emerald-400">+{getEffectiveRecordedMetric(act, 'elevationGain')} m</div>
                     </div>
                   )}
                   {(act.sport === 'running' ||
                     act.sport === 'trail' ||
                     act.sport === 'mountain' ||
                     act.sport === 'walking') &&
-                    (act.extras?.steps ?? 0) > 0 && (
+                    (getEffectiveRecordedMetric(act, 'steps') ?? 0) > 0 && (
                     <div>
                       <div style={{ color: 'var(--text-muted)' }}>
-                        Pasos{act.extras?.stepsEstimated ? ' (est.)' : ''}
+                        Pasos{act.excludedLapKeys?.length || act.extras?.stepsEstimated ? ' (est.)' : ''}
                       </div>
-                      <div className="font-bold text-sm">{(act.extras?.steps ?? 0).toLocaleString('es-ES')}</div>
+                      <div className="font-bold text-sm">{(getEffectiveRecordedMetric(act, 'steps') ?? 0).toLocaleString('es-ES')}</div>
                     </div>
                   )}
                   {act.totalVolumeKg && (
@@ -659,7 +660,7 @@ export default function ActivitiesPage() {
                   )}
                   <div>
                     <div style={{ color: 'var(--text-muted)' }}>Carga</div>
-                    <div className="font-bold text-sm">{act.tss} TSS</div>
+                    <div className="font-bold text-sm">{getEffectiveRecordedMetric(act, 'tss') ?? '—'} TSS</div>
                   </div>
                 </div>
 

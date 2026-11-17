@@ -39,6 +39,13 @@ export function getEffectiveDistanceMeters(activity: Pick<Activity, 'distanceMet
   return activity.excludedLapKeys?.length ? Math.max(0, activity.distanceMeters - (activity.manualRestDistanceMeters ?? 0)) : activity.distanceMeters;
 }
 
+/** Métricas registradas o estimadas sólo con los tramos conservados. */
+export function getEffectiveRecordedMetric(activity: Activity, key: 'elevationGain' | 'calories' | 'tss' | 'avgHr' | 'avgWatts' | 'steps'): number | null {
+  if (activity.excludedLapKeys?.length) return activity.manualRestSummary?.[key] ?? null;
+  if (key === 'steps') return activity.extras?.steps ?? null;
+  return activity[key] ?? null;
+}
+
 export function getEffectiveAvgSpeedMs(
   activity: Pick<Activity, 'distanceMeters' | 'durationSec' | 'movingTimeSec' | 'avgSpeedMs' | 'excludePausedTime' | 'excludedLapKeys' | 'manualRestDurationSec' | 'manualRestDistanceMeters'>
 ): number | null {
@@ -346,7 +353,7 @@ export function calculatePMC(activities: Activity[], days = 90): FitnessDayPoint
   const dailyTss = new Map<string, number>();
   for (const act of activities) {
     const day = act.startedAt.slice(0, 10);
-    dailyTss.set(day, (dailyTss.get(day) ?? 0) + (act.tss || 0));
+    dailyTss.set(day, (dailyTss.get(day) ?? 0) + (getEffectiveRecordedMetric(act, 'tss') ?? 0));
   }
 
   const end = new Date();

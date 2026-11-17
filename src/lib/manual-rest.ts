@@ -87,17 +87,45 @@ export function retainedRestChunks(
   intervals.sort((a, b) => a.start - b.start);
   if (intervals.some((r, i) => i > 0 && r.start < intervals[i - 1].end - 0.001)) return null;
   const chunks: import('@/types').ActivityPoint[][] = [];
-  let chunk: import('@/types').ActivityPoint[] = [];
-  for (const point of points) {
-    if (intervals.some(r => point.t >= r.start && (point.t < r.end || (r.end >= durationSec && point.t === r.end)))) {
-      if (chunk.length) { chunks.push(chunk); chunk = []; }
-      continue;
-    }
-    const before = intervals.filter(r => r.end <= point.t);
-    const removedTime = before.reduce((s, r) => s + r.end - r.start, 0);
-    const removedDistance = before.reduce((s, r) => s + r.distance, 0);
-    chunk.push({ ...point, t: Math.max(0, point.t - removedTime), dist: typeof point.dist === 'number' ? Math.max(0, point.dist - removedDistance) : undefined });
+  const ranges: Array<{ start: number; end: number; shiftTime: number; shiftDistance: number }> = [];
+  let cursor = 0, shiftTime = 0, shiftDistance = 0;
+  for (const interval of intervals) {
+    if (interval.start > cursor) ranges.push({ start: cursor, end: interval.start, shiftTime, shiftDistance });
+    cursor = interval.end;
+    shiftTime += interval.end - interval.start;
+    shiftDistance += interval.distance;
   }
-  if (chunk.length) chunks.push(chunk);
+  if (cursor < durationSec) ranges.push({ start: cursor, end: durationSec, shiftTime, shiftDistance });
+  // Interpolar únicamente geometría y distancia; los valores de sensores del
+  // límite se toman del lado conservado, nunca del interior del descanso.
+  const boundary = (t: number, side: 'after' | 'before'): import('@/types').ActivityPoint | null => {
+    const right = points.findIndex(p => p.t >= t);
+    if (right < 0) return null;
+    const b = points[right], a = points[Math.max(0, right - 1)];
+    if (a.t > t || b.t < t || b.t - a.t > 120) return null;
+    const sensorIndex = side === 'after' || (t === durationSec && b.t === t) ? right : right - 1;
+    const safeSensorIndex = Math.max(0, Math.min(points.length - 1, sensorIndex));
+    const ratio = b.t > a.t ? (t - a.t) / (b.t - a.t) : 0;
+    const p = { ...points[safeSensorIndex], t };
+    for (const field of ['dist', 'lat', 'lon'] as const) {
+      const x = a[field], y = b[field];
+      if (typeof x === 'number' && typeof y === 'number') p[field] = x + (y - x) * ratio;
+      else delete p[field];
+    }
+    return p;
+  };
+  for (const range of ranges) {
+    const kept = points.filter(p => p.t >= range.start && p.t <= range.end);
+    const first = boundary(range.start, 'after');
+    const last = boundary(range.end, 'before');
+    if (!first || !last) return null;
+    const interior = kept.filter(p => p.t > range.start && p.t < range.end);
+    const chunk = [first, ...interior, last].map(p => ({
+      ...p,
+      t: Math.max(0, p.t - range.shiftTime),
+      dist: typeof p.dist === 'number' ? Math.max(0, p.dist - range.shiftDistance) : undefined,
+    }));
+    if (chunk.length >= 2) chunks.push(chunk);
+  }
   return chunks;
 }
