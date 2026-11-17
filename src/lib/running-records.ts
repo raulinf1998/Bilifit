@@ -5,6 +5,7 @@ export type RunningRecords = {
   fastest: Record<'1 km' | '5 km' | '10 km', RunningRecord | null>;
   longestDistance: RunningRecord | null;
   longestContinuous: RunningRecord | null;
+  greatestElevationGain: RunningRecord | null;
 };
 
 /** Estimación conservadora por intervalos: pausas, huecos y datos insuficientes cortan el tramo. */
@@ -67,11 +68,15 @@ export function fastestRunningDistance(points: ActivityPoint[], target: number):
 
 /** El mismo cálculo para correr, bicicleta o montaña, filtrado por deporte. */
 export function computeSportRecords(activities: ActivityDetail[], sports: ActivityDetail['sport'][], options: { minSpeed?: number; maxSpeed?: number } = {}): RunningRecords {
-  const records: RunningRecords = { fastest: { '1 km': null, '5 km': null, '10 km': null }, longestDistance: null, longestContinuous: null };
+  const records: RunningRecords = { fastest: { '1 km': null, '5 km': null, '10 km': null }, longestDistance: null, longestContinuous: null, greatestElevationGain: null };
   for (const activity of activities) {
     if (!sports.includes(activity.sport)) continue;
     const make = (value: number): RunningRecord => ({ activityId: activity.id, title: activity.title, startedAt: activity.startedAt, value });
     if (activity.distanceMeters > 0 && (!records.longestDistance || activity.distanceMeters > records.longestDistance.value)) records.longestDistance = make(activity.distanceMeters);
+    if (Number.isFinite(activity.elevationGain) && activity.elevationGain > 0 &&
+        (!records.greatestElevationGain || activity.elevationGain > records.greatestElevationGain.value)) {
+      records.greatestElevationGain = make(activity.elevationGain);
+    }
     const continuous = longestContinuousRun(activity.points, options.minSpeed, options.maxSpeed);
     if (continuous && (!records.longestContinuous || continuous > records.longestContinuous.value)) records.longestContinuous = make(continuous);
     for (const [label, meters] of [['1 km', 1000], ['5 km', 5000], ['10 km', 10000]] as const) {
