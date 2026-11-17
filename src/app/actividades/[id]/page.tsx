@@ -32,6 +32,8 @@ import {
   ZoomIn,
 } from 'lucide-react';
 import ActivityMap from '@/components/ActivityMap';
+import ActivityDurationInput from '@/components/ActivityDurationInput';
+import { parseActivityDuration, splitActivityDuration } from '@/lib/activity-duration';
 import { PowerZonesChart, TelemetryChart, ZoneBarsChart } from '@/components/Charts';
 import ImageLightboxModal from '@/components/ImageLightboxModal';
 import { SportBadge } from '@/components/SportBadge';
@@ -146,8 +148,7 @@ export default function ActivityDetailPage() {
   const [worldName, setWorldName] = useState('');
   const [gearId, setGearId] = useState('');
   const [rpe, setRpe] = useState(6);
-  // Minutos editables: sirve para corregir sesiones cuyo cronómetro se quedó corto
-  const [durationMin, setDurationMin] = useState(0);
+  const [duration, setDuration] = useState(() => splitActivityDuration(0));
   const [doneTogether, setDoneTogether] = useState(false);
   const [togglingTogether, setTogglingTogether] = useState(false);
   const [togglingPaused, setTogglingPaused] = useState(false);
@@ -291,7 +292,7 @@ export default function ActivityDetailPage() {
       setRpe(activity.rpe ?? 6);
       setDoneTogether(Boolean(activity.doneTogether));
       setDescription(activity.description ?? '');
-      setDurationMin(Math.round((activity.durationSec / 60) * 10) / 10);
+      setDuration(splitActivityDuration(activity.durationSec));
       setDraftStrength(buildDraftStrengthFromLogs(activity.strengthLogs, exercisePerDumbbellMap));
     }
     setSaveError(null);
@@ -346,6 +347,11 @@ export default function ActivityDetailPage() {
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
+    const durationSec = parseActivityDuration(duration);
+    if (durationSec === null || (durationSec < 1 && durationSec !== activity?.durationSec)) {
+      setSaveError('Introduce una duración válida entre 1 segundo y 7 días.');
+      return;
+    }
     setSavingEdit(true);
     setSaveError(null);
     const includeStrength =
@@ -384,12 +390,8 @@ export default function ActivityDetailPage() {
           rpe,
           doneTogether,
           description,
-          // Sólo se manda si cambia de verdad: así no se redondean las sesiones importadas
-          ...(activity &&
-          durationMin > 0 &&
-          Math.abs(Math.round(durationMin * 60) - activity.durationSec) >= 1
-            ? { durationSec: Math.round(durationMin * 60) }
-            : {}),
+          // No modificar una duración importada si no se ha cambiado.
+          ...(activity && durationSec !== activity.durationSec ? { durationSec } : {}),
           ...(serializedLogs !== undefined ? { strengthLogs: serializedLogs } : {}),
         }),
       });
@@ -1018,22 +1020,8 @@ export default function ActivityDetailPage() {
               </select>
             </div>
             <div>
-              <label className="block text-xs mb-1" style={{ color: 'var(--text-secondary)' }}>
-                Duración (min)
-              </label>
-              <input
-                type="number"
-                min={1}
-                step={0.5}
-                inputMode="decimal"
-                value={durationMin || ''}
-                onChange={(e) => setDurationMin(Math.max(0, Number(e.target.value)))}
-                className="w-full rounded-lg border px-3 py-2 text-sm tabular-nums"
-                style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
-              />
-              <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                Ahora: {formatDurationClock(activity.durationSec)}
-              </div>
+              <ActivityDurationInput value={duration} onChange={setDuration} />
+              <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>Ahora: {formatDurationClock(activity.durationSec)}</div>
             </div>
             <div>
               <label className="block text-xs mb-1" style={{ color: 'var(--text-secondary)' }}>RPE ({rpe}/10)</label>
@@ -1337,12 +1325,12 @@ export default function ActivityDetailPage() {
             <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
               {activity.excludePausedTime ? 'Tiempo en mov.' : 'Tiempo total'}
             </div>
-            <div className="text-lg font-bold tabular-nums">{formatDuration(effectiveDurationSec)}</div>
+            <div className="text-lg font-bold tabular-nums">{formatDurationClock(effectiveDurationSec)}</div>
             {pausedSec >= 5 && (
               <div className="text-[10px] tabular-nums mt-0.5" style={{ color: 'var(--text-muted)' }}>
                 {activity.excludePausedTime
-                  ? `Total: ${formatDuration(activity.durationSec)} · Excl. ${formatDuration(pausedSec)}`
-                  : `Mov: ${formatDuration(activity.movingTimeSec)} · Parado: ${formatDuration(pausedSec)}`}
+                  ? `Total: ${formatDurationClock(activity.durationSec)} · Excl. ${formatDurationClock(pausedSec)}`
+                  : `Mov: ${formatDurationClock(activity.movingTimeSec)} · Parado: ${formatDurationClock(pausedSec)}`}
               </div>
             )}
           </div>

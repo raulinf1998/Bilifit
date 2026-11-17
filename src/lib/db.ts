@@ -29,7 +29,7 @@ import {
   resolveIsPerDumbbell,
 } from '@/lib/home-workouts';
 import { defaultSubSportForSport, estimateActivityTSS, isMismatchedSubSport } from '@/lib/metrics';
-import { MAX_TRACKED_SESSION_SEC } from '@/lib/session-clock';
+import { MAX_ACTIVITY_DURATION_SEC } from '@/lib/activity-duration';
 import { isMyWhooshContext, resolveMyWhooshWorldForActivity } from '@/lib/mywhoosh-maps';
 import { decodePolyline } from '@/lib/polyline';
 import { sanitizeImageList, sanitizeImageUrl } from '@/lib/uploads';
@@ -1458,13 +1458,16 @@ export function updateActivity(
   const durationRaw = Number(patch.durationSec);
   const durationChanged = Number.isFinite(durationRaw) && durationRaw > 0;
   const nextDurationSec = durationChanged
-    ? Math.min(MAX_TRACKED_SESSION_SEC, Math.max(60, Math.round(durationRaw)))
+    ? Math.min(MAX_ACTIVITY_DURATION_SEC, Math.max(1, Math.round(durationRaw)))
     : existing.durationSec;
   const nextMovingTimeSec = durationChanged
     ? existing.movingTimeSec === existing.durationSec || existing.movingTimeSec <= 0
       ? nextDurationSec
       : Math.min(nextDurationSec, existing.movingTimeSec)
     : existing.movingTimeSec;
+  const nextAvgSpeedMs = durationChanged && existing.distanceMeters > 0
+    ? Math.round((existing.distanceMeters / nextDurationSec) * 100) / 100
+    : existing.avgSpeedMs ?? null;
   const nextCalories =
     durationChanged && (existing.source === 'bilifit_home' || existing.source === 'manual')
       ? Math.round(
@@ -1559,7 +1562,7 @@ export function updateActivity(
 
   db.prepare(`
       UPDATE activities
-      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?, tss = ?, done_together = ?, exclude_paused_time = ?, images_json = ?, strength_logs_json = ?, total_volume_kg = ?, duration_sec = ?, moving_time_sec = ?, calories = ?
+      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?, tss = ?, done_together = ?, exclude_paused_time = ?, images_json = ?, strength_logs_json = ?, total_volume_kg = ?, duration_sec = ?, moving_time_sec = ?, calories = ?, avg_speed_ms = ?
       WHERE id = ?
     `).run(
     patch.title ?? existing.title,
@@ -1578,6 +1581,7 @@ export function updateActivity(
     nextDurationSec,
     nextMovingTimeSec,
     nextCalories,
+    nextAvgSpeedMs,
     id
   );
 

@@ -13,15 +13,17 @@ export default function MultiRouteMap({
   activities,
   routes,
   heightClass = 'h-96',
+  defaultLayer = 'topo',
 }: {
   activities: Activity[];
   routes: MountainRoute[];
   heightClass?: string;
+  defaultLayer?: Exclude<MapStyle, 'virtual'>;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<import('leaflet').Map | null>(null);
   const baseRef = useRef<import('leaflet').TileLayer | null>(null);
-  const [layer, setLayer] = useState<Exclude<MapStyle, 'virtual'>>('topo');
+  const [layer, setLayer] = useState<Exclude<MapStyle, 'virtual'>>(defaultLayer);
   const [mapVersion, setMapVersion] = useState(0);
 
   useEffect(() => {

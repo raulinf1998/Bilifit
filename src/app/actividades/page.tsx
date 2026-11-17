@@ -5,6 +5,8 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { Camera, Heart, Image as ImageIcon, Plus, Search, Trash2, X } from 'lucide-react';
 import { useActiveAccount } from '@/components/AccountProvider';
 import ImageUploadControl from '@/components/ImageUploadControl';
+import ActivityDurationInput from '@/components/ActivityDurationInput';
+import { parseActivityDuration, splitActivityDuration } from '@/lib/activity-duration';
 import { RangeSummary } from '@/components/RangeSummary';
 import { SportBadge } from '@/components/SportBadge';
 import { TogetherToggleButton, getTogetherLabel } from '@/components/TogetherControl';
@@ -105,7 +107,8 @@ export default function ActivitiesPage() {
   // Form state manual
   const [title, setTitle] = useState('');
   const [mSport, setMSport] = useState<SportType>('running');
-  const [durationMin, setDurationMin] = useState(45);
+  const [duration, setDuration] = useState(() => splitActivityDuration(45 * 60));
+  const [manualError, setManualError] = useState<string | null>(null);
   const [distanceKm, setDistanceKm] = useState(8);
   const [elevationGain, setElevationGain] = useState(120);
   const [avgHr, setAvgHr] = useState('');
@@ -146,13 +149,16 @@ export default function ActivitiesPage() {
 
   async function handleCreateManual(e: React.FormEvent) {
     e.preventDefault();
+    const durationSec = parseActivityDuration(duration);
+    if (durationSec === null || durationSec < 1) { setManualError('Introduce una duración válida entre 1 segundo y 7 días.'); return; }
+    setManualError(null);
     const res = await fetch('/api/activities', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         title,
         sport: mSport,
-        durationMin,
+        durationSec,
         distanceKm: mSport === 'strength' ? 0 : distanceKm,
         elevationGain: mSport === 'strength' ? 0 : elevationGain,
         avgHr: avgHr ? Number(avgHr) : null,
@@ -264,17 +270,8 @@ export default function ActivitiesPage() {
             </div>
 
             <div>
-              <label className="block text-xs mb-1" style={{ color: 'var(--text-secondary)' }}>
-                Duración (minutos)
-              </label>
-              <input
-                type="number"
-                min={1}
-                value={durationMin}
-                onChange={(e) => setDurationMin(Number(e.target.value))}
-                className="w-full rounded-lg border px-3 py-2 text-sm"
-                style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}
-              />
+              <ActivityDurationInput value={duration} onChange={setDuration} />
+              {manualError && <p role="alert" className="mt-1 text-xs text-rose-500">{manualError}</p>}
             </div>
 
             {mSport !== 'strength' && (
@@ -609,7 +606,7 @@ export default function ActivitiesPage() {
                   )}
                   <div>
                     <div style={{ color: 'var(--text-muted)' }}>Duración</div>
-                    <div className="font-bold text-sm">{formatDuration(getEffectiveDurationSec(act))}</div>
+                    <div className="font-bold text-sm">{formatDurationClock(getEffectiveDurationSec(act))}</div>
                   </div>
                   {(act.sport === 'running' ||
                     act.sport === 'trail' ||

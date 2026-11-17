@@ -7,7 +7,9 @@ import ActivityImporter from '@/components/ActivityImporter';
 import ActivityMap from '@/components/ActivityMap';
 import MyWhooshConnectorCard from '@/components/MyWhooshConnectorCard';
 import { SportBadge } from '@/components/SportBadge';
-import { formatDistanceKm, formatDuration, getCogganPowerZones, getEffectiveDurationSec } from '@/lib/metrics';
+import SportRecords from '@/components/SportRecords';
+import type { RunningRecords } from '@/lib/running-records';
+import { formatDistanceKm, formatDurationClock, getCogganPowerZones, getEffectiveDurationSec } from '@/lib/metrics';
 import {
   MYWHOOSH_WORLDS,
   getMyWhooshWorldByIdOrName,
@@ -19,12 +21,24 @@ import type { Activity, AthleteProfile } from '@/types';
 
 export default function CyclingMyWhooshPage() {
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [records, setRecords] = useState<RunningRecords | null>(null);
+  const [recordsError, setRecordsError] = useState(false);
   const [profile, setProfile] = useState<AthleteProfile | null>(null);
   const [ftpDraft, setFtpDraft] = useState(245);
   const [savedNotice, setSavedNotice] = useState(false);
   const [selectedWorldId, setSelectedWorldId] = useState<string>('hudayriyat');
 
+  const loadRecords = useCallback(async () => {
+    try {
+      const res = await fetch('/api/sport-records?type=cycling', { cache: 'no-store' });
+      if (!res.ok) throw new Error();
+      setRecords((await res.json()).records);
+      setRecordsError(false);
+    } catch { setRecordsError(true); }
+  }, []);
+
   const load = useCallback(async () => {
+    void loadRecords();
     const [mwRes, cycRes, profRes] = await Promise.all([
       fetch('/api/activities?sport=mywhoosh').then((r) => r.json()),
       fetch('/api/activities?sport=cycling').then((r) => r.json()),
@@ -38,7 +52,7 @@ export default function CyclingMyWhooshPage() {
       setProfile(profRes.profile);
       setFtpDraft(profRes.profile.ftpWatts);
     }
-  }, []);
+  }, [loadRecords]);
 
   useEffect(() => {
     load();
@@ -222,7 +236,7 @@ export default function CyclingMyWhooshPage() {
                 </div>
                 <div>
                   <div style={{ color: 'var(--text-muted)' }}>Tiempo</div>
-                  <div className="font-semibold">{formatDuration(getEffectiveDurationSec(act))}</div>
+                  <div className="font-semibold">{formatDurationClock(getEffectiveDurationSec(act))}</div>
                 </div>
                 {act.avgWatts && (
                   <div>
@@ -248,6 +262,9 @@ export default function CyclingMyWhooshPage() {
           })}
         </div>
       </div>
+
+      {recordsError && <p role="alert" className="text-sm text-rose-500">No se pudieron cargar las marcas. <button type="button" className="underline" onClick={() => void loadRecords()}>Reintentar</button></p>}
+      {records && <SportRecords records={records} kind="cycling" />}
 
       {/* Atlas Interactivo de Mundos de MyWhoosh */}
       <div className="card-surface p-5 space-y-4">

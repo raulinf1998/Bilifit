@@ -4653,7 +4653,7 @@ test('La duración de una sesión guardada se puede corregir (y arrastra TSS, ca
   const junk = (await (await patchDur({ durationSec: 'no-numero' })).json()) as { activity: typeof activity };
   assert.equal(junk.activity.durationSec, 3900);
   const huge = (await (await patchDur({ durationSec: 999_999 })).json()) as { activity: typeof activity };
-  assert.equal(huge.activity.durationSec, MAX_TRACKED_SESSION_SEC);
+  assert.equal(huge.activity.durationSec, 7 * 24 * 3600);
 
   deleteActivity(activity.id);
 });
@@ -5650,4 +5650,61 @@ test('API de correr devuelve sólo carreras y sus marcas con enlaces válidos', 
   for (const record of [...Object.values(result.records.fastest), result.records.longestDistance, result.records.longestContinuous]) {
     if (record) assert.ok(result.activities.some((activity: { id: string }) => activity.id === (record as { activityId: string }).activityId));
   }
+});
+
+test('Marcas para ciclismo y montaña filtran deportes y conservan rutas y pausas', async () => {
+  const { computeSportRecords } = await import('../src/lib/running-records');
+  const points = Array.from({ length: 101 }, (_, i) => ({ t: i * 30, dist: i * 100 }));
+  const base = { id: 'ciclista', title: 'Ruta', startedAt: '2026-01-01T00:00:00Z', sport: 'cycling', distanceMeters: 10000, points } as import('../src/types').ActivityDetail;
+  const ride = { ...base, id: 'virtual', sport: 'mywhoosh', distanceMeters: 20000 } as import('../src/types').ActivityDetail;
+  const trail = { ...base, id: 'trail', sport: 'trail', distanceMeters: 15000 } as import('../src/types').ActivityDetail;
+  const hike = { ...base, id: 'sendero', sport: 'mountain', distanceMeters: 18000 } as import('../src/types').ActivityDetail;
+  const records = computeSportRecords([base, ride, trail, hike], ['cycling', 'mywhoosh'], { minSpeed: 0.35, maxSpeed: 35 });
+  assert.equal(records.fastest['1 km']?.value, 300);
+  assert.equal(records.fastest['5 km']?.value, 1500);
+  assert.equal(records.fastest['10 km']?.value, 3000);
+  assert.equal(records.longestDistance?.activityId, 'virtual');
+  assert.equal(records.longestContinuous?.value, 3000);
+  assert.equal(computeSportRecords([base, ride, trail, hike], ['mountain', 'trail']).longestDistance?.activityId, 'sendero');
+  assert.equal(computeSportRecords([base], ['trail']).longestDistance, null);
+  const { GET } = await import('../src/app/api/sport-records/route');
+  assert.equal((await GET(new NextRequest('http://localhost/api/sport-records?type=unknown'))).status, 400);
+  for (const type of ['cycling', 'mountain']) {
+    const res = await GET(new NextRequest(`http://localhost/api/sport-records?type=${type}`));
+    assert.equal(res.status, 200);
+    assert.ok((await res.json()).records.fastest);
+  }
+});
+
+test('Duración de actividad: horas, minutos y segundos se guardan sin redondeo', async () => {
+  const { splitActivityDuration, parseActivityDuration } = await import('../src/lib/activity-duration');
+  assert.deepEqual(splitActivityDuration(3691), { hours: '1', minutes: '1', seconds: '31' });
+  assert.equal(parseActivityDuration({ hours: '9', minutes: '3', seconds: '7' }), 32587);
+  assert.equal(parseActivityDuration({ hours: '0', minutes: '60', seconds: '0' }), null);
+  assert.equal(parseActivityDuration({ hours: '0', minutes: '0', seconds: '' }), null);
+  const { POST } = await import('../src/app/api/activities/route');
+  const { PATCH } = await import('../src/app/api/activities/[id]/route');
+  const body = { title: 'Duración exacta', sport: 'running', durationSec: 3691, distanceKm: 10 };
+  const request = (data: object) => new NextRequest('http://localhost/api/activities', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
+  const res = await POST(request(body));
+  assert.equal(res.status, 201);
+  const activity = (await res.json()).activity;
+  try {
+    assert.equal(activity.durationSec, 3691);
+    assert.equal(activity.movingTimeSec, 3691);
+    const patch = async (data: object) => PATCH(new NextRequest('http://localhost/api/activities/' + activity.id, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) }), { params: Promise.resolve({ id: activity.id }) });
+    const changed = await (await patch({ durationSec: 32587 })).json();
+    assert.equal(changed.activity.durationSec, 32587, 'más de ocho horas con segundos');
+    assert.equal(changed.activity.avgSpeedMs, Math.round(10000 / 32587 * 100) / 100, 'la velocidad media se actualiza');
+    const unchanged = await (await patch({ title: 'Otro título' })).json();
+    assert.equal(unchanged.activity.durationSec, 32587, 'editar otro campo no modifica la duración');
+    assert.equal((await POST(request({ ...body, durationSec: 0 }))).status, 400);
+    const short = await (await patch({ durationSec: 31 })).json();
+    assert.equal(short.activity.durationSec, 31, 'sin mínimo oculto de un minuto');
+  } finally { deleteActivity(activity.id); }
+  const legacy = await POST(request({ title: 'Compatibilidad', durationMin: 1.5 }));
+  assert.equal(legacy.status, 201);
+  const legacyActivity = (await legacy.json()).activity;
+  assert.equal(legacyActivity.durationSec, 90);
+  deleteActivity(legacyActivity.id);
 });
