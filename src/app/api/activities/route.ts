@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { withAccount } from '@/lib/account-context';
+import { MAX_ACTIVITY_DURATION_SEC } from '@/lib/activity-duration';
 import { resolveActivityTitle } from '@/lib/activity-naming';
 import { createActivity, getAthleteProfile, listActivities } from '@/lib/db';
 import { estimateActivityTSS } from '@/lib/metrics';
@@ -47,7 +48,11 @@ export async function POST(req: NextRequest) {
       const title = resolveActivityTitle(rawTitle, sport, startedAt);
 
       const profile = getAthleteProfile();
-      const durationSec = Math.max(60, Math.round(Number(body.durationMin || 45) * 60));
+      const rawDuration = body.durationSec !== undefined ? Number(body.durationSec) : Math.round(Number(body.durationMin ?? 45) * 60);
+      if (!Number.isFinite(rawDuration) || rawDuration < 1 || rawDuration > MAX_ACTIVITY_DURATION_SEC || !Number.isInteger(rawDuration)) {
+        return NextResponse.json({ error: 'La duración debe estar entre 1 segundo y 7 días.' }, { status: 400 });
+      }
+      const durationSec = rawDuration;
       const distanceMeters = Math.max(0, Math.round(Number(body.distanceKm || 0) * 1000));
       const elevationGain = Math.max(0, Math.round(Number(body.elevationGain || 0)));
       const avgHr = body.avgHr ? Math.round(Number(body.avgHr)) : null;

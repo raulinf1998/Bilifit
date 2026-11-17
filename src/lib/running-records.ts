@@ -8,7 +8,7 @@ export type RunningRecords = {
 };
 
 /** Estimación conservadora por intervalos: pausas, huecos y datos insuficientes cortan el tramo. */
-export function longestContinuousRun(points: ActivityPoint[]): number | null {
+export function longestContinuousRun(points: ActivityPoint[], minSpeed = 0.8, maxSpeed = 10): number | null {
   let current = 0;
   let best = 0;
   for (let i = 1; i < points.length; i++) {
@@ -16,7 +16,7 @@ export function longestContinuousRun(points: ActivityPoint[]): number | null {
     const dt = point.t - prev.t;
     const dd = typeof prev.dist === 'number' && typeof point.dist === 'number' ? point.dist - prev.dist : null;
     const speed = dd !== null && dt > 0 ? dd / dt : point.speed;
-    if (Number.isFinite(dt) && dt > 0 && dt <= 120 && typeof speed === 'number' && Number.isFinite(speed) && speed >= 0.8 && speed <= 10) {
+    if (Number.isFinite(dt) && dt > 0 && dt <= 120 && typeof speed === 'number' && Number.isFinite(speed) && speed >= minSpeed && speed <= maxSpeed) {
       current += dt;
       best = Math.max(best, current);
     } else {
@@ -65,14 +65,14 @@ export function fastestRunningDistance(points: ActivityPoint[], target: number):
   return Number.isFinite(best) && best > 5 ? Math.round(best) : null;
 }
 
-/** Sólo carreras de asfalto. Los tramos rápidos son estimaciones del recorrido registrado. */
-export function computeRunningRecords(activities: ActivityDetail[]): RunningRecords {
+/** El mismo cálculo para correr, bicicleta o montaña, filtrado por deporte. */
+export function computeSportRecords(activities: ActivityDetail[], sports: ActivityDetail['sport'][], options: { minSpeed?: number; maxSpeed?: number } = {}): RunningRecords {
   const records: RunningRecords = { fastest: { '1 km': null, '5 km': null, '10 km': null }, longestDistance: null, longestContinuous: null };
   for (const activity of activities) {
-    if (activity.sport !== 'running') continue;
+    if (!sports.includes(activity.sport)) continue;
     const make = (value: number): RunningRecord => ({ activityId: activity.id, title: activity.title, startedAt: activity.startedAt, value });
     if (activity.distanceMeters > 0 && (!records.longestDistance || activity.distanceMeters > records.longestDistance.value)) records.longestDistance = make(activity.distanceMeters);
-    const continuous = longestContinuousRun(activity.points);
+    const continuous = longestContinuousRun(activity.points, options.minSpeed, options.maxSpeed);
     if (continuous && (!records.longestContinuous || continuous > records.longestContinuous.value)) records.longestContinuous = make(continuous);
     for (const [label, meters] of [['1 km', 1000], ['5 km', 5000], ['10 km', 10000]] as const) {
       const time = fastestRunningDistance(activity.points, meters);
@@ -81,4 +81,9 @@ export function computeRunningRecords(activities: ActivityDetail[]): RunningReco
     }
   }
   return records;
+}
+
+/** Sólo carreras de asfalto. */
+export function computeRunningRecords(activities: ActivityDetail[]): RunningRecords {
+  return computeSportRecords(activities, ['running']);
 }

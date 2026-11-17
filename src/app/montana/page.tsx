@@ -5,15 +5,29 @@ import { useCallback, useEffect, useState } from 'react';
 import { Compass, Mountain } from 'lucide-react';
 import MultiRouteMap from '@/components/MultiRouteMap';
 import { SportBadge } from '@/components/SportBadge';
-import { formatDistanceKm, formatDuration, getEffectiveDurationSec } from '@/lib/metrics';
+import SportRecords from '@/components/SportRecords';
+import type { RunningRecords } from '@/lib/running-records';
+import { formatDistanceKm, formatDurationClock, getEffectiveDurationSec } from '@/lib/metrics';
 import type { Activity, MountainRoute } from '@/types';
 
 export default function MountainRoutesPage() {
   const [routes, setRoutes] = useState<MountainRoute[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [records, setRecords] = useState<RunningRecords | null>(null);
+  const [recordsError, setRecordsError] = useState(false);
 
+
+  const loadRecords = useCallback(async () => {
+    try {
+      const res = await fetch('/api/sport-records?type=mountain', { cache: 'no-store' });
+      if (!res.ok) throw new Error();
+      setRecords((await res.json()).records);
+      setRecordsError(false);
+    } catch { setRecordsError(true); }
+  }, []);
 
   const load = useCallback(async () => {
+    void loadRecords();
     const [rtRes, mtnActRes, trailActRes, runActRes] = await Promise.all([
       fetch('/api/routes').then((r) => r.json()),
       fetch('/api/activities?sport=mountain').then((r) => r.json()),
@@ -22,7 +36,7 @@ export default function MountainRoutesPage() {
     ]);
     setRoutes(rtRes.routes ?? []);
     setActivities([...(mtnActRes.activities ?? []), ...(trailActRes.activities ?? []), ...(runActRes.activities ?? [])]);
-  }, []);
+  }, [loadRecords]);
 
   useEffect(() => {
     load();
@@ -55,15 +69,18 @@ export default function MountainRoutesPage() {
           <div>
             <h2 className="text-base font-bold flex items-center gap-2">
               <Compass className="h-4 w-4 text-emerald-400" />
-              Mapa Topográfico de Tracks y Rutas
+              Mapa de recorridos y rutas
             </h2>
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
               Verde: salidas montaña · Naranja: running · Discontinuo ámbar: rutas pendientes · Desnivel total montaña: +{totalMtnClimb} m
             </p>
           </div>
         </div>
-        <MultiRouteMap activities={activities} routes={routes} heightClass="h-96" />
+        <MultiRouteMap activities={activities} routes={routes} defaultLayer="osm" heightClass="h-96" />
       </div>
+
+      {recordsError && <p role="alert" className="text-sm text-rose-500">No se pudieron cargar las marcas. <button type="button" className="underline" onClick={() => void loadRecords()}>Reintentar</button></p>}
+      {records && <SportRecords records={records} kind="mountain" />}
 
       {/* Últimas salidas de montaña */}
       <div className="card-surface p-5 space-y-3">
@@ -96,7 +113,7 @@ export default function MountainRoutesPage() {
                 </div>
                 <div>
                   <span style={{ color: 'var(--text-muted)' }}>Tiempo: </span>
-                  <strong>{formatDuration(getEffectiveDurationSec(act))}</strong>
+                  <strong>{formatDurationClock(getEffectiveDurationSec(act))}</strong>
                 </div>
               </div>
             </Link>
