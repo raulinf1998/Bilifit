@@ -226,6 +226,10 @@ export interface Activity {
   totalVolumeKg?: number | null;
   doneTogether?: boolean;
   excludePausedTime?: boolean;
+  /** Descansos elegidos manualmente entre los segmentos originales del reloj. */
+  excludedLapKeys?: string[];
+  manualRestDurationSec?: number;
+  manualRestDistanceMeters?: number;
   trimmed?: boolean;
   images?: string[];
   laps?: ActivityLap[];

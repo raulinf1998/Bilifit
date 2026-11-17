@@ -18,6 +18,7 @@ import {
   formatPaceMinKm,
   formatSpeedKmh,
   getEffectiveAvgSpeedMs,
+  getEffectiveDistanceMeters,
   getEffectiveDurationSec,
 } from '@/lib/metrics';
 import {
@@ -601,7 +602,7 @@ export default function ActivitiesPage() {
                   {act.distanceMeters > 0 && (
                     <div>
                       <div style={{ color: 'var(--text-muted)' }}>Distancia</div>
-                      <div className="font-bold text-sm">{formatDistanceKm(act.distanceMeters)}</div>
+                      <div className="font-bold text-sm">{formatDistanceKm(getEffectiveDistanceMeters(act))}</div>
                     </div>
                   )}
                   <div>

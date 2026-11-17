@@ -5749,3 +5749,58 @@ test('API de marcas de montaña devuelve la actividad con mayor desnivel de la c
     assert.equal(records.greatestElevationGain.value, 99999);
   } finally { deleteActivity(id); }
 });
+
+test('Descansos manuales en segmentos: persistencia, prioridad y vuelta al tiempo parado automático', async () => {
+  const { restLapKey } = await import('../src/lib/manual-rest');
+  const { getEffectiveDurationSec, getEffectiveDistanceMeters, getEffectiveAvgSpeedMs } = await import('../src/lib/metrics');
+  const { PATCH, GET } = await import('../src/app/api/activities/[id]/route');
+  const seed = getActivityById('act_seed_run_1');
+  assert.ok(seed);
+  const id = 'act_manual_rest_test';
+  deleteActivity(id);
+  const laps = [
+    { lapNumber: 1, name: 'Correr', startDistM: 0, endDistM: 1000, distanceMeters: 1000, durationSec: 400, movingTimeSec: 400, elevationGain: 0, elevationLoss: 0 },
+    { lapNumber: 2, name: 'Descanso', startDistM: 1000, endDistM: 1100, distanceMeters: 100, durationSec: 200, movingTimeSec: 100, elevationGain: 0, elevationLoss: 0 },
+    { lapNumber: 3, name: 'Correr de nuevo', startDistM: 1100, endDistM: 2000, distanceMeters: 900, durationSec: 400, movingTimeSec: 200, elevationGain: 0, elevationLoss: 0 },
+  ];
+  try {
+    createActivity({ ...seed, id, externalId: id, sport: 'running', durationSec: 1000, movingTimeSec: 700, distanceMeters: 2000, points: [], laps, excludePausedTime: true } as never);
+    const context = { params: Promise.resolve({ id }) };
+    const patch = (body: unknown) => PATCH(new NextRequest('http://localhost/api/activities/' + id, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), context);
+    const key = restLapKey(laps[1], 1);
+    const saved = await patch({ excludedLapKeys: [key] });
+    assert.equal(saved.status, 200);
+    const activity = (await saved.json()).activity;
+    assert.deepEqual(activity.excludedLapKeys, [key]);
+    assert.equal(activity.manualRestDurationSec, 200);
+    assert.equal(activity.manualRestDistanceMeters, 100);
+    assert.equal(activity.durationSec, 1000, 'la grabación original no se cambia');
+    assert.equal(activity.distanceMeters, 2000);
+    assert.equal(getEffectiveDurationSec(activity), 800, 'selección manual sustituye al automático de 700 s');
+    assert.equal(getEffectiveDistanceMeters(activity), 1900);
+    assert.equal(getEffectiveAvgSpeedMs(activity), 2.38);
+    const reopened = (await (await GET(new NextRequest('http://localhost/api/activities/' + id), context)).json()).activity;
+    assert.deepEqual(reopened.excludedLapKeys, [key], 'persistido en SQLite al volver a abrir');
+    const { listActivities } = await import('../src/lib/db');
+    const listed = listActivities().find(a => a.id === id)!;
+    assert.equal(getEffectiveDistanceMeters(listed), 1900, 'también disponible en listados y agregados');
+    const { buildDayStatsMap } = await import('../src/lib/time-range');
+    const byDay = Object.values(buildDayStatsMap([listed]));
+    assert.equal(byDay[0].distanceMeters, 1900);
+    assert.equal(byDay[0].durationSec, 800);
+    const otherProfile = await GET(new NextRequest('http://localhost/api/activities/' + id, { headers: { cookie: 'bilifit-account=pequenaja' } }), context);
+    assert.equal(otherProfile.status, 404, 'la selección y la actividad pertenecen a su perfil');
+    const unrelated = (await (await patch({ title: 'Cambio de título' })).json()).activity;
+    assert.deepEqual(unrelated.excludedLapKeys, [key]);
+    assert.equal((await patch({ excludedLapKeys: ['no existe'] })).status, 400);
+    assert.equal((await patch({ excludedLapKeys: [key, key] })).status, 400);
+    assert.equal((await patch({ excludedLapKeys: 'no es una lista' })).status, 400);
+    const cleared = (await (await patch({ excludedLapKeys: [] })).json()).activity;
+    assert.equal(getEffectiveDurationSec(cleared), 700, 'vuelve a funcionar la detección automática anterior');
+    assert.equal(getEffectiveDistanceMeters(cleared), 2000);
+    const toggle = (await (await patch({ excludePausedTime: false })).json()).activity;
+    assert.equal(getEffectiveDurationSec(toggle), 1000);
+    const wrongSport = await patch({ sport: 'cycling', excludedLapKeys: [key] });
+    assert.equal(wrongSport.status, 400);
+  } finally { deleteActivity(id); }
+});

@@ -1,4 +1,4 @@
-import { formatDurationClock, getEffectiveDurationSec } from '@/lib/metrics';
+import { formatDurationClock, getEffectiveDistanceMeters, getEffectiveDurationSec } from '@/lib/metrics';
 import type { Activity, SportType } from '@/types';
 
 /**
@@ -342,7 +342,7 @@ export function summarizeActivities(activities: Activity[]): RangeStats {
   for (const act of activities) {
     stats.sessions += 1;
     stats.durationSec += getEffectiveDurationSec(act);
-    stats.distanceMeters += act.distanceMeters || 0;
+    stats.distanceMeters += getEffectiveDistanceMeters(act) || 0;
     stats.elevationGain += act.elevationGain || 0;
     stats.calories += act.calories || 0;
     stats.volumeKg += act.totalVolumeKg || 0;

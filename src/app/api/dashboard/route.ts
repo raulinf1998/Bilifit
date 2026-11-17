@@ -8,7 +8,7 @@ import {
   listMountainRoutes,
   listRoutines,
 } from '@/lib/db';
-import { calculatePMC, getEffectiveDurationSec } from '@/lib/metrics';
+import { calculatePMC, getEffectiveDistanceMeters, getEffectiveDurationSec } from '@/lib/metrics';
 import { getHuaweiStatus } from '@/lib/huawei-sync';
 import { getMyWhooshStatus } from '@/lib/mywhoosh-sync';
 import { getStravaStatus } from '@/lib/strava';
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
     const thisWeek = activities.filter((a) => { const age = now - Date.parse(a.startedAt); return age >= 0 && age < weekMs; });
     const thisMonth = activities.filter((a) => { const age = now - Date.parse(a.startedAt); return age >= 0 && age < monthMs; });
 
-    const weekDistanceKm = Math.round((thisWeek.reduce((s, a) => s + a.distanceMeters, 0) / 1000) * 10) / 10;
+    const weekDistanceKm = Math.round((thisWeek.reduce((s, a) => s + getEffectiveDistanceMeters(a), 0) / 1000) * 10) / 10;
     const weekDurationHours = Math.round((thisWeek.reduce((s, a) => s + getEffectiveDurationSec(a), 0) / 3600) * 10) / 10;
     const weekElevationM = Math.round(thisWeek.reduce((s, a) => s + a.elevationGain, 0));
     const weekTss = thisWeek.reduce((s, a) => s + a.tss, 0);
@@ -77,7 +77,7 @@ export async function GET(req: NextRequest) {
         mountainHours: hoursFor('mountain'),
         walkingHours: hoursFor('walking'),
         strengthHours: hoursFor('strength'),
-        totalKm: Math.round((items.reduce((s, i) => s + i.distanceMeters, 0) / 1000) * 10) / 10,
+        totalKm: Math.round((items.reduce((s, i) => s + getEffectiveDistanceMeters(i), 0) / 1000) * 10) / 10,
         totalTss: items.reduce((s, i) => s + i.tss, 0),
       });
     }
