@@ -5804,3 +5804,30 @@ test('Descansos manuales en segmentos: persistencia, prioridad y vuelta al tiemp
     assert.equal(wrongSport.status, 400);
   } finally { deleteActivity(id); }
 });
+
+test('Filtrado de descansos conserva los puntos originales y separa los tramos sin puentes', async () => {
+  const { retainedRestChunks, restLapKey } = await import('../src/lib/manual-rest');
+  const laps = [
+    { lapNumber: 1, startDistM: 0, endDistM: 100, distanceMeters: 100, durationSec: 10, movingTimeSec: 10, elevationGain: 0, elevationLoss: 0 },
+    { lapNumber: 2, startDistM: 100, endDistM: 200, distanceMeters: 100, durationSec: 10, movingTimeSec: 10, elevationGain: 0, elevationLoss: 0 },
+    { lapNumber: 3, startDistM: 200, endDistM: 300, distanceMeters: 100, durationSec: 10, movingTimeSec: 10, elevationGain: 0, elevationLoss: 0 },
+  ];
+  const points = Array.from({ length: 31 }, (_, t) => ({ t, dist: t * 10, hr: t >= 10 && t < 20 ? 199 : 100 }));
+  const original = structuredClone(points);
+  const chunks = retainedRestChunks(points, laps, [restLapKey(laps[1], 1)], 30);
+  assert.ok(chunks);
+  assert.equal(chunks.length, 2);
+  assert.ok(chunks.flat().every(p => p.hr === 100));
+  assert.equal(chunks[1][0].t, 10);
+  assert.equal(chunks[1][0].dist, 100);
+  assert.deepEqual(points, original);
+  const startAndEnd = retainedRestChunks(points, laps, [restLapKey(laps[0], 0), restLapKey(laps[2], 2)], 30);
+  assert.equal(startAndEnd?.length, 1);
+  assert.equal(startAndEnd?.[0][0].t, 0);
+  assert.equal(startAndEnd?.[0][0].dist, 0);
+  const all = retainedRestChunks(points, laps, laps.map(restLapKey), 30);
+  assert.equal(all?.flat().length, 0, 'no queda telemetría al excluir todos los segmentos');
+  assert.equal(retainedRestChunks(points, laps, [restLapKey(laps[1], 1)], 60), null);
+  assert.equal(retainedRestChunks(points, [laps[1], laps[0], laps[2]], [restLapKey(laps[0], 1)], 30), null);
+  assert.deepEqual(retainedRestChunks(points, laps, [], 30), [points]);
+});
