@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { Award, Footprints, Timer, MapPin } from 'lucide-react';
 import { SportBadge } from '@/components/SportBadge';
-import { formatDistanceKm, formatDurationClock, getEffectiveDurationSec } from '@/lib/metrics';
+import { formatDistanceKm, formatDurationClock, getEffectiveDistanceMeters, getEffectiveDurationSec } from '@/lib/metrics';
 import type { RunningRecord, RunningRecords } from '@/lib/running-records';
 import type { Activity } from '@/types';
 
@@ -48,12 +48,12 @@ export default function RunningPage() {
             <RecordCard label="Distancia más larga" record={data.records.longestDistance} distance />
             <RecordCard label="Tiempo seguido corriendo" record={data.records.longestContinuous} />
           </div>
-          <p className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>Sólo actividades de correr, no trail. Las marcas por distancia se estiman a partir del recorrido y cuentan las pausas registradas; los huecos de más de dos minutos dividen el recorrido. El tiempo seguido es una estimación basada en movimiento: las pausas y huecos de datos interrumpen el tramo; si el reloj oculta pausas automáticas puede no detectarlas. Sin datos suficientes se muestra —.</p>
+          <p className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>Sólo actividades de correr, no trail. Las marcas por distancia se estiman a partir del recorrido y cuentan las pausas registradas; los huecos de más de dos minutos dividen el recorrido. El tiempo seguido es una estimación basada en movimiento: las pausas y huecos de datos interrumpen el tramo; si el reloj oculta pausas automáticas puede no detectarlas. Las carreras con descansos manuales no generan marcas de distancia rápida ni tiempo seguido. Sin datos suficientes se muestra —.</p>
         </section>
         <section className="card-surface p-5 space-y-4"><h2 className="text-base font-bold flex items-center gap-2"><Footprints className="h-4 w-4 text-primary" /> Carreras ({data.activities.length})</h2>
           {data.activities.length === 0 ? <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Aún no hay carreras registradas.</p> : <div className="space-y-2">{data.activities.map((act) => <Link key={act.id} href={`/actividades/${act.id}`} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3.5 hover:border-primary/50" style={{ background: 'var(--bg-card-elevated)', borderColor: 'var(--border-subtle)' }}>
             <div className="space-y-1"><div className="flex flex-wrap items-center gap-2"><SportBadge sport={act.sport} subSport={act.subSport} /><span className="text-xs" style={{ color: 'var(--text-muted)' }}>{new Date(act.startedAt).toLocaleDateString('es-ES')}</span></div><div className="font-semibold text-sm">{act.title}</div></div>
-            <div className="flex flex-wrap gap-4 text-xs tabular-nums"><span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5" /> {formatDistanceKm(act.distanceMeters)}</span><span className="flex items-center gap-1"><Timer className="h-3.5 w-3.5" /> {formatDurationClock(getEffectiveDurationSec(act))}</span></div>
+            <div className="flex flex-wrap gap-4 text-xs tabular-nums"><span className="flex items-center gap-1"><MapPin className="h-3.5 w-3.5" /> {formatDistanceKm(getEffectiveDistanceMeters(act))}</span><span className="flex items-center gap-1"><Timer className="h-3.5 w-3.5" /> {formatDurationClock(getEffectiveDurationSec(act))}</span></div>
           </Link>)}</div>}
         </section>
       </>}

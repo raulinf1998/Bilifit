@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { currentAccountId } from '@/lib/account-context';
+import { resolveManualRests, restLapKey } from '@/lib/manual-rest';
 import type { AccountId } from '@/lib/accounts';
 import { hasConcreteActivityName, resolveActivityTitle } from '@/lib/activity-naming';
 import {
@@ -638,6 +639,7 @@ function initSchema(db: Database.Database) {
   ensureColumn(db, 'activities', 'extras_json', 'TEXT');
   ensureColumn(db, 'activities', 'done_together', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'activities', 'exclude_paused_time', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'activities', 'excluded_laps_json', "TEXT NOT NULL DEFAULT '[]'");
   ensureColumn(db, 'activities', 'trimmed', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'activities', 'images_json', 'TEXT');
   ensureColumn(db, 'activities', 'routine_id', 'TEXT');
@@ -981,6 +983,9 @@ function mapActivityRow(row: Record<string, unknown>): Activity {
     images = [];
   }
 
+  let storedRests: unknown = [];
+  try { storedRests = JSON.parse(String(row.excluded_laps_json || '[]')); } catch { /* sin selección */ }
+  const rests = row.sport === 'running' ? resolveManualRests(laps, storedRests) : { keys: [], durationSec: 0, distanceMeters: 0 };
   return {
     id: String(row.id),
     externalId: row.external_id ? String(row.external_id) : null,
@@ -1016,6 +1021,9 @@ function mapActivityRow(row: Record<string, unknown>): Activity {
     doneTogether: Boolean(row.done_together),
     routineId: row.routine_id ? String(row.routine_id) : null,
     excludePausedTime: Boolean(row.exclude_paused_time),
+    excludedLapKeys: rests.keys,
+    manualRestDurationSec: rests.durationSec,
+    manualRestDistanceMeters: rests.distanceMeters,
     trimmed: Boolean(row.trimmed),
     images,
     laps,
@@ -1435,6 +1443,7 @@ export function updateActivity(
     worldName: string | null;
     doneTogether: boolean;
     excludePausedTime: boolean;
+    excludedLapKeys: string[];
     images: string[];
     strengthLogs: StrengthSetLog[];
     /** Duración total en segundos; corrige también el tiempo en movimiento. */
@@ -1452,6 +1461,23 @@ export function updateActivity(
   const nextExcludePaused =
     patch.excludePausedTime !== undefined ? Boolean(patch.excludePausedTime) : Boolean(existing.excludePausedTime);
   const nextImages = patch.images !== undefined ? sanitizeImageList(patch.images) : existing.images ?? [];
+  let restKeys: string[] | undefined;
+  if (patch.excludedLapKeys !== undefined) {
+    if (nextSport !== 'running') throw new Error('Los descansos manuales sólo están disponibles para correr.');
+    if (!Array.isArray(patch.excludedLapKeys) || patch.excludedLapKeys.some((key) => typeof key !== 'string') || patch.excludedLapKeys.length > 1000) throw new Error('Selección de segmentos no válida.');
+    const rests = resolveManualRests(existing.laps, patch.excludedLapKeys);
+    if (rests.keys.length !== patch.excludedLapKeys.length || rests.durationSec > existing.durationSec || rests.distanceMeters > existing.distanceMeters + 1) {
+      throw new Error('Los segmentos seleccionados no coinciden con la actividad o superan su duración o distancia.');
+    }
+    const chosen = (existing.laps ?? []).filter((lap, index) => rests.keys.includes(restLapKey(lap, index)));
+    for (let i = 0; i < chosen.length; i++) for (let j = i + 1; j < chosen.length; j++) {
+      if (Math.min(chosen[i].endDistM, chosen[j].endDistM) > Math.max(chosen[i].startDistM, chosen[j].startDistM) + 1) {
+        throw new Error('No se pueden excluir segmentos que se solapan.');
+      }
+    }
+    restKeys = rests.keys;
+  }
+
 
   // Corregir la duración arrastra al tiempo en movimiento (que en las sesiones de
   // Bilifit es el mismo valor) y a las calorías/TSS, derivados de los minutos.
@@ -1562,7 +1588,7 @@ export function updateActivity(
 
   db.prepare(`
       UPDATE activities
-      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?, tss = ?, done_together = ?, exclude_paused_time = ?, images_json = ?, strength_logs_json = ?, total_volume_kg = ?, duration_sec = ?, moving_time_sec = ?, calories = ?, avg_speed_ms = ?
+      SET title = ?, sport = ?, sub_sport = ?, description = ?, rpe = ?, gear_id = ?, world_name = ?, tss = ?, done_together = ?, exclude_paused_time = ?, images_json = ?, strength_logs_json = ?, total_volume_kg = ?, duration_sec = ?, moving_time_sec = ?, calories = ?, avg_speed_ms = ?, excluded_laps_json = COALESCE(?, excluded_laps_json)
       WHERE id = ?
     `).run(
     patch.title ?? existing.title,
@@ -1582,6 +1608,7 @@ export function updateActivity(
     nextMovingTimeSec,
     nextCalories,
     nextAvgSpeedMs,
+    restKeys !== undefined ? JSON.stringify(restKeys) : null,
     id
   );
 

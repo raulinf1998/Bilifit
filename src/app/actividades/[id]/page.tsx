@@ -32,6 +32,7 @@ import {
   ZoomIn,
 } from 'lucide-react';
 import ActivityMap from '@/components/ActivityMap';
+import { restLapKey } from '@/lib/manual-rest';
 import ActivityDurationInput from '@/components/ActivityDurationInput';
 import { parseActivityDuration, splitActivityDuration } from '@/lib/activity-duration';
 import { PowerZonesChart, TelemetryChart, ZoneBarsChart } from '@/components/Charts';
@@ -61,6 +62,7 @@ import {
   formatSpeedKmh,
   getCogganPowerZones,
   getEffectiveAvgSpeedMs,
+  getEffectiveDistanceMeters,
   getEffectiveDurationSec,
   sportColor,
 } from '@/lib/metrics';
@@ -152,6 +154,9 @@ export default function ActivityDetailPage() {
   const [doneTogether, setDoneTogether] = useState(false);
   const [togglingTogether, setTogglingTogether] = useState(false);
   const [togglingPaused, setTogglingPaused] = useState(false);
+  const [showRestPanel, setShowRestPanel] = useState(false);
+  const [savingRests, setSavingRests] = useState(false);
+  const [restError, setRestError] = useState<string | null>(null);
   const [description, setDescription] = useState('');
 
   // Tabs análisis profundo
@@ -504,6 +509,25 @@ export default function ActivityDetailPage() {
     }
   }
 
+  async function toggleRestLap(key: string, checked: boolean) {
+    if (!activity || savingRests) return;
+    const keys = activity.excludedLapKeys ?? [];
+    const next = checked ? [...keys, key] : keys.filter((k) => k !== key);
+    setSavingRests(true);
+    setRestError(null);
+    try {
+      const res = await fetch(`/api/activities/${params.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ excludedLapKeys: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'No se pudo guardar la selección.');
+      setActivity(data.activity);
+    } catch (err) {
+      setRestError(err instanceof Error ? err.message : 'No se pudo guardar la selección.');
+    } finally { setSavingRests(false); }
+  }
+
   function openTrimPanel() {
     if (!activity) return;
     const totalKm = Math.max(0.1, Number(((activity.distanceMeters || 0) / 1000).toFixed(2)));
@@ -787,6 +811,8 @@ export default function ActivityDetailPage() {
   const bestSplitSpeed = activity.kmSplits?.length
     ? Math.max(0.5, ...activity.kmSplits.map(getSplitSpeedMs))
     : 1;
+  const manualRestsActive = activity.sport === 'running' && (activity.excludedLapKeys?.length ?? 0) > 0;
+  const effectiveDistanceMeters = getEffectiveDistanceMeters(activity);
   const effectiveDurationSec = getEffectiveDurationSec(activity);
   const effectiveAvgSpeedMs = getEffectiveAvgSpeedMs(activity);
   const pausedSec = Math.max(0, activity.durationSec - activity.movingTimeSec);
@@ -809,7 +835,7 @@ export default function ActivityDetailPage() {
             busy={togglingTogether}
             onClick={handleToggleTogether}
           />
-          {activity.durationSec > 0 && (
+          {activity.durationSec > 0 && !manualRestsActive && (
             <button
               type="button"
               disabled={togglingPaused}
@@ -831,6 +857,14 @@ export default function ActivityDetailPage() {
               {pausedSec >= 5 && (
                 <span className="opacity-75 tabular-nums">({formatDuration(pausedSec)})</span>
               )}
+            </button>
+          )}
+          {activity.sport === 'running' && (
+            <button type="button" onClick={() => setShowRestPanel((open) => !open)} aria-expanded={showRestPanel}
+              className="inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold hover:bg-sunken"
+              style={{ borderColor: 'var(--border-subtle)' }}>
+              <PauseCircle className="h-3.5 w-3.5" />
+              {manualRestsActive ? `Descansos seleccionados (${activity.excludedLapKeys?.length})` : 'Seleccionar descansos'}
             </button>
           )}
           {canTrimActivity && (
@@ -903,6 +937,30 @@ export default function ActivityDetailPage() {
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
+      )}
+
+      {activity.sport === 'running' && showRestPanel && (
+        <section className="card-surface p-5 space-y-3" aria-label="Segmentos de descanso">
+          <h2 className="text-base font-bold">Seleccionar segmentos de descanso</h2>
+          <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+            Marca los segmentos del reloj que no quieres contar. Se descuentan su tiempo y distancia; la selección se guarda automáticamente. Mientras haya segmentos marcados, sustituye a la exclusión automática de tiempo parado.
+          </p>
+          {activity.laps && activity.laps.length > 0 ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {activity.laps.map((lap, index) => {
+                const key = restLapKey(lap, index);
+                const checked = activity.excludedLapKeys?.includes(key) ?? false;
+                return <label key={key} className="flex items-center gap-3 rounded-xl border p-3 text-sm" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card-elevated)' }}>
+                  <input type="checkbox" checked={checked} disabled={savingRests} onChange={(e) => void toggleRestLap(key, e.target.checked)} className="h-4 w-4 accent-primary" />
+                  <span className="min-w-0"><span className="block font-semibold">{lap.name ?? `Segmento ${lap.lapNumber}`}</span><span className="text-xs tabular-nums" style={{ color: 'var(--text-muted)' }}>{formatDurationClock(lap.durationSec)} · {formatDistanceKm(lap.distanceMeters)}</span></span>
+                </label>;
+              })}
+            </div>
+          ) : <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>Esta actividad no tiene segmentos del reloj para seleccionar.</p>}
+          {manualRestsActive && <p className="text-xs font-semibold text-primary">Descontado: {formatDurationClock(activity.manualRestDurationSec ?? 0)} · {formatDistanceKm(activity.manualRestDistanceMeters ?? 0)}. Desmarca todos para volver al botón de tiempo parado.</p>}
+          {savingRests && <p role="status" className="text-xs">Guardando…</p>}
+          {restError && <p role="alert" className="text-sm text-rose-500">{restError}</p>}
+        </section>
       )}
 
       {elevationNotice && (
@@ -1318,15 +1376,16 @@ export default function ActivityDetailPage() {
           {activity.distanceMeters > 0 && (
             <div className="card-elevated p-3">
               <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Distancia</div>
-              <div className="text-lg font-bold tabular-nums">{formatDistanceKm(activity.distanceMeters)}</div>
+              <div className="text-lg font-bold tabular-nums">{formatDistanceKm(effectiveDistanceMeters)}</div>
             </div>
           )}
           <div className="card-elevated p-3">
             <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              {activity.excludePausedTime ? 'Tiempo en mov.' : 'Tiempo total'}
+              {manualRestsActive ? 'Tiempo sin descansos' : activity.excludePausedTime ? 'Tiempo en mov.' : 'Tiempo total'}
             </div>
             <div className="text-lg font-bold tabular-nums">{formatDurationClock(effectiveDurationSec)}</div>
-            {pausedSec >= 5 && (
+            {manualRestsActive && <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>Sin {formatDurationClock(activity.manualRestDurationSec ?? 0)} de descansos seleccionados</div>}
+            {!manualRestsActive && pausedSec >= 5 && (
               <div className="text-[10px] tabular-nums mt-0.5" style={{ color: 'var(--text-muted)' }}>
                 {activity.excludePausedTime
                   ? `Total: ${formatDurationClock(activity.durationSec)} · Excl. ${formatDurationClock(pausedSec)}`
@@ -1989,6 +2048,7 @@ export default function ActivityDetailPage() {
       )}
 
       {/* Pestañas de Análisis Completo */}
+      {manualRestsActive && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>El mapa, los gráficos, los parciales y las métricas del dispositivo muestran la grabación original; el tiempo, la distancia y el ritmo descuentan los descansos seleccionados.</p>}
       {(activity.points.length > 3 || (activity.laps?.length ?? 0) > 0) && (
         <div className="card-surface p-5 space-y-5">
           <div className="flex flex-wrap gap-2 border-b pb-3" style={{ borderColor: 'var(--border-subtle)' }}>

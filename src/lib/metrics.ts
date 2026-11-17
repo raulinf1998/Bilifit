@@ -26,18 +26,27 @@ export function isIntervalMoving(prev: ActivityPoint, cur: ActivityPoint): boole
 }
 
 export function getEffectiveDurationSec(
-  activity: Pick<Activity, 'durationSec' | 'movingTimeSec' | 'excludePausedTime'>
+  activity: Pick<Activity, 'durationSec' | 'movingTimeSec' | 'excludePausedTime' | 'excludedLapKeys' | 'manualRestDurationSec'>
 ): number {
+  if (activity.excludedLapKeys?.length) return Math.max(0, activity.durationSec - (activity.manualRestDurationSec ?? 0));
   if (activity.excludePausedTime && activity.movingTimeSec > 0) {
     return activity.movingTimeSec;
   }
   return activity.durationSec;
 }
 
+export function getEffectiveDistanceMeters(activity: Pick<Activity, 'distanceMeters' | 'excludedLapKeys' | 'manualRestDistanceMeters'>): number {
+  return activity.excludedLapKeys?.length ? Math.max(0, activity.distanceMeters - (activity.manualRestDistanceMeters ?? 0)) : activity.distanceMeters;
+}
+
 export function getEffectiveAvgSpeedMs(
-  activity: Pick<Activity, 'distanceMeters' | 'durationSec' | 'movingTimeSec' | 'avgSpeedMs' | 'excludePausedTime'>
+  activity: Pick<Activity, 'distanceMeters' | 'durationSec' | 'movingTimeSec' | 'avgSpeedMs' | 'excludePausedTime' | 'excludedLapKeys' | 'manualRestDurationSec' | 'manualRestDistanceMeters'>
 ): number | null {
   const effectiveDuration = getEffectiveDurationSec(activity);
+  if (activity.excludedLapKeys?.length) {
+    const distance = getEffectiveDistanceMeters(activity);
+    return distance > 0 && effectiveDuration > 0 ? Math.round(distance / effectiveDuration * 100) / 100 : null;
+  }
   if (activity.distanceMeters > 0 && effectiveDuration > 0) {
     if (activity.excludePausedTime || activity.durationSec !== activity.movingTimeSec) {
       return Math.round((activity.distanceMeters / effectiveDuration) * 100) / 100;

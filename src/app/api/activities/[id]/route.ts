@@ -48,6 +48,9 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       if (body.sport !== undefined && !VALID_SPORTS.has(body.sport as SportType)) {
         return NextResponse.json({ error: 'Tipo de deporte no válido' }, { status: 400 });
       }
+      if (body.excludedLapKeys !== undefined && !Array.isArray(body.excludedLapKeys)) {
+        return NextResponse.json({ error: 'Selección de segmentos no válida.' }, { status: 400 });
+      }
       const updated = updateActivity(id, {
         title: typeof body.title === 'string' ? body.title.trim() : undefined,
         sport: body.sport as SportType | undefined,
@@ -58,6 +61,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
         worldName: body.worldName,
         doneTogether: typeof body.doneTogether === 'boolean' ? body.doneTogether : undefined,
         excludePausedTime: typeof body.excludePausedTime === 'boolean' ? body.excludePausedTime : undefined,
+        excludedLapKeys: body.excludedLapKeys,
         images: Array.isArray(body.images) ? sanitizeImageList(body.images) : undefined,
         strengthLogs: Array.isArray(body.strengthLogs) ? body.strengthLogs : undefined,
         durationSec: Number.isFinite(Number(body.durationSec)) ? Number(body.durationSec) : undefined,

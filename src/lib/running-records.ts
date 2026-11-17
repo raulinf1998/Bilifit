@@ -1,4 +1,5 @@
 import type { ActivityDetail, ActivityPoint } from '@/types';
+import { getEffectiveDistanceMeters } from '@/lib/metrics';
 
 export type RunningRecord = { activityId: string; title: string; startedAt: string; value: number };
 export type RunningRecords = {
@@ -72,11 +73,15 @@ export function computeSportRecords(activities: ActivityDetail[], sports: Activi
   for (const activity of activities) {
     if (!sports.includes(activity.sport)) continue;
     const make = (value: number): RunningRecord => ({ activityId: activity.id, title: activity.title, startedAt: activity.startedAt, value });
-    if (activity.distanceMeters > 0 && (!records.longestDistance || activity.distanceMeters > records.longestDistance.value)) records.longestDistance = make(activity.distanceMeters);
+    const distance = getEffectiveDistanceMeters(activity);
+    if (distance > 0 && (!records.longestDistance || distance > records.longestDistance.value)) records.longestDistance = make(distance);
     if (Number.isFinite(activity.elevationGain) && activity.elevationGain > 0 &&
         (!records.greatestElevationGain || activity.elevationGain > records.greatestElevationGain.value)) {
       records.greatestElevationGain = make(activity.elevationGain);
     }
+    // Los puntos guardados incluyen los descansos: hasta poder separarlos con precisión,
+    // no atribuir marcas de tramo o tiempo continuo que puedan atravesarlos.
+    if (activity.excludedLapKeys?.length) continue;
     const continuous = longestContinuousRun(activity.points, options.minSpeed, options.maxSpeed);
     if (continuous && (!records.longestContinuous || continuous > records.longestContinuous.value)) records.longestContinuous = make(continuous);
     for (const [label, meters] of [['1 km', 1000], ['5 km', 5000], ['10 km', 10000]] as const) {
