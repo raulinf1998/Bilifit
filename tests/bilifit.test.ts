@@ -5708,3 +5708,44 @@ test('Duración de actividad: horas, minutos y segundos se guardan sin redondeo'
   assert.equal(legacyActivity.durationSec, 90);
   deleteActivity(legacyActivity.id);
 });
+
+test('Marcas de montaña: mayor desnivel positivo entre senderismo y trail, sin mezclar otros deportes', async () => {
+  const { computeSportRecords } = await import('../src/lib/running-records');
+  const base = { id: 'mountain', title: 'Montaña', startedAt: '2026-01-01T00:00:00Z', sport: 'mountain', distanceMeters: 10000, elevationGain: 410, points: [] } as unknown as import('../src/types').ActivityDetail;
+  const trail = { ...base, id: 'trail', title: 'Trail', sport: 'trail', elevationGain: 1250 } as import('../src/types').ActivityDetail;
+  const running = { ...base, id: 'running', sport: 'running', elevationGain: 5000 } as import('../src/types').ActivityDetail;
+  const mountain = computeSportRecords([base, trail, running], ['mountain', 'trail']);
+  assert.deepEqual(mountain.greatestElevationGain, { activityId: 'trail', title: 'Trail', startedAt: trail.startedAt, value: 1250 });
+  assert.equal(computeSportRecords([{ ...base, elevationGain: 0 }], ['mountain']).greatestElevationGain, null);
+  assert.equal(computeSportRecords([], ['mountain']).greatestElevationGain, null);
+  const React = await import('react');
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const { default: SportRecords } = await import('../src/components/SportRecords');
+  const cyclingHtml = renderToStaticMarkup(React.createElement(SportRecords, { records: mountain, kind: 'cycling' }));
+  const mountainHtml = renderToStaticMarkup(React.createElement(SportRecords, { records: mountain, kind: 'mountain' }));
+  for (const html of [cyclingHtml, mountainHtml]) {
+    assert.match(html, /Distancia más larga/);
+    assert.match(html, /Tiempo seguido en movimiento/);
+    assert.doesNotMatch(html, /(?:1 km más rápido|5 km más rápidos|10 km más rápidos)/);
+  }
+  assert.doesNotMatch(cyclingHtml, /Mayor desnivel positivo/);
+  assert.match(mountainHtml, /Mayor desnivel positivo/);
+  assert.match(mountainHtml, /\+1\.?250 m/);
+  assert.match(mountainHtml, /\/actividades\/trail/);
+});
+
+test('API de marcas de montaña devuelve la actividad con mayor desnivel de la cuenta', async () => {
+  const { GET } = await import('../src/app/api/sport-records/route');
+  const seed = getActivityById('act_seed_run_1');
+  assert.ok(seed);
+  const id = 'act_test_top_mountain_elevation';
+  deleteActivity(id);
+  try {
+    createActivity({ ...seed, id, externalId: id, sport: 'trail', elevationGain: 99999, elevationLoss: 0, points: [] } as never);
+    const result = await GET(new NextRequest('http://localhost/api/sport-records?type=mountain'));
+    assert.equal(result.status, 200);
+    const { records } = await result.json();
+    assert.equal(records.greatestElevationGain.activityId, id);
+    assert.equal(records.greatestElevationGain.value, 99999);
+  } finally { deleteActivity(id); }
+});
