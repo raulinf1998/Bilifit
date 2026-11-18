@@ -1,3 +1,4 @@
+import { retainedRestChunks } from '@/lib/manual-rest';
 import { computeElevationGainLoss, haversineMeters } from '@/lib/polyline';
 import {
   calculateNormalizedPower,
@@ -136,6 +137,15 @@ export function enrichPointsTelemetry(points: ActivityPoint[], sport: SportType)
   }
 
   return cloned;
+}
+
+/** Localiza usando la distancia completa, pero rellena y suaviza sensores sólo dentro de cada tramo conservado. */
+export function buildRetainedTelemetry(points: ActivityPoint[], sport: SportType, laps: ActivityLap[], keys: string[], durationSec: number): ActivityPoint[][] | null {
+  const enriched = enrichPointsTelemetry(points, sport);
+  const source = points.map((p, i) => ({ ...p, dist: enriched[i]?.dist }));
+  const chunks = retainedRestChunks(source, laps, keys, durationSec);
+  // La pendiente derivada no debe usar una ventana de altitud que cruce el descanso.
+  return chunks?.map(chunk => enrichPointsTelemetry(chunk.map(p => typeof p.ele === 'number' ? { ...p, grade: undefined } : p), sport)) ?? null;
 }
 
 /**

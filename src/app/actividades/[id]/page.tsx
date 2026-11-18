@@ -33,6 +33,8 @@ import {
 } from 'lucide-react';
 import ActivityMap from '@/components/ActivityMap';
 import { restLapKey } from '@/lib/manual-rest';
+import { computeRetainedKmSplits } from '@/lib/rest-splits';
+import { computeBestEfforts, computeHeartRateZones, computePaceZones, computeTerrainBreakdown } from '@/lib/analytics';
 import ActivityDurationInput from '@/components/ActivityDurationInput';
 import { parseActivityDuration, splitActivityDuration } from '@/lib/activity-duration';
 import { PowerZonesChart, TelemetryChart, ZoneBarsChart } from '@/components/Charts';
@@ -61,6 +63,7 @@ import {
   formatPaceMinKm,
   formatSpeedKmh,
   getCogganPowerZones,
+  computePowerCurve,
   getEffectiveAvgSpeedMs,
   getEffectiveDistanceMeters,
   getEffectiveDurationSec,
@@ -523,6 +526,9 @@ export default function ActivityDetailPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'No se pudo guardar la selección.');
       setActivity(data.activity);
+      setShowTrimPanel(false);
+      setHighlightPolyline(null);
+      setSelectedLapNum(null);
     } catch (err) {
       setRestError(err instanceof Error ? err.message : 'No se pudo guardar la selección.');
     } finally { setSavingRests(false); }
@@ -769,6 +775,31 @@ export default function ActivityDetailPage() {
     );
   }
 
+  const manualRestsActive = activity.sport === 'running' && (activity.excludedLapKeys?.length ?? 0) > 0;
+  const restChunks = manualRestsActive ? activity.retainedTelemetryChunks ?? null : null;
+  const excludedLaps = (activity.laps ?? []).filter((lap, index) => activity.excludedLapKeys?.includes(restLapKey(lap, index)));
+  const visibleLaps = manualRestsActive ? (restChunks ? activity.laps ?? [] : []).filter((lap, index) =>
+    !activity.excludedLapKeys?.includes(restLapKey(lap, index)) &&
+    !excludedLaps.some(rest => Math.min(lap.endDistM, rest.endDistM) > Math.max(lap.startDistM, rest.startDistM) + 1)
+  ) : activity.laps ?? [];
+  const visibleSplits = manualRestsActive ? computeRetainedKmSplits(restChunks ?? []) : activity.kmSplits ?? [];
+  const filteredChunks = restChunks ?? [];
+  const visibleEfforts = manualRestsActive ? [...new Map(filteredChunks.flatMap(c => computeBestEfforts(c, activity.sport)).sort((a, b) => a.durationSec - b.durationSec).map(e => [e.label, e] as const).reverse()).values()] : activity.bestEfforts ?? [];
+  const visiblePowerCurve = manualRestsActive ? [...new Map(filteredChunks.flatMap(computePowerCurve).sort((a, b) => b.watts - a.watts).reverse().map(p => [p.label, p] as const)).values()] : activity.powerCurve ?? [];
+  const mergeZones = (groups: import('@/types').ZoneBucket[][]) => {
+    const byZone = new Map<string, import('@/types').ZoneBucket>();
+    for (const group of groups) for (const z of group) { const prev = byZone.get(z.zone); byZone.set(z.zone, { ...z, seconds: z.seconds + (prev?.seconds ?? 0) }); }
+    const total = [...byZone.values()].reduce((sum, z) => sum + z.seconds, 0);
+    return [...byZone.values()].map(z => ({ ...z, percent: total ? Math.round(z.seconds * 100 / total) : 0 }));
+  };
+  const visibleHrZones = manualRestsActive ? mergeZones(profile ? filteredChunks.map(c => computeHeartRateZones(c, profile, false)) : []) : activity.hrZones ?? [];
+  const visiblePaceZones = manualRestsActive ? mergeZones(filteredChunks.map(c => computePaceZones(c, activity.sport, false))) : activity.paceZones ?? [];
+  const terrainMap = new Map<string, import('@/types').TerrainSplit>();
+  if (manualRestsActive) for (const item of filteredChunks.flatMap(c => computeTerrainBreakdown(c, false))) {
+    const prev = terrainMap.get(item.type); const durationSec = item.durationSec + (prev?.durationSec ?? 0); const distanceMeters = item.distanceMeters + (prev?.distanceMeters ?? 0);
+    terrainMap.set(item.type, { ...item, durationSec, distanceMeters, avgSpeedMs: durationSec ? distanceMeters / durationSec : null });
+  }
+  const visibleTerrain = manualRestsActive ? [...terrainMap.values()] : activity.terrainBreakdown ?? [];
   const ftp = profile?.ftpWatts ?? 245;
   const weightKg = profile?.weightKg ?? 72;
   const isPaceSport =
@@ -780,8 +811,10 @@ export default function ActivityDetailPage() {
     activity.points.some((p) => typeof p.lat === 'number' && typeof p.lon === 'number') ||
     Boolean(activity.polyline) ||
     Boolean(worldInfo);
-  const powerZones = activity.avgWatts
-    ? getCogganPowerZones(ftp, activity.points, Boolean(activity.excludePausedTime))
+  const powerZones = (manualRestsActive ? activity.manualRestSummary?.avgWatts : activity.avgWatts)
+    ? manualRestsActive
+      ? getCogganPowerZones(ftp).map((z, index) => ({ ...z, seconds: filteredChunks.reduce((sum, c) => sum + getCogganPowerZones(ftp, c, false)[index].seconds, 0) }))
+      : getCogganPowerZones(ftp, activity.points, Boolean(activity.excludePausedTime))
     : null;
   const intensityFactor =
     activity.normalizedPower && ftp > 0 ? (activity.normalizedPower / ftp).toFixed(2) : null;
@@ -802,22 +835,21 @@ export default function ActivityDetailPage() {
       (deviceElePoints === 0 && activity.elevationGain <= 0 && activity.elevationLoss <= 0));
   const maxKm = Number(((activity.distanceMeters || 1000) / 1000).toFixed(2));
   const getSplitDurationSec = (sp: ActivityLap) =>
-    activity.excludePausedTime && sp.movingTimeSec > 0 ? sp.movingTimeSec : sp.durationSec;
+    !manualRestsActive && activity.excludePausedTime && sp.movingTimeSec > 0 ? sp.movingTimeSec : sp.durationSec;
   const getSplitSpeedMs = (sp: ActivityLap) => {
     const d = getSplitDurationSec(sp);
     if (sp.distanceMeters > 0 && d > 0) return sp.distanceMeters / d;
     return sp.avgSpeedMs ?? 0;
   };
-  const bestSplitSpeed = activity.kmSplits?.length
-    ? Math.max(0.5, ...activity.kmSplits.map(getSplitSpeedMs))
+  const bestSplitSpeed = visibleSplits.length
+    ? Math.max(0.5, ...visibleSplits.map(getSplitSpeedMs))
     : 1;
-  const manualRestsActive = activity.sport === 'running' && (activity.excludedLapKeys?.length ?? 0) > 0;
   const effectiveDistanceMeters = getEffectiveDistanceMeters(activity);
   const effectiveDurationSec = getEffectiveDurationSec(activity);
   const effectiveAvgSpeedMs = getEffectiveAvgSpeedMs(activity);
   const pausedSec = Math.max(0, activity.durationSec - activity.movingTimeSec);
   const canTrimActivity =
-    activity.points.length >= 4 || (activity.durationSec >= 15 && activity.distanceMeters >= 100);
+    !manualRestsActive && (activity.points.length >= 4 || (activity.durationSec >= 15 && activity.distanceMeters >= 100));
   const canSwitchToKm = activity.distanceMeters >= 200;
   const totalDistKm = Math.max(0.1, Number(((activity.distanceMeters || 0) / 1000).toFixed(2)));
   const totalDurSec = Math.max(10, activity.durationSec || 60);
@@ -1403,6 +1435,7 @@ export default function ActivityDetailPage() {
               </div>
             </div>
           )}
+          {!manualRestsActive && <>
           {typeof extras.gapSpeedMs === 'number' && extras.gapSpeedMs > 0 && isPaceSport && (
             <div className="card-elevated p-3">
               <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Ritmo GAP (llano)</div>
@@ -1523,6 +1556,22 @@ export default function ActivityDetailPage() {
               </div>
             </div>
           )}
+          </>}
+          {manualRestsActive && activity.manualRestSummary && (() => {
+            const summary = activity.manualRestSummary;
+            return <>
+              {summary.elevationGain !== null && <div className="card-elevated p-3"><div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Desnivel + / − · est.</div><div className="text-lg font-bold tabular-nums text-emerald-400">+{summary.elevationGain} / -{summary.elevationLoss ?? 0} m</div></div>}
+              {summary.maxEle !== null && <div className="card-elevated p-3"><div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Cota Máx / Mín</div><div className="text-lg font-bold tabular-nums">{summary.maxEle} / {summary.minEle ?? '--'} m</div></div>}
+              {summary.avgHr !== null && <div className="card-elevated p-3"><div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>FC Media / Máx · est.</div><div className="text-lg font-bold tabular-nums text-rose-400">{summary.avgHr} / {summary.maxHr ?? '--'} ppm</div></div>}
+              {summary.avgWatts !== null && <div className="card-elevated p-3"><div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Potencia media · est.</div><div className="text-lg font-bold tabular-nums">{summary.avgWatts} W</div></div>}
+              {summary.avgCadence !== null && <div className="card-elevated p-3"><div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Cadencia media · est.</div><div className="text-lg font-bold tabular-nums">{summary.avgCadence} spm</div></div>}
+              {summary.avgTemp !== null && <div className="card-elevated p-3"><div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Temperatura media · est.</div><div className="text-lg font-bold tabular-nums">{summary.avgTemp} °C</div></div>}
+              <div className="card-elevated p-3"><div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Carga (TSS) · est.</div><div className="text-lg font-bold tabular-nums text-primary">{summary.tss}</div></div>
+              {summary.calories !== null && <div className="card-elevated p-3"><div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Energía</div><div className="text-lg font-bold tabular-nums">{summary.calories} kcal</div></div>}
+              {summary.steps !== null && <div className="card-elevated p-3"><div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Pasos · est.</div><div className="text-lg font-bold tabular-nums">{summary.steps.toLocaleString('es-ES')}</div></div>}
+            </>;
+          })()}
+          {manualRestsActive && <p className="col-span-full text-xs" style={{ color: 'var(--text-muted)' }}>Las métricas sin datos suficientes para recalcularlas no se muestran. Las estimaciones utilizan únicamente los tramos conservados.</p>}
           {typeof activity.totalVolumeKg === 'number' && activity.totalVolumeKg > 0 && (
             <div className="card-elevated p-3">
               <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Volumen fuerza</div>
@@ -1804,7 +1853,7 @@ export default function ActivityDetailPage() {
       )}
 
       {/* Mapa GPS o Mapa Virtual MyWhoosh */}
-      {hasGps && (
+      {hasGps && !manualRestsActive && (
         <div className="card-surface p-5 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-base font-bold flex items-center gap-2">
@@ -1850,15 +1899,24 @@ export default function ActivityDetailPage() {
       )}
 
       {/* Gráfica de Telemetría multi-capa */}
-      {activity.points.length > 3 && (
+      {!manualRestsActive && activity.points.length > 3 && (
         <div className="card-surface p-5 space-y-3">
           <h2 className="text-base font-bold">Telemetría Interactiva (Altitud · Ritmo/Velocidad · Pulso · Potencia · Cadencia)</h2>
           <TelemetryChart points={activity.points} sport={activity.sport} onHoverPoint={setHoverPoint} />
         </div>
       )}
 
+      {manualRestsActive && restChunks && restChunks.map((chunk, index) => chunk.length > 2 && (
+        <div key={index} className="card-surface p-5 space-y-3">
+          <h2 className="text-base font-bold">Telemetría sin descansos · tramo {index + 1}</h2>
+          <TelemetryChart points={chunk} sport={activity.sport} />
+          {chunk.some(p => typeof p.lat === 'number' && typeof p.lon === 'number') && <ActivityMap points={chunk} sport={activity.sport} color={sportColor(activity.sport)} defaultLayer={defaultMapLayerForSport(activity.sport, false)} heightClass="h-80" />}
+        </div>
+      ))}
+      {manualRestsActive && !restChunks && <p role="status" className="card-surface p-4 text-sm">El archivo no contiene límites de tiempo suficientes para identificar estos descansos en la telemetría. Se ocultan los gráficos y cálculos de la grabación original para evitar resultados incorrectos. Desmarca los descansos para volver a verlos.</p>}
+
       {/* Segmentos detectados y creador */}
-      {activity.points.some((p) => typeof p.lat === 'number' && typeof p.lon === 'number') && (
+      {!manualRestsActive && activity.points.some((p) => typeof p.lat === 'number' && typeof p.lon === 'number') && (
         <div className="card-surface p-5 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
@@ -2048,8 +2106,8 @@ export default function ActivityDetailPage() {
       )}
 
       {/* Pestañas de Análisis Completo */}
-      {manualRestsActive && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>El mapa, los gráficos, los parciales y las métricas del dispositivo muestran la grabación original; el tiempo, la distancia y el ritmo descuentan los descansos seleccionados.</p>}
-      {(activity.points.length > 3 || (activity.laps?.length ?? 0) > 0) && (
+      {manualRestsActive && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Los tramos conservados se muestran por separado, sin unir puntos a través de los descansos. Los cálculos de telemetría usan los puntos registrados, por lo que sus límites pueden ser aproximados. Las métricas que no se pueden recalcular no se muestran.</p>}
+      {(activity.points.length > 3 || (visibleLaps?.length ?? 0) > 0) && (
         <div className="card-surface p-5 space-y-5">
           <div className="flex flex-wrap gap-2 border-b pb-3" style={{ borderColor: 'var(--border-subtle)' }}>
             {[
@@ -2083,29 +2141,29 @@ export default function ActivityDetailPage() {
                 <div className="text-sm font-semibold">
                   {splitView === 'km'
                     ? 'Parciales por kilómetro'
-                    : 'Segmentos y vueltas registradas por el dispositivo (pulsa una fila para resaltarla en el mapa)'}
+                    : manualRestsActive ? 'Segmentos conservados del dispositivo' : 'Segmentos y vueltas registradas por el dispositivo (pulsa una fila para resaltarla en el mapa)'}
                 </div>
-                {activity.laps && activity.laps.length > 0 && (
+                {visibleLaps && visibleLaps.length > 0 && (
                   <div className="inline-flex rounded-lg border overflow-hidden text-xs" style={{ borderColor: 'var(--border-subtle)' }}>
                     <button
                       type="button"
                       onClick={() => setSplitView('km')}
                       className={`px-3 py-1 ${splitView === 'km' ? 'bg-primary text-onprimary' : ''}`}
                     >
-                      Splits 1 km ({activity.kmSplits?.length ?? 0})
+                      Splits 1 km ({visibleSplits?.length ?? 0})
                     </button>
                     <button
                       type="button"
                       onClick={() => setSplitView('laps')}
                       className={`px-3 py-1 ${splitView === 'laps' ? 'bg-primary text-onprimary' : ''}`}
                     >
-                      Segmentos / Laps ({activity.laps.length})
+                      Segmentos / Laps ({visibleLaps.length})
                     </button>
                   </div>
                 )}
               </div>
 
-              {splitView === 'km' && activity.kmSplits && activity.kmSplits.length > 0 && (
+              {splitView === 'km' && visibleSplits && visibleSplits.length > 0 && (
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
@@ -2123,7 +2181,7 @@ export default function ActivityDetailPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-                      {activity.kmSplits.map((sp) => {
+                      {visibleSplits.map((sp) => {
                         const spDur = getSplitDurationSec(sp);
                         const spSpeed = getSplitSpeedMs(sp);
                         const spPausedSec = Math.max(0, (sp.durationSec || 0) - (sp.movingTimeSec || 0));
@@ -2135,9 +2193,9 @@ export default function ActivityDetailPage() {
                             </td>
                             <td className="py-2 px-2">
                               <div>{formatDurationClock(spDur)}</div>
-                              {spPausedSec >= 3 && (
+                              {!manualRestsActive && spPausedSec >= 3 && (
                                 <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                                  {activity.excludePausedTime
+                                  {!manualRestsActive && activity.excludePausedTime
                                     ? `tot ${formatDurationClock(sp.durationSec)}`
                                     : `mov ${formatDurationClock(sp.movingTimeSec)}`}
                                 </div>
@@ -2179,7 +2237,7 @@ export default function ActivityDetailPage() {
                 </div>
               )}
 
-              {splitView === 'laps' && activity.laps && activity.laps.length > 0 && (
+              {splitView === 'laps' && visibleLaps && visibleLaps.length > 0 && (
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
@@ -2196,11 +2254,11 @@ export default function ActivityDetailPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-                      {activity.laps.map((lap) => {
+                      {visibleLaps.map((lap) => {
                         const isSelected = selectedLapNum === lap.lapNumber;
-                        const lapDur = activity.excludePausedTime && lap.movingTimeSec > 0 ? lap.movingTimeSec : lap.durationSec;
+                        const lapDur = !manualRestsActive && activity.excludePausedTime && lap.movingTimeSec > 0 ? lap.movingTimeSec : lap.durationSec;
                         const lapSpeed =
-                          lap.distanceMeters > 0 && lapDur > 0 && (activity.excludePausedTime || lap.durationSec !== lap.movingTimeSec)
+                          lap.distanceMeters > 0 && lapDur > 0 && (manualRestsActive || activity.excludePausedTime || lap.durationSec !== lap.movingTimeSec)
                             ? lap.distanceMeters / lapDur
                             : lap.avgSpeedMs;
                         const triggerLabel =
@@ -2214,7 +2272,7 @@ export default function ActivityDetailPage() {
                         return (
                           <tr
                             key={lap.lapNumber}
-                            onClick={() => handleSelectLap(lap)}
+                            onClick={() => { if (!manualRestsActive) handleSelectLap(lap); }}
                             className={`tabular-nums cursor-pointer transition-colors ${
                               isSelected ? 'bg-amber-500/15' : 'hover:bg-sunken/50'
                             }`}
@@ -2228,9 +2286,9 @@ export default function ActivityDetailPage() {
                             <td className="py-2 px-2">{(lap.distanceMeters / 1000).toFixed(2)} km</td>
                             <td className="py-2 px-2">
                               <div>{formatDurationClock(lapDur)}</div>
-                              {lap.durationSec - lap.movingTimeSec >= 3 && (
+                              {!manualRestsActive && lap.durationSec - lap.movingTimeSec >= 3 && (
                                 <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                                  {activity.excludePausedTime
+                                  {!manualRestsActive && activity.excludePausedTime
                                     ? `tot ${formatDurationClock(lap.durationSec)}`
                                     : `mov ${formatDurationClock(lap.movingTimeSec)}`}
                                 </div>
@@ -2273,14 +2331,14 @@ export default function ActivityDetailPage() {
           {/* TAB 2: Mejores Esfuerzos & Curva de Potencia */}
           {activeTab === 'efforts' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {activity.bestEfforts && activity.bestEfforts.length > 0 && (
+              {visibleEfforts && visibleEfforts.length > 0 && (
                 <div className="space-y-3">
                   <h3 className="text-sm font-bold flex items-center gap-2">
                     <Flame className="h-4 w-4 text-primary" />
                     Mejores Esfuerzos en Distancia y Escalada
                   </h3>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {activity.bestEfforts.map((be) => (
+                    {visibleEfforts.map((be) => (
                       <div key={be.label} className="card-elevated p-3 space-y-1">
                         <div className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>{be.label}</div>
                         <div className="text-base font-bold text-primary tabular-nums">
@@ -2297,14 +2355,14 @@ export default function ActivityDetailPage() {
                 </div>
               )}
 
-              {activity.powerCurve && activity.powerCurve.length > 0 && (
+              {visiblePowerCurve && visiblePowerCurve.length > 0 && (
                 <div className="space-y-3">
                   <h3 className="text-sm font-bold flex items-center gap-2">
                     <Zap className="h-4 w-4 text-cyan-400" />
                     Curva de Potencia (Vatios y W/kg)
                   </h3>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {activity.powerCurve.map((p) => (
+                    {visiblePowerCurve.map((p) => (
                       <div key={p.label} className="card-elevated p-3 text-center">
                         <div className="text-xs" style={{ color: 'var(--text-muted)' }}>Mejor {p.label}</div>
                         <div className="text-xl font-bold text-cyan-400 tabular-nums mt-1">{p.watts} W</div>
@@ -2322,23 +2380,23 @@ export default function ActivityDetailPage() {
           {/* TAB 3: Zonas (FC, Ritmo, Potencia) */}
           {activeTab === 'zones' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {activity.hrZones && activity.hrZones.length > 0 && (
+              {visibleHrZones && visibleHrZones.length > 0 && (
                 <div className="space-y-3">
                   <h3 className="text-sm font-bold flex items-center gap-2">
                     <HeartPulse className="h-4 w-4 text-rose-400" />
                     Zonas de Frecuencia Cardíaca (FC Máx {profile?.maxHr ?? 188} ppm)
                   </h3>
-                  <ZoneBarsChart zones={activity.hrZones} />
+                  <ZoneBarsChart zones={visibleHrZones} />
                 </div>
               )}
 
-              {activity.paceZones && activity.paceZones.length > 0 && (
+              {visiblePaceZones && visiblePaceZones.length > 0 && (
                 <div className="space-y-3">
                   <h3 className="text-sm font-bold flex items-center gap-2">
                     <ActivityIcon className="h-4 w-4 text-primary" />
                     Zonas de Ritmo (Carrera / Trail)
                   </h3>
-                  <ZoneBarsChart zones={activity.paceZones} />
+                  <ZoneBarsChart zones={visiblePaceZones} />
                 </div>
               )}
 
@@ -2357,14 +2415,14 @@ export default function ActivityDetailPage() {
           {/* TAB 4: Terreno, Eficiencia y Dinámica */}
           {activeTab === 'terrain' && (
             <div className="space-y-6">
-              {activity.terrainBreakdown && activity.terrainBreakdown.length > 0 && (
+              {visibleTerrain && visibleTerrain.length > 0 && (
                 <div className="space-y-3">
                   <h3 className="text-sm font-bold flex items-center gap-2">
                     <Mountain className="h-4 w-4 text-emerald-400" />
                     Desglose del Esfuerzo por Pendiente (Subida · Llano · Bajada)
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {activity.terrainBreakdown.map((tb) => (
+                    {visibleTerrain.map((tb) => (
                       <div key={tb.type} className="card-elevated p-4 space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-sm">{tb.label}</span>
@@ -2394,7 +2452,7 @@ export default function ActivityDetailPage() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {!manualRestsActive && <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {extras.efficiencyFactor && (
                   <div className="card-elevated p-3.5">
                     <div className="text-[11px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
@@ -2458,7 +2516,7 @@ export default function ActivityDetailPage() {
                     </div>
                   </div>
                 )}
-              </div>
+              </div>}
             </div>
           )}
         </div>

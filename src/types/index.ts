@@ -190,6 +190,21 @@ export interface StrengthSessionPrefill {
   logs: Record<string, StrengthPrefillExercise>;
 }
 
+export interface ManualRestSummary {
+  elevationGain: number | null;
+  elevationLoss: number | null;
+  minEle: number | null;
+  maxEle: number | null;
+  avgHr: number | null;
+  maxHr: number | null;
+  avgWatts: number | null;
+  avgCadence: number | null;
+  avgTemp: number | null;
+  steps: number | null;
+  calories: number | null;
+  tss: number;
+}
+
 export interface Activity {
   id: string;
   externalId?: string | null;
@@ -230,6 +245,8 @@ export interface Activity {
   excludedLapKeys?: string[];
   manualRestDurationSec?: number;
   manualRestDistanceMeters?: number;
+  /** Estimaciones basadas exclusivamente en los tramos retenidos, o null si no se pueden localizar. */
+  manualRestSummary?: ManualRestSummary | null;
   trimmed?: boolean;
   images?: string[];
   laps?: ActivityLap[];
@@ -239,6 +256,8 @@ export interface Activity {
 
 export interface ActivityDetail extends Activity {
   points: ActivityPoint[];
+  /** Vista derivada; los puntos originales se conservan para edición y exportación. */
+  retainedTelemetryChunks?: ActivityPoint[][] | null;
   strengthLogs: StrengthSetLog[];
   powerCurve?: Array<{ durationSec: number; label: string; watts: number }>;
   kmSplits?: ActivityLap[];

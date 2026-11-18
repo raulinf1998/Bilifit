@@ -51,6 +51,9 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
         return NextResponse.json({ error: 'Actividad no encontrada' }, { status: 404 });
       }
 
+      if (activity.excludedLapKeys?.length) {
+        return NextResponse.json({ error: 'Desmarca los descansos manuales antes de recortar la actividad original.' }, { status: 400 });
+      }
       const spec = resolveTrimSpecFromInput(activity.points, input);
       const fallbackRatio =
         activity.durationSec > 0 && activity.movingTimeSec > 0

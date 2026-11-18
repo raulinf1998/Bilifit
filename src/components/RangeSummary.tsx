@@ -118,6 +118,7 @@ export function RangeSummary({ range, activities, onPickBucket }: RangeSummaryPr
         ))}
       </div>
 
+      {activities.some(a => a.excludedLapKeys?.length) && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Las métricas de carreras con descansos seleccionados son estimaciones con los tramos conservados; los datos que no se pueden calcular se omiten de los totales.</p>}
       {range.buckets.length > 0 && (
         <div className="space-y-2 pt-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
           <div className="flex flex-wrap items-center justify-between gap-2">

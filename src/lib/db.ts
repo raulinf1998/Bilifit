@@ -4,6 +4,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { currentAccountId } from '@/lib/account-context';
 import { resolveManualRests, restLapKey } from '@/lib/manual-rest';
+import { summarizeRetainedChunks } from '@/lib/rest-summary';
 import type { AccountId } from '@/lib/accounts';
 import { hasConcreteActivityName, resolveActivityTitle } from '@/lib/activity-naming';
 import {
@@ -13,6 +14,7 @@ import {
   type TrimSpec,
 } from '@/lib/activity-trim';
 import {
+  buildRetainedTelemetry,
   computeBestEfforts,
   computeHeartRateZones,
   computeKmSplits,
@@ -986,7 +988,7 @@ function mapActivityRow(row: Record<string, unknown>): Activity {
   let storedRests: unknown = [];
   try { storedRests = JSON.parse(String(row.excluded_laps_json || '[]')); } catch { /* sin selección */ }
   const rests = row.sport === 'running' ? resolveManualRests(laps, storedRests) : { keys: [], durationSec: 0, distanceMeters: 0 };
-  return {
+  const activity: Activity = {
     id: String(row.id),
     externalId: row.external_id ? String(row.external_id) : null,
     source: row.source as Activity['source'],
@@ -1030,6 +1032,14 @@ function mapActivityRow(row: Record<string, unknown>): Activity {
     extras,
     createdAt: String(row.created_at),
   };
+  if (rests.keys.length) {
+    try {
+      const rawPoints = row.points_json ? JSON.parse(String(row.points_json)) as ActivityPoint[] : [];
+      const chunks = buildRetainedTelemetry(rawPoints, activity.sport, laps ?? [], rests.keys, activity.durationSec);
+      activity.manualRestSummary = chunks ? summarizeRetainedChunks(chunks, activity, getAthleteProfile()) : null;
+    } catch { activity.manualRestSummary = null; }
+  }
+  return activity;
 }
 
 export function listActivities(filters?: {
@@ -1126,6 +1136,9 @@ export function getActivityById(id: string): ActivityDetail | null {
     laps: enrichedLaps,
     extras,
     points: enrichedPoints,
+    retainedTelemetryChunks: mapped.excludedLapKeys?.length
+      ? buildRetainedTelemetry(points, mapped.sport, mapped.laps ?? [], mapped.excludedLapKeys, mapped.durationSec)
+      : undefined,
     strengthLogs,
     kmSplits,
     bestEfforts,
@@ -1649,6 +1662,7 @@ export function trimActivity(
 ): { activity: ActivityDetail; preview: TrimPreviewResult } | null {
   const existing = getActivityById(id);
   if (!existing) return null;
+  if (existing.excludedLapKeys?.length) throw new Error('Desmarca los descansos manuales antes de recortar la actividad original.');
 
   const profile = getAthleteProfile();
   const fallbackRatio =

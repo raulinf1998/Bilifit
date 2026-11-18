@@ -5804,3 +5804,134 @@ test('Descansos manuales en segmentos: persistencia, prioridad y vuelta al tiemp
     assert.equal(wrongSport.status, 400);
   } finally { deleteActivity(id); }
 });
+
+test('Filtrado de descansos conserva los puntos originales y separa los tramos sin puentes', async () => {
+  const { retainedRestChunks, restLapKey } = await import('../src/lib/manual-rest');
+  const laps = [
+    { lapNumber: 1, startDistM: 0, endDistM: 100, distanceMeters: 100, durationSec: 10, movingTimeSec: 10, elevationGain: 0, elevationLoss: 0 },
+    { lapNumber: 2, startDistM: 100, endDistM: 200, distanceMeters: 100, durationSec: 10, movingTimeSec: 10, elevationGain: 0, elevationLoss: 0 },
+    { lapNumber: 3, startDistM: 200, endDistM: 300, distanceMeters: 100, durationSec: 10, movingTimeSec: 10, elevationGain: 0, elevationLoss: 0 },
+  ];
+  const points = Array.from({ length: 31 }, (_, t) => ({ t, dist: t * 10, hr: t >= 10 && t < 20 ? 199 : 100 }));
+  const original = structuredClone(points);
+  const chunks = retainedRestChunks(points, laps, [restLapKey(laps[1], 1)], 30);
+  assert.ok(chunks);
+  assert.equal(chunks.length, 2);
+  assert.ok(chunks.flat().every(p => p.hr === 100));
+  assert.equal(chunks[1][0].t, 10);
+  assert.equal(chunks[1][0].dist, 100);
+  assert.deepEqual(points, original);
+  const startAndEnd = retainedRestChunks(points, laps, [restLapKey(laps[0], 0), restLapKey(laps[2], 2)], 30);
+  assert.equal(startAndEnd?.length, 1);
+  assert.equal(startAndEnd?.[0][0].t, 0);
+  assert.equal(startAndEnd?.[0][0].dist, 0);
+  const all = retainedRestChunks(points, laps, laps.map(restLapKey), 30);
+  assert.equal(all?.flat().length, 0, 'no queda telemetría al excluir todos los segmentos');
+  assert.equal(retainedRestChunks(points, laps, [restLapKey(laps[1], 1)], 60), null);
+  assert.ok(retainedRestChunks(points, [laps[1], laps[0], laps[2]], [restLapKey(laps[0], 1)], 30), 'segmentos bien definidos no necesitan cubrir toda la actividad ni estar ordenados');
+  assert.deepEqual(retainedRestChunks(points, laps, [], 30), [points]);
+});
+
+
+test('Descansos parciales sólo se filtran cuando distancia y tiempo localizan el segmento sin ambigüedad', async () => {
+  const { retainedRestChunks, restLapKey } = await import('../src/lib/manual-rest');
+  const points = Array.from({ length: 101 }, (_, t) => ({ t, dist: t * 10, hr: t >= 20 && t < 40 ? 200 : 100 }));
+  const lap = { lapNumber: 1, startDistM: 200, endDistM: 400, distanceMeters: 200, durationSec: 20, movingTimeSec: 20, elevationGain: 0, elevationLoss: 0 };
+  const key = restLapKey(lap, 0);
+  const chunks = retainedRestChunks(points, [lap], [key], 100);
+  assert.ok(chunks);
+  assert.equal(chunks.length, 2);
+  assert.equal(chunks[1][0].t, 20);
+  assert.equal(chunks[1][0].dist, 200);
+  assert.ok(chunks.flat().every(p => p.hr === 100));
+  const mismatch = { ...lap, durationSec: 35 };
+  assert.equal(retainedRestChunks(points, [mismatch], [restLapKey(mismatch, 0)], 100), null);
+  const plateau = points.map(p => ({ ...p, dist: p.t === 21 ? 200 : p.dist }));
+  assert.equal(retainedRestChunks(plateau, [lap], [key], 100), null);
+  const pause = { ...lap, endDistM: 200, distanceMeters: 0 };
+  assert.equal(retainedRestChunks(points, [pause], [restLapKey(pause, 0)], 100), null);
+});
+
+test('Los descansos se excluyen de parciales, métricas y marcas sin modificar la grabación', async () => {
+  const { restLapKey, retainedRestChunks } = await import('../src/lib/manual-rest');
+  const { computeRetainedKmSplits } = await import('../src/lib/rest-splits');
+  const { computeRunningRecords } = await import('../src/lib/running-records');
+  const { getEffectiveRecordedMetric } = await import('../src/lib/metrics');
+  const { PATCH } = await import('../src/app/api/activities/[id]/route');
+  const seed = getActivityById('act_seed_run_1');
+  assert.ok(seed);
+  const id = 'act_rest_analysis_test';
+  deleteActivity(id);
+  const points = Array.from({ length: 301 }, (_, t) => ({ t, dist: t * 10, hr: t >= 100 && t < 200 ? 200 : 120, cad: t >= 100 && t < 200 ? 250 : 160, speed: 10, ele: t >= 100 && t < 200 ? 900 : 100 }));
+  const laps = [0, 1, 2].map(i => ({ lapNumber: i + 1, startDistM: i * 1000, endDistM: (i + 1) * 1000, distanceMeters: 1000, durationSec: 100, movingTimeSec: 100, elevationGain: 0, elevationLoss: 0, calories: 20 }));
+  try {
+    createActivity({ ...seed, id, externalId: id, sport: 'running', durationSec: 300, movingTimeSec: 300, distanceMeters: 3000, calories: 60, points, laps, excludePausedTime: true } as never);
+    const context = { params: Promise.resolve({ id }) };
+    const patch = async (keys: string[]) => PATCH(new NextRequest('http://localhost/api/activities/' + id, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ excludedLapKeys: keys }) }), context);
+    const response = await patch([restLapKey(laps[1], 1)]);
+    assert.equal(response.status, 200);
+    const activity = (await response.json()).activity;
+    assert.equal(activity.points.length, points.length);
+    assert.equal(activity.points[150].hr, 200, 'los puntos originales permanecen guardados');
+    const chunks = retainedRestChunks(activity.points, activity.laps, activity.excludedLapKeys, activity.durationSec);
+    assert.ok(chunks);
+    const splits = computeRetainedKmSplits(chunks);
+    assert.deepEqual(splits.map(s => s.distanceMeters), [1000, 1000]);
+    assert.deepEqual(splits.map(s => s.durationSec), [100, 100]);
+    assert.ok(splits.every(s => s.avgHr === 120));
+    assert.equal(activity.manualRestSummary.avgHr, 120);
+    assert.equal(activity.manualRestSummary.avgCadence, 160);
+    assert.equal(activity.manualRestSummary.maxEle, 100, 'la altitud del descanso tampoco aparece en el resumen');
+    assert.equal(activity.manualRestSummary.elevationGain, 0);
+    assert.equal(activity.manualRestSummary.calories, 40);
+    assert.equal(getEffectiveRecordedMetric(activity, 'calories'), 40);
+    const records = computeRunningRecords([activity]);
+    assert.equal(records.fastest['1 km']?.value, 100);
+    assert.equal(records.longestContinuous?.value, 100);
+    assert.equal(records.longestDistance?.value, 2000);
+    const stats = summarizeActivities([activity]);
+    assert.equal(stats.distanceMeters, 2000);
+    assert.equal(stats.durationSec, 200);
+    assert.equal(stats.calories, 40);
+    assert.equal(stats.avgHr, 120);
+    assert.equal(stats.tss, activity.manualRestSummary.tss);
+    const { listActivities } = await import('../src/lib/db');
+    const listed = listActivities().find(a => a.id === id)!;
+    assert.equal(getEffectiveRecordedMetric(listed, 'avgHr'), 120);
+    const trimApi = await import('../src/app/api/activities/[id]/trim/route');
+    const trimResponse = await trimApi.POST(new NextRequest('http://localhost/api/activities/' + id + '/trim', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: 'start', unit: 'sec', cutSec: 20 }) }), context);
+    assert.equal(trimResponse.status, 400, 'el recorte permanente exige desmarcar antes los descansos');
+    const restored = (await (await patch([])).json()).activity;
+    assert.equal(restored.points[150].hr, 200);
+    assert.equal(getEffectiveRecordedMetric(restored, 'calories'), 60);
+    assert.equal(restored.excludePausedTime, true);
+  } finally { deleteActivity(id); }
+});
+
+test('Parciales concatenan distancia y tiempo entre tramos sin sumar el salto GPS', async () => {
+  const { computeRetainedKmSplits } = await import('../src/lib/rest-splits');
+  const chunks = [
+    [{ t: 0, dist: 0, ele: 0, hr: 100 }, { t: 60, dist: 600, ele: 10, hr: 100 }],
+    [{ t: 60, dist: 600, ele: 300, hr: 120 }, { t: 120, dist: 1200, ele: 310, hr: 120 }],
+  ];
+  const splits = computeRetainedKmSplits(chunks);
+  assert.equal(splits.length, 2);
+  assert.equal(splits[0].distanceMeters, 1000);
+  assert.equal(splits[0].durationSec, 100);
+  assert.equal(splits[1].distanceMeters, 200);
+  assert.equal(splits[1].durationSec, 20);
+  assert.ok(splits[0].elevationGain < 30, 'no se cuenta el salto de altura entre tramos');
+});
+
+
+test('La telemetría conservada no rellena sensores desde el interior del descanso', async () => {
+  const { buildRetainedTelemetry } = await import('../src/lib/analytics');
+  const { restLapKey } = await import('../src/lib/manual-rest');
+  const laps = [0, 1, 2].map(i => ({ lapNumber: i + 1, startDistM: i * 100, endDistM: (i + 1) * 100, distanceMeters: 100, durationSec: 10, movingTimeSec: 10, elevationGain: 0, elevationLoss: 0 }));
+  const points = Array.from({ length: 31 }, (_, t) => ({ t, dist: t * 10, hr: t < 10 ? 100 : t < 20 ? 200 : t < 25 ? undefined : 110, speed: t >= 10 && t < 20 ? 1 : 10 }));
+  const chunks = buildRetainedTelemetry(points, 'running', laps, [restLapKey(laps[1], 1)], 30);
+  assert.ok(chunks);
+  assert.ok(chunks[0].every(p => p.hr === 100 && p.speed === 10));
+  assert.equal(chunks[1][0].hr, undefined);
+  assert.ok(chunks[1].every(p => p.hr !== 200 && p.speed === 10));
+});
